@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { getVersion } from '@tauri-apps/api/app'
+  import { checkForUpdate, type UpdateState } from '$lib/updates'
+  import { openExternalUrl } from '$lib/tauri'
   import { AlertTriangle, Bot, FileArchive, FolderOpen, Mail, Monitor, Moon, RefreshCw, ScrollText, ShieldCheck, Sun } from '@lucide/svelte'
   import { Button } from '$lib/components/ui/button'
   import { Input } from '$lib/components/ui/input'
@@ -86,6 +89,27 @@
   const defaultSkinName = $derived(defaultSkin(themeState.resolvedMode))
 
   const cacheSizeAuto = $derived(!appState.settings.defaultCacheSize)
+
+  // Update availability. Additive and non-fatal: an unreachable distribution host or an
+  // air-gapped machine shows no row rather than an error.
+  let appVersion = $state('')
+  let update = $state<UpdateState | null>(null)
+
+  $effect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const v = await getVersion()
+        if (cancelled) return
+        appVersion = v
+        const state = await checkForUpdate(v)
+        if (!cancelled) update = state
+      } catch {
+        /* no row */
+      }
+    })()
+    return () => { cancelled = true }
+  })
 </script>
 
 <section class="corner-brackets surface m-[22px] p-4 grid gap-5 outline-hidden" tabindex="-1" use:focusOnMount>
@@ -304,6 +328,24 @@
     <span><strong>CLI version</strong></span>
     <span class="mono-label">{appState.systemState.cliVersion ?? 'unavailable'}</span>
   </div>
+  <div class="flex items-center justify-between gap-4">
+    <span><strong>Desktop version</strong></span>
+    <span class="mono-label">{appVersion || 'unavailable'}</span>
+  </div>
+  {#if update?.available}
+    <!-- Desktop ships inside the platform installer, so what is newer is the INSTALLER,
+         which also carries the CLI and (on macOS) the FSKit extension. Saying "a newer
+         installer" rather than "Desktop is outdated" is the accurate claim. -->
+    <div class="flex items-center justify-between gap-4">
+      <span><strong>Update available</strong></span>
+      <span class="flex items-center gap-2">
+        <span class="mono-label">{update.available}</span>
+        {#if update.downloadUrl}
+          <button type="button" class="link-button" onclick={() => openExternalUrl(update!.downloadUrl!)}>Download installer</button>
+        {/if}
+      </span>
+    </div>
+  {/if}
   <div class="flex items-center justify-between gap-4">
     <span><strong>CLI path</strong></span>
     <code>{appState.systemState.cliPath ?? 'not found on PATH'}</code>
