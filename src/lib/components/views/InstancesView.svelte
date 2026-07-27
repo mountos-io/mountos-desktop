@@ -203,7 +203,7 @@
                   </Badge>
                 {/if}
                 {#if isTemporaryFork(instance)}
-                  <Badge variant="warning" title="This mount is on a temporary fork, cleaned up when it's deleted" tabindex={0}>Temp fork</Badge>
+                  <Badge variant="warning" title="This mount is a sandbox: writes stay on this device and disappear when it's deleted" tabindex={0}>Sandbox</Badge>
                 {/if}
                 {#if gatewayInfoForInstance(instance)}
                   <Badge title="This mount also has an S3/HDFS gateway running, launched from this app" tabindex={0}>Gateway</Badge>

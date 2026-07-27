@@ -87,7 +87,7 @@
           <button type="button" class="flex flex-1 min-w-0 items-center gap-2 text-left" onclick={() => drillIntoFork(fork.fid)}>
             <strong class="truncate">{fork.name || 'main'}</strong>
             {#if fork.inactive}<Badge variant="warning">Deleted</Badge>{/if}
-            {#if fork.isTemporary}<Badge>Temporary</Badge>{/if}
+            {#if fork.isTemporary}<Badge>Sandbox</Badge>{/if}
             <span class="flex items-center gap-1 text-muted-foreground text-sm ml-auto">
               {#if fork.childrenCount}{fork.childrenCount} {fork.childrenCount === 1 ? 'child' : 'children'}{/if}
               <ChevronRight size={15} aria-hidden="true" />

@@ -305,10 +305,10 @@
           <Checkbox
             checked={selectedProfile.temporaryFork}
             onchange={(e) => patchProfile({ temporaryFork: e.currentTarget.checked })}
-            label="Temporary fork"
+            label="Sandbox"
           />
           <InfoTip
-            text="For trying something out, not for anything you need to keep. Files inherited unchanged from the volume you forked are completely safe. **Only what you create or edit inside this fork is at risk**: that data lives on this device alone, is never backed up, and disappears the moment you unmount. If your disk runs low on space, those writes can fail and that data is gone for good. The volume you forked from is never touched."
+            text="For trying something out, not for anything you need to keep. Everything you see is a read-only snapshot of the volume, so nothing you inherited is ever at risk. **Only what you create or edit inside this sandbox is at risk**: that data lives on this device alone, is never backed up, and disappears the moment you unmount. If your disk runs low on space, those writes can fail and that data is gone for good. The volume itself is never touched."
           />
         </span>
       </div>
