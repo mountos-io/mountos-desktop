@@ -5,6 +5,7 @@ import {
   buildForkDeleteArgv,
   buildForkListArgv,
   buildForkRestoreArgv,
+  buildGatewayArgv,
   buildMountArgv,
   buildSnapshotArgv,
   buildVersionArgv,
@@ -78,6 +79,37 @@ describe('cli helpers', () => {
   it('adds --temporary-fork when enabled', () => {
     expect(buildMountArgv({ ...profile, temporaryFork: true })).toContain('--temporary-fork')
     expect(buildMountArgv({ ...profile, temporaryFork: false })).not.toContain('--temporary-fork')
+  })
+
+  it('carries --temporary-fork through the mount+gateway combo (sandbox composes with gateway)', () => {
+    const argv = buildGatewayArgv(
+      { ...profile, temporaryFork: true },
+      { protocols: ['s3'], gatewayOnly: false, noLoopback: false },
+    )
+    expect(argv).toContain('--temporary-fork')
+    expect(argv).toContain('--gateway')
+  })
+
+  it('carries --temporary-fork through gateway-only too, not just the mount+gateway combo', () => {
+    const argv = buildGatewayArgv(
+      { ...profile, temporaryFork: true },
+      { protocols: ['hdfs'], gatewayOnly: true, noLoopback: false },
+    )
+    expect(argv[0]).toBe('gateway')
+    expect(argv).toContain('--temporary-fork')
+  })
+
+  it('omits --temporary-fork from gateway argv when the profile has sandbox off', () => {
+    const combo = buildGatewayArgv(
+      { ...profile, temporaryFork: false },
+      { protocols: ['s3'], gatewayOnly: false, noLoopback: false },
+    )
+    const gatewayOnly = buildGatewayArgv(
+      { ...profile, temporaryFork: false },
+      { protocols: ['s3'], gatewayOnly: true, noLoopback: false },
+    )
+    expect(combo).not.toContain('--temporary-fork')
+    expect(gatewayOnly).not.toContain('--temporary-fork')
   })
 
   it('rejects managed extra args and duplicate positionals', () => {

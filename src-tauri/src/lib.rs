@@ -952,6 +952,9 @@ fn build_gateway_argv(
         if !profile.fork.is_empty() {
             argv.extend(["--fork-name".to_string(), profile.fork.clone()]);
         }
+        if profile.temporary_fork {
+            argv.push("--temporary-fork".to_string());
+        }
         push_satellite_credentials(&mut argv, profile);
         push_cache_and_extra_args(&mut argv, profile);
         argv
@@ -4834,6 +4837,25 @@ mod tests {
         assert!(argv.windows(2).any(|pair| pair == ["--gateway", "s3,hdfs"]));
         assert!(argv.windows(2).any(|pair| pair == ["--gateway-port", "9001"]));
         assert!(!argv.contains(&"--gateway-only".to_string()));
+    }
+
+    #[test]
+    fn gateway_argv_carries_temporary_fork_in_combo_and_gateway_only() {
+        let mut p = profile();
+        p.temporary_fork = true;
+
+        let combo = build_gateway_argv(&p, &["s3".to_string()], None, false, false, None, None);
+        assert!(combo.contains(&"--temporary-fork".to_string()));
+
+        let gateway_only = build_gateway_argv(&p, &["hdfs".to_string()], None, true, false, None, None);
+        assert_eq!(gateway_only[0], "gateway");
+        assert!(gateway_only.contains(&"--temporary-fork".to_string()));
+
+        p.temporary_fork = false;
+        let combo_off = build_gateway_argv(&p, &["s3".to_string()], None, false, false, None, None);
+        let gateway_only_off = build_gateway_argv(&p, &["s3".to_string()], None, true, false, None, None);
+        assert!(!combo_off.contains(&"--temporary-fork".to_string()));
+        assert!(!gateway_only_off.contains(&"--temporary-fork".to_string()));
     }
 
     #[test]

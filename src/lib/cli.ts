@@ -334,6 +334,7 @@ export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchPar
     argv = ['gateway']
     if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
     if (profile.fork) argv.push('--fork-name', profile.fork)
+    if (profile.temporaryFork) argv.push('--temporary-fork')
     pushSatelliteCredentials(argv, profile)
     pushCacheAndExtraArgs(argv, profile)
   } else {
