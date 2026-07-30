@@ -68,6 +68,11 @@ export interface UploadJob {
   counts: Record<string, number>
   haltReason?: string
   pid?: number
+  // The volume this job was created against. Server-side
+  // validateResumeVolumeMatch already refuses to resume under mismatched
+  // credentials, so this is informational only (lets the UI show/warn
+  // which volume a job belongs to), not itself the enforcement point.
+  volumeId?: number
 }
 
 export interface MountInstance {

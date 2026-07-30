@@ -270,8 +270,9 @@ const state = $state({
   uploadStartSecretValue: '',
   uploadStartError: '',
   // Populated only after a --dry-run start (the report text itself, not a
-  // real job) -- cleared the moment the form's source/dest/flags change
-  // again, since a stale report would otherwise look like it still applies.
+  // real job) -- cleared at the start of the NEXT runUploadStart call
+  // (dry-run or not), so a stale report never lingers past the point the
+  // form's inputs have actually changed and been resubmitted.
   uploadDryRunReport: '',
 
   uploadResumePromptFor: null as UploadJob | null,

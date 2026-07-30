@@ -333,6 +333,12 @@ struct UploadJob {
     counts: std::collections::HashMap<String, i64>,
     halt_reason: Option<String>,
     pid: Option<u32>,
+    // The volume this job was created against (mountos-servers'
+    // spec.VolumeSID). Server-side `validateResumeVolumeMatch` already
+    // refuses to resume a job under mismatched credentials, so this is
+    // informational (lets the UI show/warn which volume a job belongs to),
+    // not itself the enforcement point.
+    volume_id: Option<u32>,
 }
 
 // Frontend-supplied flags for the `mountos upload <source> <dest>` run form
@@ -430,6 +436,14 @@ const UNMOUNT_TIMEOUT: Duration = Duration::from_secs(120);
 // two in sync intentionally, since a shorter value here would mask that
 // server-side context's own descriptive timeout error with a generic one.
 const FORK_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+// `upload --dry-run` walks the entire source tree (runUploadDryRun,
+// cmd_upload.go) rather than doing one quick RPC like every other one-shot
+// upload subcommand -- a large tree on a slow/network disk can legitimately
+// take longer than FORK_COMMAND_TIMEOUT's 30s. Bounded well under
+// LAUNCH_TIMEOUT (65s) x-several rather than unbounded: this is a manual,
+// explicitly-triggered action the user is actively watching for, so a firm
+// upper bound with a clear timeout message still beats hanging forever.
+const DRY_RUN_TIMEOUT: Duration = Duration::from_secs(300);
 // A local `--version` probe of a user-picked candidate binary, not a network
 // round trip -- bounded tight so an unresponsive/hung pick fails fast rather
 // than leaving the settings UI stuck validating.
@@ -1423,6 +1437,7 @@ async fn mcp_install() -> Result<String, DesktopError> {
 fn run_cli_with_secret(
     argv: &[String],
     secret: Option<&str>,
+    timeout: Duration,
 ) -> Result<std::process::Output, DesktopError> {
     let mut child = Command::new(mountos_path()?)
         .args(argv)
@@ -1457,11 +1472,11 @@ fn run_cli_with_secret(
         }
         buf
     });
-    let Some(status) = wait_child(&mut child, FORK_COMMAND_TIMEOUT)? else {
+    let Some(status) = wait_child(&mut child, timeout)? else {
         return Err(DesktopError::Message(format!(
             "mountos {} timed out after {}s",
             argv.join(" "),
-            FORK_COMMAND_TIMEOUT.as_secs()
+            timeout.as_secs()
         )));
     };
     let stdout = stdout_handle.join().unwrap_or_default();
@@ -1480,7 +1495,7 @@ fn fork_command_blocking(
     argv: Vec<String>,
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
-    let output = run_cli_with_secret(&argv, secret.as_deref())?;
+    let output = run_cli_with_secret(&argv, secret.as_deref(), FORK_COMMAND_TIMEOUT)?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !output.status.success() {
@@ -2791,6 +2806,10 @@ fn parse_uploads_value(value: &Value) -> Vec<UploadJob> {
                     .get("pid")
                     .and_then(Value::as_u64)
                     .and_then(|v| u32::try_from(v).ok()),
+                volume_id: entry
+                    .get("volumeId")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok()),
             })
         })
         .collect()
@@ -2806,7 +2825,9 @@ fn list_uploads_blocking() -> Result<Vec<UploadJob>, DesktopError> {
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let value = serde_json::from_slice::<Value>(&output.stdout)?;
+    let value = serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
+        DesktopError::Message(format!("mountos list --kind upload returned unparseable output: {error}"))
+    })?;
     Ok(parse_uploads_value(&value))
 }
 
@@ -2842,12 +2863,24 @@ fn start_upload_blocking(
         // even resolved server-side) and prints its report to stdout -- a
         // one-shot foreground call, same shape as upload_command_blocking,
         // captures and returns exactly that report text instead of waiting
-        // on a daemonize confirmation that will never come.
-        return upload_command_blocking(argv);
+        // on a daemonize confirmation that will never come. Uses
+        // DRY_RUN_TIMEOUT, not FORK_COMMAND_TIMEOUT's 30s -- a dry run walks
+        // the ENTIRE source tree (unlike every other one-shot upload
+        // subcommand, which just touches local job state or a control
+        // socket), and a large/slow-disk source can legitimately take
+        // longer than that.
+        return upload_command_blocking(argv, DRY_RUN_TIMEOUT);
     }
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
-    let stderr_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-stderr.log"));
-    let stdout_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-stdout.log"));
+    // A single profile can legitimately drive multiple concurrent upload
+    // starts at different (source, dest) pairs (unlike a mount, which is
+    // 1:1 with a profile) -- profile-id-only filenames would let one
+    // launch's log-file creation truncate another's mid-write. Same
+    // short_hash-of-destination convention as the Snapshot/Deleted/Version
+    // views below.
+    let suffix = short_hash(&format!("{source}->{dest}"));
+    let stderr_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-{suffix}-stderr.log"));
+    let stdout_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-{suffix}-stdout.log"));
     spawn_daemonizing_upload_and_wait(
         &mountos_path()?,
         &argv,
@@ -2922,8 +2955,8 @@ async fn resume_upload(
 // credentials ever needed) -- same shape as fork_command_blocking/
 // mount_help_blocking, kept as its own sibling rather than reused across
 // features for the same naming-clarity reason those two are separate.
-fn upload_command_blocking(argv: Vec<String>) -> Result<String, DesktopError> {
-    let output = run_cli_with_secret(&argv, None)?;
+fn upload_command_blocking(argv: Vec<String>, timeout: Duration) -> Result<String, DesktopError> {
+    let output = run_cli_with_secret(&argv, None, timeout)?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !output.status.success() {
@@ -2941,7 +2974,7 @@ fn cancel_upload_blocking(job_id: String) -> Result<String, DesktopError> {
     if job_id.is_empty() {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
-    upload_command_blocking(build_upload_cancel_argv(job_id))
+    upload_command_blocking(build_upload_cancel_argv(job_id), FORK_COMMAND_TIMEOUT)
 }
 
 #[tauri::command]
@@ -2956,7 +2989,7 @@ fn retry_failed_upload_blocking(job_id: String) -> Result<String, DesktopError> 
     if job_id.is_empty() {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
-    upload_command_blocking(build_upload_retry_failed_argv(job_id))
+    upload_command_blocking(build_upload_retry_failed_argv(job_id), FORK_COMMAND_TIMEOUT)
 }
 
 #[tauri::command]
@@ -2969,7 +3002,7 @@ async fn retry_failed_upload(job_id: String) -> Result<String, DesktopError> {
 }
 
 fn prune_uploads_blocking(keep: u32) -> Result<String, DesktopError> {
-    upload_command_blocking(build_upload_prune_argv(keep))
+    upload_command_blocking(build_upload_prune_argv(keep), FORK_COMMAND_TIMEOUT)
 }
 
 #[tauri::command]
@@ -5809,7 +5842,7 @@ mod tests {
                 {"kind": "mount", "name": "Team", "mountPath": "/Volumes/MountOS/Team"},
                 {"kind": "upload", "name": "upload-abc123", "jobId": "abc123",
                  "sourcePath": "/local/photos", "destPath": "/remote/photos",
-                 "state": "running", "counts": {"done": 3, "pending": 1}}
+                 "state": "running", "counts": {"done": 3, "pending": 1}, "volumeId": 42}
             ]"#,
         )
         .unwrap();
@@ -5821,6 +5854,7 @@ mod tests {
         assert_eq!(jobs[0].state, "running");
         assert_eq!(jobs[0].counts.get("done"), Some(&3));
         assert_eq!(jobs[0].counts.get("pending"), Some(&1));
+        assert_eq!(jobs[0].volume_id, Some(42));
     }
 
     #[test]

@@ -51,7 +51,19 @@
     running: 'success',
     halted: 'destructive',
     completed: 'secondary',
+    'completed (failures)': 'warning',
     resumable: 'warning',
+  }
+
+  // The server's own state classification has no "completed with failures"
+  // concept (a settle-and-exit with permanent failures still stamps
+  // CompletedAt and clears HaltReason -- see mountos-servers cmd_upload.go,
+  // exit code 3 is the only place that distinction is visible), so a job
+  // that permanently dropped files would otherwise render an identical
+  // calm "completed" badge to a fully clean one. Derived client-side from
+  // the counts map this GUI already has, not a new field.
+  function displayState(job: UploadJob): string {
+    return job.state === 'completed' && (job.counts.failed ?? 0) > 0 ? 'completed (failures)' : job.state
   }
 
   function countsSummary(job: UploadJob): string {
@@ -201,9 +213,14 @@
                 <div class="truncate max-w-[28ch]" title={job.sourcePath}>{job.sourcePath ?? 'source profile'}</div>
                 <div class="truncate max-w-[28ch] text-muted-foreground text-sm" title={job.destPath}>-&gt; {job.destPath}</div>
               </Table.Cell>
-              <Table.Cell>{job.forkName || 'main'}</Table.Cell>
               <Table.Cell>
-                <Badge variant={stateBadgeVariant[job.state] ?? 'default'}>{job.state}</Badge>
+                <div>{job.forkName || 'main'}</div>
+                {#if job.volumeId}
+                  <div class="text-muted-foreground text-sm">vol {job.volumeId}</div>
+                {/if}
+              </Table.Cell>
+              <Table.Cell>
+                <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{displayState(job)}</Badge>
                 {#if job.haltReason}
                   <div class="text-destructive text-sm mt-1" title={job.haltReason}>{job.haltReason}</div>
                 {/if}
@@ -216,7 +233,15 @@
                       <OctagonX size={15} aria-hidden="true" />
                     </Button>
                   {:else}
-                    <Button type="button" size="icon" variant="outline" title="Resume upload" aria-label="Resume upload" disabled={appState.uploadsBusy} onclick={() => requestUploadResume(job)}>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="outline"
+                      title={profile ? 'Resume upload' : 'Add a profile first to resume'}
+                      aria-label="Resume upload"
+                      disabled={appState.uploadsBusy || !profile}
+                      onclick={() => requestUploadResume(job)}
+                    >
                       <RotateCcw size={15} aria-hidden="true" />
                     </Button>
                   {/if}
