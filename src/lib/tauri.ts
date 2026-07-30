@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { join, tempDir } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { GatewayLaunchParams } from './cli'
+import type { GatewayLaunchParams, UploadStartParams } from './cli'
 import type {
   DesktopSettings,
   DiagnosticsBundle,
@@ -15,6 +15,7 @@ import type {
   ThirdPartyLicenses,
   UnmountResult,
   UnmountAllResult,
+  UploadJob,
 } from './types'
 
 export function hasDesktopBridge(): boolean {
@@ -153,6 +154,48 @@ export async function forkDelete(profileId: string, name: string, force: boolean
 export async function forkRestore(profileId: string, name: string, secret?: string): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('fork_restore', { profileId, name, secret })
+}
+
+export async function listUploads(): Promise<UploadJob[]> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<UploadJob[]>('list_uploads')
+}
+
+export async function startUpload(
+  profileId: string,
+  source: string,
+  dest: string,
+  params: UploadStartParams,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('start_upload', { profileId, source, dest, params, secret })
+}
+
+export async function resumeUpload(
+  profileId: string,
+  jobId: string,
+  once: boolean,
+  rescanInterval?: string,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('resume_upload', { profileId, jobId, once, rescanInterval, secret })
+}
+
+export async function cancelUpload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('cancel_upload', { jobId })
+}
+
+export async function retryFailedUpload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('retry_failed_upload', { jobId })
+}
+
+export async function pruneUploads(keep: number): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('prune_uploads', { keep })
 }
 
 export async function openSnapshotView(

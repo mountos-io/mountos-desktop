@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Command, HardDrive, MonitorDot, PanelLeft, Plus, RefreshCw, Settings } from '@lucide/svelte'
+  import { Command, HardDrive, MonitorDot, PanelLeft, Plus, RefreshCw, Settings, Upload } from '@lucide/svelte'
   import Toaster from '$lib/components/Toaster.svelte'
   import { Button } from '$lib/components/ui/button'
   import * as Breadcrumb from '$lib/components/ui/breadcrumb'
@@ -7,6 +7,7 @@
   import { initThemeSync } from '$lib/theme.svelte'
   import InstancesView from '$lib/components/views/InstancesView.svelte'
   import ProfilesView from '$lib/components/views/ProfilesView.svelte'
+  import UploadsView from '$lib/components/views/UploadsView.svelte'
   import SettingsView from '$lib/components/views/SettingsView.svelte'
   import SecretPromptDialog from '$lib/components/dialogs/SecretPromptDialog.svelte'
   import DeleteProfileDialog from '$lib/components/dialogs/DeleteProfileDialog.svelte'
@@ -17,6 +18,8 @@
   import ForkCreateDialog from '$lib/components/dialogs/ForkCreateDialog.svelte'
   import ForkDeleteDialog from '$lib/components/dialogs/ForkDeleteDialog.svelte'
   import ForkRestoreDialog from '$lib/components/dialogs/ForkRestoreDialog.svelte'
+  import UploadResumeDialog from '$lib/components/dialogs/UploadResumeDialog.svelte'
+  import UploadPruneDialog from '$lib/components/dialogs/UploadPruneDialog.svelte'
   import TipsDialog from '$lib/components/dialogs/TipsDialog.svelte'
   import ThirdPartyLicensesDialog from '$lib/components/dialogs/ThirdPartyLicensesDialog.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
@@ -39,6 +42,7 @@
   const navItems: Array<{ id: View; label: string; icon: typeof MonitorDot }> = [
     { id: 'instances', label: 'Instances', icon: MonitorDot },
     { id: 'profiles', label: 'Profiles', icon: HardDrive },
+    { id: 'uploads', label: 'Uploads', icon: Upload },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]
 
@@ -251,6 +255,8 @@
           <InstancesView />
         {:else if appState.view === 'profiles'}
           <ProfilesView />
+        {:else if appState.view === 'uploads'}
+          <UploadsView />
         {:else}
           <SettingsView />
         {/if}
@@ -268,5 +274,7 @@
 <ForkCreateDialog />
 <ForkDeleteDialog />
 <ForkRestoreDialog />
+<UploadResumeDialog />
+<UploadPruneDialog />
 <TipsDialog />
 <ThirdPartyLicensesDialog />

@@ -55,6 +55,21 @@ export interface Fork {
   inactive?: boolean
 }
 
+// One row from `mountos list --kind upload --json`, as returned by the
+// list_uploads Tauri command (src-tauri/src/lib.rs's UploadJob).
+export interface UploadJob {
+  jobId: string
+  name: string
+  sourcePath?: string
+  destPath?: string
+  forkName?: string
+  // running | halted | completed | resumable
+  state: string
+  counts: Record<string, number>
+  haltReason?: string
+  pid?: number
+}
+
 export interface MountInstance {
   key: string
   name: string

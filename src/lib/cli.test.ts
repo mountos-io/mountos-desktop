@@ -8,6 +8,12 @@ import {
   buildGatewayArgv,
   buildMountArgv,
   buildSnapshotArgv,
+  buildUploadCancelArgv,
+  buildUploadListArgv,
+  buildUploadPruneArgv,
+  buildUploadResumeArgv,
+  buildUploadRetryFailedArgv,
+  buildUploadStartArgv,
   buildVersionArgv,
   classifyMountError,
   isAbsolutePath,
@@ -16,6 +22,7 @@ import {
   validateExtraArgs,
   validateMountPathForBackend,
 } from './cli'
+import type { UploadStartParams } from './cli'
 import type { MountProfile } from './types'
 
 const profile: MountProfile = {
@@ -293,5 +300,84 @@ describe('cli helpers', () => {
     expect(isValidFolderName('Team/Files')).toBe(false)
     expect(isValidFolderName('Team\\Files')).toBe(false)
     expect(isValidFolderName('Team\0Files')).toBe(false)
+  })
+
+  const uploadParams = (): UploadStartParams => ({
+    once: false,
+    overwrite: false,
+    dryRun: false,
+    restart: false,
+    include: [],
+    exclude: [],
+    followSymlinks: false,
+    createSourceDirectory: false,
+  })
+
+  it('builds upload start argv with source/dest as bare positionals and no flags by default', () => {
+    const argv = buildUploadStartArgv(profile, '/local/photos', '/remote/photos', uploadParams())
+    expect(argv.slice(0, 3)).toEqual(['upload', '/local/photos', '/remote/photos'])
+    expect(argv).toEqual(expect.arrayContaining(['--discovery-url', 'https://hub.example.com']))
+    expect(argv).not.toContain('--once')
+    expect(argv).not.toContain('--overwrite')
+    expect(argv).not.toContain('--dry-run')
+    expect(argv).not.toContain('--restart')
+    expect(argv).not.toContain('--fork')
+  })
+
+  it('builds upload start argv with every flag set', () => {
+    const params: UploadStartParams = {
+      fork: ' backup ',
+      once: true,
+      overwrite: true,
+      dryRun: true,
+      rescanInterval: ' 1m ',
+      restart: true,
+      bwlimit: 50,
+      include: ['*.jpg', '  '],
+      exclude: ['*.tmp'],
+      followSymlinks: true,
+      createSourceDirectory: true,
+    }
+    const argv = buildUploadStartArgv(profile, '/src', '/dst', params)
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        '--fork', 'backup',
+        '--once',
+        '--overwrite',
+        '--dry-run',
+        '--rescan-interval', '1m',
+        '--restart',
+        '--bwlimit', '50',
+        '--include', '*.jpg',
+        '--exclude', '*.tmp',
+        '--follow-symlinks',
+        '--create-source-directory',
+      ]),
+    )
+    // A blank include/exclude entry must never reach argv as a bare flag.
+    expect(argv.filter((arg) => arg === '--include')).toHaveLength(1)
+  })
+
+  it('omits --bwlimit when zero', () => {
+    const argv = buildUploadStartArgv(profile, '/src', '/dst', { ...uploadParams(), bwlimit: 0 })
+    expect(argv).not.toContain('--bwlimit')
+  })
+
+  it('gives upload resume a smaller flag surface than start', () => {
+    const argv = buildUploadResumeArgv(profile, 'abcdef1234567890', true, ' 45s ')
+    expect(argv.slice(0, 3)).toEqual(['upload', 'resume', 'abcdef1234567890'])
+    expect(argv).toContain('--once')
+    expect(argv).toEqual(expect.arrayContaining(['--rescan-interval', '45s']))
+    expect(argv).not.toContain('--overwrite')
+    expect(argv).not.toContain('--bwlimit')
+    expect(argv).not.toContain('--dry-run')
+  })
+
+  it('carries no credentials or discovery-url for the local-only upload commands', () => {
+    expect(buildUploadListArgv()).toEqual(['list', '--kind', 'upload', '--json'])
+    expect(buildUploadCancelArgv('job123')).toEqual(['upload', 'cancel', 'job123'])
+    expect(buildUploadRetryFailedArgv('job123')).toEqual(['upload', 'retry-failed', 'job123'])
+    expect(buildUploadPruneArgv(0)).toEqual(['upload', 'prune'])
+    expect(buildUploadPruneArgv(5)).toEqual(['upload', 'prune', '--keep', '5'])
   })
 })

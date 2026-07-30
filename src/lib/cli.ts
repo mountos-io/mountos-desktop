@@ -349,6 +349,84 @@ export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchPar
   return argv
 }
 
+export interface UploadStartParams {
+  fork?: string
+  once: boolean
+  overwrite: boolean
+  dryRun: boolean
+  rescanInterval?: string
+  restart: boolean
+  bwlimit?: number
+  include: string[]
+  exclude: string[]
+  followSymlinks: boolean
+  createSourceDirectory: boolean
+}
+
+// The upload run form's flag surface, confirmed against cmd_upload.go: --fork
+// (not --fork-name, unlike every mount/fork/gateway builder above), plus
+// --once/--overwrite/--dry-run/--rescan-interval/--restart/--bwlimit/
+// --include/--exclude/--follow-symlinks/--create-source-directory, all only
+// on the top-level `upload <source> <dest>`. Included even for a dry run
+// (harmless -- runUploadDryRun never reads --fork/credentials at all).
+// Mirrors src-tauri/src/lib.rs's build_upload_start_argv.
+export function buildUploadStartArgv(profile: MountProfile, source: string, dest: string, params: UploadStartParams): string[] {
+  const argv = ['upload', source, dest]
+  if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
+  if (params.fork?.trim()) argv.push('--fork', params.fork.trim())
+  if (params.once) argv.push('--once')
+  if (params.overwrite) argv.push('--overwrite')
+  if (params.dryRun) argv.push('--dry-run')
+  if (params.rescanInterval?.trim()) argv.push('--rescan-interval', params.rescanInterval.trim())
+  if (params.restart) argv.push('--restart')
+  if (params.bwlimit && params.bwlimit > 0) argv.push('--bwlimit', String(params.bwlimit))
+  for (const pattern of params.include) {
+    if (pattern.trim()) argv.push('--include', pattern.trim())
+  }
+  for (const pattern of params.exclude) {
+    if (pattern.trim()) argv.push('--exclude', pattern.trim())
+  }
+  if (params.followSymlinks) argv.push('--follow-symlinks')
+  if (params.createSourceDirectory) argv.push('--create-source-directory')
+  pushSatelliteCredentials(argv, profile)
+  return argv
+}
+
+// `resume` re-registers only --once/--rescan-interval on its own subcommand
+// (cobra local flags on the parent `upload` command aren't inherited by
+// subcommands), so this builder's flag surface is deliberately smaller than
+// buildUploadStartArgv's. Mirrors src-tauri/src/lib.rs's build_upload_resume_argv.
+export function buildUploadResumeArgv(profile: MountProfile, jobId: string, once: boolean, rescanInterval?: string): string[] {
+  const argv = ['upload', 'resume', jobId]
+  if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
+  if (once) argv.push('--once')
+  if (rescanInterval?.trim()) argv.push('--rescan-interval', rescanInterval.trim())
+  pushSatelliteCredentials(argv, profile)
+  return argv
+}
+
+// list/cancel/retry-failed/prune are all purely local (job dir + control
+// socket -- none of the four touch resolveUploadCredentials server-side), so
+// unlike every builder above these take no MountProfile at all: no
+// --discovery-url, no --fork, no satellite credentials.
+export function buildUploadListArgv(): string[] {
+  return ['list', '--kind', 'upload', '--json']
+}
+
+export function buildUploadCancelArgv(jobId: string): string[] {
+  return ['upload', 'cancel', jobId]
+}
+
+export function buildUploadRetryFailedArgv(jobId: string): string[] {
+  return ['upload', 'retry-failed', jobId]
+}
+
+export function buildUploadPruneArgv(keep: number): string[] {
+  const argv = ['upload', 'prune']
+  if (keep > 0) argv.push('--keep', String(keep))
+  return argv
+}
+
 export function parseArgvInput(input: string): string[] {
   const args: string[] = []
   let current = ''

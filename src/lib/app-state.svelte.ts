@@ -9,6 +9,12 @@ import {
   buildGatewayArgv,
   buildMountArgv,
   buildSnapshotArgv,
+  buildUploadCancelArgv,
+  buildUploadListArgv,
+  buildUploadPruneArgv,
+  buildUploadResumeArgv,
+  buildUploadRetryFailedArgv,
+  buildUploadStartArgv,
   buildVersionArgv,
   classifyMountError,
   errorClassLabel,
@@ -18,11 +24,13 @@ import {
   validateExtraArgs,
   validateMountPathForBackend,
 } from './cli'
+import type { UploadStartParams } from './cli'
 import { viewModeBadge } from './health'
 import {
   browseCliBinary,
   browseFolder,
   browseVersionFile as pickVersionFile,
+  cancelUpload,
   createDiagnosticsBundle,
   defaultViewDestination,
   deleteProfile,
@@ -53,9 +61,14 @@ import {
   openTarget,
   openVersionView,
   openVersionViewForInstance,
+  listUploads,
+  pruneUploads,
+  resumeUpload,
+  retryFailedUpload,
   saveProfile,
   saveSettings,
   setProfileSecret,
+  startUpload,
   stopGateway,
   stopGatewayOnly,
   unmountTarget,
@@ -72,9 +85,10 @@ import type {
   MountProfile,
   SystemState,
   ThirdPartyLicenses,
+  UploadJob,
 } from './types'
 
-export type View = 'instances' | 'profiles' | 'settings'
+export type View = 'instances' | 'profiles' | 'uploads' | 'settings'
 
 // The profile editor's right-hand pane: the plain editor form, or one of the
 // five full-width sub-views nested under the selected profile (Forks and the
@@ -224,6 +238,54 @@ const state = $state({
   forkRestorePromptFor: null as Fork | null,
   forkRestoreSecretValue: '',
   forkRestoreError: '',
+
+  // Uploads: a top-level view (like Instances/Profiles), not entered from a
+  // specific profile the way Forks/Snapshot/Deleted/Version/Gateway are --
+  // `mountos list --kind upload --json` reports every job regardless of
+  // which profile started it, so the list itself needs no profile selection.
+  // Only the start/resume forms need one (to source discovery-url/fork/
+  // credentials), reusing the same selectedProfileId/selectedProfile every
+  // other profile-scoped action already uses.
+  uploads: [] as UploadJob[],
+  uploadsBusy: false,
+  uploadsError: '',
+
+  // Start form fields. include/exclude are newline-separated textareas
+  // (split into glob arrays at submit time) rather than a dynamic list of
+  // inputs -- simpler to bind, and --include/--exclude are themselves
+  // free-form globs a user is likely to paste several of at once.
+  uploadSource: '',
+  uploadDest: '',
+  uploadFork: '',
+  uploadOnce: false,
+  uploadOverwrite: false,
+  uploadDryRun: false,
+  uploadRescanInterval: '',
+  uploadRestart: false,
+  uploadBwlimit: '',
+  uploadIncludeText: '',
+  uploadExcludeText: '',
+  uploadFollowSymlinks: false,
+  uploadCreateSourceDirectory: false,
+  uploadStartSecretValue: '',
+  uploadStartError: '',
+  // Populated only after a --dry-run start (the report text itself, not a
+  // real job) -- cleared the moment the form's source/dest/flags change
+  // again, since a stale report would otherwise look like it still applies.
+  uploadDryRunReport: '',
+
+  uploadResumePromptFor: null as UploadJob | null,
+  uploadResumeOnce: false,
+  uploadResumeRescanInterval: '',
+  uploadResumeSecretValue: '',
+  uploadResumeError: '',
+
+  // Prune is the one upload action that's a permanent, irreversible delete
+  // of job records (unlike cancel/retry-failed, which only touch live state
+  // and stay resumable) -- same reason fork delete gets a confirm dialog.
+  uploadPrunePromptOpen: false,
+  uploadPruneKeep: '0',
+  uploadPruneError: '',
 
   // Snapshot/Deleted/Version view-mounts: destination is always an explicit
   // folder pick (browseFolder), never free-typed -- -m/--destination is
@@ -924,6 +986,172 @@ export async function confirmForkRestore() {
     state.forkRestoreError = describeError(error)
   } finally {
     state.forkBusy = false
+  }
+}
+
+// Uploads: list is authoritative (fetched from `mountos list --kind upload
+// --json`, same "list is authoritative" pattern as runForkList), while
+// start/resume are session-local launches that re-fetch the list afterward
+// rather than threading a job id back through the launch result.
+
+export async function browseUploadSource() {
+  const chosen = await browseFolder('Choose a folder to upload')
+  if (chosen) state.uploadSource = chosen
+}
+
+export async function runUploadList() {
+  state.uploadsBusy = true
+  state.uploadsError = ''
+  try {
+    state.uploads = await listUploads()
+  } catch (error) {
+    state.uploadsError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
+function splitGlobLines(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+}
+
+export function uploadStartParams(): UploadStartParams {
+  const bwlimit = Number.parseInt(state.uploadBwlimit, 10)
+  return {
+    fork: state.uploadFork.trim() || undefined,
+    once: state.uploadOnce,
+    overwrite: state.uploadOverwrite,
+    dryRun: state.uploadDryRun,
+    rescanInterval: state.uploadRescanInterval.trim() || undefined,
+    restart: state.uploadRestart,
+    bwlimit: Number.isFinite(bwlimit) && bwlimit > 0 ? bwlimit : undefined,
+    include: splitGlobLines(state.uploadIncludeText),
+    exclude: splitGlobLines(state.uploadExcludeText),
+    followSymlinks: state.uploadFollowSymlinks,
+    createSourceDirectory: state.uploadCreateSourceDirectory,
+  }
+}
+
+export async function runUploadStart() {
+  const profile = selectedProfile
+  const source = state.uploadSource.trim()
+  const dest = state.uploadDest.trim()
+  if (!profile || !source || !dest) return
+  state.uploadsBusy = true
+  state.uploadStartError = ''
+  state.uploadDryRunReport = ''
+  try {
+    const result = await startUpload(profile.id, source, dest, uploadStartParams(), state.uploadStartSecretValue || undefined)
+    state.uploadStartSecretValue = ''
+    if (state.uploadDryRun) {
+      state.uploadDryRunReport = result
+    } else {
+      notify(`Upload started: ${source} -> ${dest}`)
+      await runUploadList()
+    }
+  } catch (error) {
+    state.uploadStartError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
+export function requestUploadResume(job: UploadJob) {
+  state.uploadResumePromptFor = job
+  state.uploadResumeOnce = false
+  state.uploadResumeRescanInterval = ''
+  state.uploadResumeSecretValue = ''
+  state.uploadResumeError = ''
+}
+
+export function cancelUploadResume() {
+  state.uploadResumePromptFor = null
+  state.uploadResumeSecretValue = ''
+}
+
+export async function confirmUploadResume() {
+  const job = state.uploadResumePromptFor
+  const profile = selectedProfile
+  if (!job || !profile) return
+  state.uploadsBusy = true
+  state.uploadResumeError = ''
+  try {
+    await resumeUpload(
+      profile.id,
+      job.jobId,
+      state.uploadResumeOnce,
+      state.uploadResumeRescanInterval.trim() || undefined,
+      state.uploadResumeSecretValue || undefined,
+    )
+    state.uploadResumePromptFor = null
+    state.uploadResumeSecretValue = ''
+    notify(`Upload job ${job.jobId} resumed`)
+    await runUploadList()
+  } catch (error) {
+    state.uploadResumeError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
+// Cancel/retry-failed are non-destructive (the job stays resumable, same
+// reasoning fork restore gets no confirm dialog either), so these run
+// directly from a row button.
+
+export async function runUploadCancel(job: UploadJob) {
+  state.uploadsBusy = true
+  state.uploadsError = ''
+  try {
+    await cancelUpload(job.jobId)
+    notify(`Upload job ${job.jobId} cancelled`)
+    await runUploadList()
+  } catch (error) {
+    state.uploadsError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
+export async function runUploadRetryFailed(job: UploadJob) {
+  state.uploadsBusy = true
+  state.uploadsError = ''
+  try {
+    await retryFailedUpload(job.jobId)
+    notify(`Retrying failed paths for ${job.jobId}`)
+    await runUploadList()
+  } catch (error) {
+    state.uploadsError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
+export function requestUploadPrune() {
+  state.uploadPrunePromptOpen = true
+  state.uploadPruneKeep = '0'
+  state.uploadPruneError = ''
+}
+
+export function cancelUploadPrune() {
+  state.uploadPrunePromptOpen = false
+}
+
+export async function confirmUploadPrune() {
+  const keep = Number.parseInt(state.uploadPruneKeep, 10)
+  state.uploadsBusy = true
+  state.uploadPruneError = ''
+  try {
+    await pruneUploads(Number.isFinite(keep) && keep > 0 ? keep : 0)
+    state.uploadPrunePromptOpen = false
+    notify('Completed/halted upload jobs pruned')
+    await runUploadList()
+  } catch (error) {
+    state.uploadPruneError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
   }
 }
 
@@ -2100,7 +2328,7 @@ export async function uninstallMcp() {
 }
 
 export function viewTitle(nextView: View) {
-  return nextView === 'instances' ? 'Instances' : nextView === 'profiles' ? 'Profiles' : 'Settings'
+  return nextView === 'instances' ? 'Instances' : nextView === 'profiles' ? 'Profiles' : nextView === 'uploads' ? 'Uploads' : 'Settings'
 }
 
 export {
@@ -2112,5 +2340,11 @@ export {
   buildGatewayArgv,
   buildMountArgv,
   buildSnapshotArgv,
+  buildUploadCancelArgv,
+  buildUploadListArgv,
+  buildUploadPruneArgv,
+  buildUploadResumeArgv,
+  buildUploadRetryFailedArgv,
+  buildUploadStartArgv,
   buildVersionArgv,
 }

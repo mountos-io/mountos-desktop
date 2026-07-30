@@ -316,6 +316,44 @@ struct MountResult {
     target: String,
 }
 
+// Mirrors mountos-servers' mountListEntry's upload-only fields (`mountos
+// list --kind upload --json`) -- source_path/dest_path/fork_name/halt_reason
+// are Option since the server field carries `omitempty` and won't appear at
+// all for every state (e.g. a freshly-started job has no halt_reason).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadJob {
+    job_id: String,
+    name: String,
+    source_path: Option<String>,
+    dest_path: Option<String>,
+    fork_name: Option<String>,
+    // running | halted | completed | resumable
+    state: String,
+    counts: std::collections::HashMap<String, i64>,
+    halt_reason: Option<String>,
+    pid: Option<u32>,
+}
+
+// Frontend-supplied flags for the `mountos upload <source> <dest>` run form
+// -- one struct rather than a long parameter list, deserialized straight off
+// the IPC call.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadStartParams {
+    fork: Option<String>,
+    once: bool,
+    overwrite: bool,
+    dry_run: bool,
+    rescan_interval: Option<String>,
+    restart: bool,
+    bwlimit: Option<u32>,
+    include: Vec<String>,
+    exclude: Vec<String>,
+    follow_symlinks: bool,
+    create_source_directory: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct UnmountResult {
     state: String,
@@ -362,7 +400,10 @@ impl UnmountOutcome {
 
 // Parses `mountos unmount --json`. The document goes to stdout and any error
 // text to stderr, so a non-zero exit still carries a usable document.
-fn parse_unmount_outcomes(stdout: &[u8], stderr: &[u8]) -> Result<Vec<UnmountOutcome>, DesktopError> {
+fn parse_unmount_outcomes(
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<Vec<UnmountOutcome>, DesktopError> {
     serde_json::from_slice::<Vec<UnmountOutcome>>(stdout).map_err(|error| {
         let detail = String::from_utf8_lossy(stderr).trim().to_string();
         DesktopError::Message(if detail.is_empty() {
@@ -429,11 +470,16 @@ fn cli_path_override_cell() -> &'static Mutex<Option<PathBuf>> {
 // Self-corrects on the next poll (5s) and every settings.json write races
 // nothing since it happens strictly after this function is populated.
 fn set_cli_path_override(path: Option<PathBuf>) {
-    *cli_path_override_cell().lock().unwrap_or_else(|e| e.into_inner()) = path;
+    *cli_path_override_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = path;
 }
 
 fn cli_path_override() -> Option<PathBuf> {
-    cli_path_override_cell().lock().unwrap_or_else(|e| e.into_inner()).clone()
+    cli_path_override_cell()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 fn mountos_path() -> Result<PathBuf, DesktopError> {
@@ -810,7 +856,10 @@ fn build_deleted_argv(
     if let Some(from) = from.map(str::trim).filter(|value| !value.is_empty()) {
         argv.push(format!("--from={from}"));
     }
-    if let Some(idle) = idle_timeout.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(idle) = idle_timeout
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         argv.push(format!("--idle-timeout={idle}"));
     }
     push_satellite_credentials(&mut argv, profile);
@@ -849,7 +898,10 @@ fn build_version_argv(
     {
         argv.push(format!("--version-format={format}"));
     }
-    if let Some(idle) = idle_timeout.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(idle) = idle_timeout
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         argv.push(format!("--idle-timeout={idle}"));
     }
     push_satellite_credentials(&mut argv, profile);
@@ -924,6 +976,148 @@ fn build_fork_restore_argv(profile: &MountProfile, name: &str) -> Vec<String> {
         argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
     }
     push_satellite_credentials(&mut argv, profile);
+    argv
+}
+
+// The upload run form's flag surface, confirmed against cmd_upload.go: --fork
+// (not --fork-name, unlike every mount/fork/gateway builder above), plus
+// --once/--overwrite/--dry-run/--rescan-interval/--restart/--bwlimit/
+// --include/--exclude/--follow-symlinks/--create-source-directory, all only
+// on the top-level `upload <source> <dest>`. Included even for a dry run
+// (harmless -- runUploadDryRun never reads --fork/credentials at all, and
+// cobra parses global flags regardless of which branch RunE takes), so this
+// one builder covers both branches upload_start_blocking takes.
+fn build_upload_start_argv(
+    profile: &MountProfile,
+    source: &str,
+    dest: &str,
+    params: &UploadStartParams,
+) -> Vec<String> {
+    let mut argv = vec!["upload".to_string(), source.to_string(), dest.to_string()];
+    if !profile.discovery_url.is_empty() {
+        argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
+    }
+    if let Some(fork) = params
+        .fork
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        argv.extend(["--fork".to_string(), fork.to_string()]);
+    }
+    if params.once {
+        argv.push("--once".to_string());
+    }
+    if params.overwrite {
+        argv.push("--overwrite".to_string());
+    }
+    if params.dry_run {
+        argv.push("--dry-run".to_string());
+    }
+    if let Some(interval) = params
+        .rescan_interval
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        argv.extend(["--rescan-interval".to_string(), interval.to_string()]);
+    }
+    if params.restart {
+        argv.push("--restart".to_string());
+    }
+    if let Some(bwlimit) = params.bwlimit.filter(|v| *v > 0) {
+        argv.extend(["--bwlimit".to_string(), bwlimit.to_string()]);
+    }
+    for pattern in params
+        .include
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
+        argv.extend(["--include".to_string(), pattern.to_string()]);
+    }
+    for pattern in params
+        .exclude
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
+        argv.extend(["--exclude".to_string(), pattern.to_string()]);
+    }
+    if params.follow_symlinks {
+        argv.push("--follow-symlinks".to_string());
+    }
+    if params.create_source_directory {
+        argv.push("--create-source-directory".to_string());
+    }
+    push_satellite_credentials(&mut argv, profile);
+    argv
+}
+
+// `resume` re-registers only --once/--rescan-interval on its own subcommand
+// (cobra local flags on the parent `upload` command aren't inherited by
+// subcommands -- confirmed the hard way server-side, see cmd_upload_
+// subcommands.go), so this builder's flag surface is deliberately smaller
+// than build_upload_start_argv's.
+fn build_upload_resume_argv(
+    profile: &MountProfile,
+    job_id: &str,
+    once: bool,
+    rescan_interval: Option<&str>,
+) -> Vec<String> {
+    let mut argv = vec![
+        "upload".to_string(),
+        "resume".to_string(),
+        job_id.to_string(),
+    ];
+    if !profile.discovery_url.is_empty() {
+        argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
+    }
+    if once {
+        argv.push("--once".to_string());
+    }
+    if let Some(interval) = rescan_interval.map(str::trim).filter(|v| !v.is_empty()) {
+        argv.extend(["--rescan-interval".to_string(), interval.to_string()]);
+    }
+    push_satellite_credentials(&mut argv, profile);
+    argv
+}
+
+// list/cancel/retry-failed/prune are all purely local (job dir + control
+// socket, confirmed against cmd_list_upload.go/cmd_upload_subcommands.go --
+// none of the four touch resolveUploadCredentials), so unlike every builder
+// above these take no MountProfile at all: no --discovery-url, no --fork, no
+// satellite credentials.
+fn build_upload_list_argv() -> Vec<String> {
+    vec![
+        "list".to_string(),
+        "--kind".to_string(),
+        "upload".to_string(),
+        "--json".to_string(),
+    ]
+}
+
+fn build_upload_cancel_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "upload".to_string(),
+        "cancel".to_string(),
+        job_id.to_string(),
+    ]
+}
+
+fn build_upload_retry_failed_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "upload".to_string(),
+        "retry-failed".to_string(),
+        job_id.to_string(),
+    ]
+}
+
+fn build_upload_prune_argv(keep: u32) -> Vec<String> {
+    let mut argv = vec!["upload".to_string(), "prune".to_string()];
+    if keep > 0 {
+        argv.extend(["--keep".to_string(), keep.to_string()]);
+    }
     argv
 }
 
@@ -1036,7 +1230,8 @@ fn validate_mount_path_for_backend(
             .any(|component| component == std::path::Component::ParentDir);
         if trimmed.is_empty()
             || has_parent_component
-            || !(trimmed.starts_with(FSKIT_MOUNT_PREFIX) && trimmed.len() > FSKIT_MOUNT_PREFIX.len())
+            || !(trimmed.starts_with(FSKIT_MOUNT_PREFIX)
+                && trimmed.len() > FSKIT_MOUNT_PREFIX.len())
         {
             return Err(DesktopError::Message(format!(
                 "FSKit requires a mount point under {FSKIT_MOUNT_PREFIX}<name>, got {mount_path:?}"
@@ -1281,7 +1476,10 @@ fn run_cli_with_secret(
 // Fork subcommands are one-shot TCP calls (connect, do the op, print, exit),
 // not mounts — no daemonize, no list --json polling, just exit-code +
 // stdout/stderr, mirroring mount_help_blocking's shape.
-fn fork_command_blocking(argv: Vec<String>, secret: Option<String>) -> Result<String, DesktopError> {
+fn fork_command_blocking(
+    argv: Vec<String>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
     let output = run_cli_with_secret(&argv, secret.as_deref())?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1337,7 +1535,11 @@ fn get_third_party_licenses(app: AppHandle, kind: String) -> Result<Value, Deskt
     let file_name = match kind.as_str() {
         "rust" => "rust.json",
         "js" => "js.json",
-        _ => return Err(DesktopError::Message(format!("unknown license kind: {kind}"))),
+        _ => {
+            return Err(DesktopError::Message(format!(
+                "unknown license kind: {kind}"
+            )))
+        }
     };
     let content = fs::read_to_string(licenses_dir(&app)?.join(file_name))?;
     Ok(serde_json::from_str(&content)?)
@@ -1565,6 +1767,14 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
         .unwrap_or_default();
     entries
         .into_iter()
+        // "upload" entries (mountos-servers' `mountos list --json` mixes
+        // mount + gateway + upload kinds unconditionally, `--kind` is a
+        // CLI-side filter only) have no mountPath/backend at all and would
+        // otherwise render as broken mount rows here -- every existing kind
+        // check in this codebase is the binary `kind !== "gateway"`, which
+        // treats anything else as a mount. Uploads get their own
+        // list_uploads command instead.
+        .filter(|entry| entry.get("kind").and_then(Value::as_str) != Some("upload"))
         .map(|entry| {
             let mount_path = entry
                 .get("mountPath")
@@ -1638,7 +1848,10 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
                 orphaned,
-                kind: entry.get("kind").and_then(Value::as_str).map(ToString::to_string),
+                kind: entry
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 gateway_endpoints,
                 pid: entry
                     .get("pid")
@@ -1651,7 +1864,12 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
                 temporary_fork: None,
                 external: true,
                 profile_id: None,
-                health: if orphaned == Some(true) { "lost" } else { "healthy" }.to_string(),
+                health: if orphaned == Some(true) {
+                    "lost"
+                } else {
+                    "healthy"
+                }
+                .to_string(),
             }
         })
         .collect()
@@ -1725,7 +1943,10 @@ fn get_settings(app: AppHandle) -> Result<DesktopSettings, DesktopError> {
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: DesktopSettings) -> Result<DesktopSettings, DesktopError> {
+fn save_settings(
+    app: AppHandle,
+    settings: DesktopSettings,
+) -> Result<DesktopSettings, DesktopError> {
     validate_backend_for_platform(&settings.default_backend)?;
     // Bounded here, not just in the picker: settings.json is a plain file a user
     // can hand-edit, and a huge value would look like the list had frozen. 0 is
@@ -1741,9 +1962,7 @@ fn save_settings(app: AppHandle, settings: DesktopSettings) -> Result<DesktopSet
     }
     if let Some(pinned) = &settings.cli_path_override {
         if !PathBuf::from(pinned).is_file() {
-            return Err(DesktopError::Message(format!(
-                "not a file: {pinned}"
-            )));
+            return Err(DesktopError::Message(format!("not a file: {pinned}")));
         }
     }
     let path = settings_path(&app)?;
@@ -1905,7 +2124,9 @@ fn save_profile(app: AppHandle, profile: MountProfile) -> Result<MountProfile, D
     }
     // Length-only: mountOS access key IDs are fixed-length, but the exact
     // charset isn't this GUI's contract to police.
-    if !profile.access_key_id.is_empty() && profile.access_key_id.chars().count() != ACCESS_KEY_ID_LENGTH {
+    if !profile.access_key_id.is_empty()
+        && profile.access_key_id.chars().count() != ACCESS_KEY_ID_LENGTH
+    {
         return Err(DesktopError::Message(format!(
             "access key ID must be {ACCESS_KEY_ID_LENGTH} characters"
         )));
@@ -2127,8 +2348,7 @@ fn spawn_daemonizing_and_wait(
             let stdout = fs::read_to_string(stdout_path).unwrap_or_default();
             let detail = format!("{stderr}\n{stdout}").trim().to_string();
             return Err(DesktopError::Message(if detail.is_empty() {
-                "process exited, but the target did not become ready within 60 seconds"
-                    .to_string()
+                "process exited, but the target did not become ready within 60 seconds".to_string()
             } else {
                 detail
             }));
@@ -2160,6 +2380,55 @@ fn spawn_daemonizing_and_wait(
     } else {
         Err(DesktopError::Message(detail))
     }
+}
+
+// `upload <source> <dest>` and `upload resume` daemonize the same way mount
+// does (parent forks, blocks on the readiness pipe, exits 0 once
+// utils.NotifyDaemonReady fires child-side) -- but unlike a mount there is
+// no single mount-path-shaped target to poll for readiness, and exit code 0
+// IS the confirmation. Callers re-fetch list_uploads afterward rather than
+// this returning a job id, so this only needs to report success/failure, not
+// a MountResult.
+fn spawn_daemonizing_upload_and_wait(
+    mountos: &Path,
+    args: &[String],
+    secret: Option<&str>,
+    stdout_path: &Path,
+    stderr_path: &Path,
+) -> Result<(), DesktopError> {
+    let stderr_file = fs::File::create(stderr_path)?;
+    let stdout_file = fs::File::create(stdout_path)?;
+    let mut child = Command::new(mountos)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file))
+        .spawn()?;
+
+    if let Some(secret) = secret {
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(secret.as_bytes())?;
+            stdin.write_all(b"\n")?;
+        }
+    }
+    drop(child.stdin.take());
+
+    let Some(status) = wait_child(&mut child, LAUNCH_TIMEOUT)? else {
+        return Err(DesktopError::Message(
+            "upload launch timed out and the child process was terminated".to_string(),
+        ));
+    };
+    if status.success() {
+        return Ok(());
+    }
+    let stderr = fs::read_to_string(stderr_path).unwrap_or_default();
+    let stdout = fs::read_to_string(stdout_path).unwrap_or_default();
+    let detail = format!("{stderr}\n{stdout}").trim().to_string();
+    Err(DesktopError::Message(if detail.is_empty() {
+        format!("mountos exited with {status}")
+    } else {
+        detail
+    }))
 }
 
 // deleted/version never daemonize (Foreground: true is hardcoded
@@ -2326,9 +2595,9 @@ fn resolve_satellite_secret(
     if profile.access_key_id.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(read_profile_secret(profile, secret)?.ok_or_else(|| {
-            DesktopError::Message("secret required".to_string())
-        })?))
+        Ok(Some(read_profile_secret(profile, secret)?.ok_or_else(
+            || DesktopError::Message("secret required".to_string()),
+        )?))
     }
 }
 
@@ -2418,7 +2687,10 @@ fn fork_delete_blocking(
     let profile = find_profile(&app, &profile_id)?;
     let name = validate_fork_name(&name)?;
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
-    fork_command_blocking(build_fork_delete_argv(&profile, &name, force), resolved_secret)
+    fork_command_blocking(
+        build_fork_delete_argv(&profile, &name, force),
+        resolved_secret,
+    )
 }
 
 #[tauri::command]
@@ -2455,15 +2727,265 @@ async fn fork_restore(
     name: String,
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
-    tauri::async_runtime::spawn_blocking(move || fork_restore_blocking(app, profile_id, name, secret))
+    tauri::async_runtime::spawn_blocking(move || {
+        fork_restore_blocking(app, profile_id, name, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("fork restore task failed: {error}")))?
+}
+
+// entry.get("kind") == "upload" here comes from mountos-servers' `mountos
+// list --json` mixing mount + gateway + upload kinds unconditionally
+// (--kind is a CLI-side filter only) -- filtered defensively even though
+// this call already passes --kind upload, so a future server change to that
+// filter can't silently leak the wrong rows into the uploads list either.
+fn parse_uploads_value(value: &Value) -> Vec<UploadJob> {
+    value
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("upload"))
+        .filter_map(|entry| {
+            let job_id = entry.get("jobId").and_then(Value::as_str)?.to_string();
+            let counts = entry
+                .get("counts")
+                .and_then(Value::as_object)
+                .map(|counts| {
+                    counts
+                        .iter()
+                        .filter_map(|(status, n)| n.as_i64().map(|n| (status.clone(), n)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(UploadJob {
+                job_id,
+                name: entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                source_path: entry
+                    .get("sourcePath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                dest_path: entry
+                    .get("destPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                fork_name: entry
+                    .get("forkName")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                state: entry
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("resumable")
+                    .to_string(),
+                counts,
+                halt_reason: entry
+                    .get("haltReason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                pid: entry
+                    .get("pid")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok()),
+            })
+        })
+        .collect()
+}
+
+fn list_uploads_blocking() -> Result<Vec<UploadJob>, DesktopError> {
+    let argv = build_upload_list_argv();
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let output = command_output(&args)?;
+    if !output.status.success() {
+        return Err(DesktopError::Message(format!(
+            "mountos list --kind upload failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let value = serde_json::from_slice::<Value>(&output.stdout)?;
+    Ok(parse_uploads_value(&value))
+}
+
+#[tauri::command]
+async fn list_uploads() -> Result<Vec<UploadJob>, DesktopError> {
+    tauri::async_runtime::spawn_blocking(list_uploads_blocking)
         .await
-        .map_err(|error| DesktopError::Message(format!("fork restore task failed: {error}")))?
+        .map_err(|error| DesktopError::Message(format!("list uploads task failed: {error}")))?
+}
+
+fn start_upload_blocking(
+    app: AppHandle,
+    profile_id: String,
+    source: String,
+    dest: String,
+    params: UploadStartParams,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let profile = find_profile(&app, &profile_id)?;
+    let source = source.trim();
+    let dest = dest.trim();
+    if source.is_empty() {
+        return Err(DesktopError::Message("source path is required".to_string()));
+    }
+    if dest.is_empty() {
+        return Err(DesktopError::Message(
+            "destination path is required".to_string(),
+        ));
+    }
+    let argv = build_upload_start_argv(&profile, source, dest, &params);
+    if params.dry_run {
+        // Never connects (runUploadDryRun is checked before credentials are
+        // even resolved server-side) and prints its report to stdout -- a
+        // one-shot foreground call, same shape as upload_command_blocking,
+        // captures and returns exactly that report text instead of waiting
+        // on a daemonize confirmation that will never come.
+        return upload_command_blocking(argv);
+    }
+    let resolved_secret = resolve_satellite_secret(&profile, secret)?;
+    let stderr_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-stderr.log"));
+    let stdout_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-stdout.log"));
+    spawn_daemonizing_upload_and_wait(
+        &mountos_path()?,
+        &argv,
+        resolved_secret.as_deref(),
+        &stdout_path,
+        &stderr_path,
+    )?;
+    Ok("upload job started".to_string())
+}
+
+#[tauri::command]
+async fn start_upload(
+    app: AppHandle,
+    profile_id: String,
+    source: String,
+    dest: String,
+    params: UploadStartParams,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        start_upload_blocking(app, profile_id, source, dest, params, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("start upload task failed: {error}")))?
+}
+
+fn resume_upload_blocking(
+    app: AppHandle,
+    profile_id: String,
+    job_id: String,
+    once: bool,
+    rescan_interval: Option<String>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let profile = find_profile(&app, &profile_id)?;
+    let job_id = job_id.trim().to_string();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    let resolved_secret = resolve_satellite_secret(&profile, secret)?;
+    let argv = build_upload_resume_argv(&profile, &job_id, once, rescan_interval.as_deref());
+    let stderr_path = runtime_dir(&app)?.join(format!("upload-resume-{job_id}-stderr.log"));
+    let stdout_path = runtime_dir(&app)?.join(format!("upload-resume-{job_id}-stdout.log"));
+    spawn_daemonizing_upload_and_wait(
+        &mountos_path()?,
+        &argv,
+        resolved_secret.as_deref(),
+        &stdout_path,
+        &stderr_path,
+    )?;
+    Ok("upload job resumed".to_string())
+}
+
+#[tauri::command]
+async fn resume_upload(
+    app: AppHandle,
+    profile_id: String,
+    job_id: String,
+    once: bool,
+    rescan_interval: Option<String>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resume_upload_blocking(app, profile_id, job_id, once, rescan_interval, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("resume upload task failed: {error}")))?
+}
+
+// Upload's status/cancel/retry-failed/prune subcommands are one-shot local
+// calls (control-socket or on-disk state only, no cluster connection, no
+// credentials ever needed) -- same shape as fork_command_blocking/
+// mount_help_blocking, kept as its own sibling rather than reused across
+// features for the same naming-clarity reason those two are separate.
+fn upload_command_blocking(argv: Vec<String>) -> Result<String, DesktopError> {
+    let output = run_cli_with_secret(&argv, None)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(DesktopError::Message(if stderr.is_empty() {
+            format!("mountos {} exited with {}", argv.join(" "), output.status)
+        } else {
+            stderr
+        }));
+    }
+    Ok(if stdout.is_empty() { stderr } else { stdout })
+}
+
+fn cancel_upload_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    upload_command_blocking(build_upload_cancel_argv(job_id))
+}
+
+#[tauri::command]
+async fn cancel_upload(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || cancel_upload_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("cancel upload task failed: {error}")))?
+}
+
+fn retry_failed_upload_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    upload_command_blocking(build_upload_retry_failed_argv(job_id))
+}
+
+#[tauri::command]
+async fn retry_failed_upload(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || retry_failed_upload_blocking(job_id))
+        .await
+        .map_err(|error| {
+            DesktopError::Message(format!("retry-failed upload task failed: {error}"))
+        })?
+}
+
+fn prune_uploads_blocking(keep: u32) -> Result<String, DesktopError> {
+    upload_command_blocking(build_upload_prune_argv(keep))
+}
+
+#[tauri::command]
+async fn prune_uploads(keep: u32) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || prune_uploads_blocking(keep))
+        .await
+        .map_err(|error| DesktopError::Message(format!("prune uploads task failed: {error}")))?
 }
 
 // Shared guard for the three satellite view-mount commands: the destination
 // must be a real absolute path and must differ from the parent profile's own
 // mount path.
-fn validate_view_destination(profile: &MountProfile, destination: &str) -> Result<(), DesktopError> {
+fn validate_view_destination(
+    profile: &MountProfile,
+    destination: &str,
+) -> Result<(), DesktopError> {
     if destination.trim().is_empty() || !is_openable_target(destination) {
         return Err(DesktopError::Message(
             "destination must be an absolute filesystem path".to_string(),
@@ -2505,8 +3027,10 @@ fn open_snapshot_view_blocking(
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
     let args = build_snapshot_argv(&profile, &destination, timestamp.trim());
     let suffix = short_hash(&destination);
-    let stderr_path = runtime_dir(&app)?.join(format!("snapshot-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("snapshot-{}-{suffix}-stdout.log", profile.id));
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("snapshot-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("snapshot-{}-{suffix}-stdout.log", profile.id));
     spawn_daemonizing_and_wait(
         &mountos_path()?,
         &args,
@@ -2551,10 +3075,17 @@ fn open_deleted_view_blocking(
     }
     reject_managed_extra_args(&profile)?;
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
-    let args = build_deleted_argv(&profile, &destination, from.as_deref(), idle_timeout.as_deref());
+    let args = build_deleted_argv(
+        &profile,
+        &destination,
+        from.as_deref(),
+        idle_timeout.as_deref(),
+    );
     let suffix = short_hash(&destination);
-    let stderr_path = runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stdout.log", profile.id));
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stdout.log", profile.id));
     spawn_foreground_view_and_poll(
         &mountos_path()?,
         &args,
@@ -2599,10 +3130,17 @@ fn open_version_view_blocking(
 ) -> Result<MountResult, DesktopError> {
     let mut profile = find_profile(&app, &profile_id)?;
     validate_view_destination(&profile, &destination)?;
-    let path = path.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let path = path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     // Inodes travel as strings end-to-end (see MountInstance.version_inode):
     // a JS `number` silently loses precision above Number.MAX_SAFE_INTEGER.
-    let parsed_inode: Option<u64> = match inode.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    let parsed_inode: Option<u64> = match inode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(raw) => Some(
             raw.parse()
                 .map_err(|_| DesktopError::Message(format!("invalid inode number: {raw:?}")))?,
@@ -2610,7 +3148,9 @@ fn open_version_view_blocking(
         None => None,
     };
     if path.is_none() && parsed_inode.is_none() {
-        return Err(DesktopError::Message("provide a file path or an inode number".to_string()));
+        return Err(DesktopError::Message(
+            "provide a file path or an inode number".to_string(),
+        ));
     }
     validate_backend_for_platform(&profile.backend)?;
     resolve_auto_backend(&mut profile)?;
@@ -2631,8 +3171,10 @@ fn open_version_view_blocking(
         full_chain,
     );
     let suffix = short_hash(&destination);
-    let stderr_path = runtime_dir(&app)?.join(format!("version-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("version-{}-{suffix}-stdout.log", profile.id));
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("version-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("version-{}-{suffix}-stdout.log", profile.id));
     spawn_foreground_view_and_poll(
         &mountos_path()?,
         &args,
@@ -2705,7 +3247,11 @@ struct LiveMountConfig {
 // Pure and unit-testable on purpose: kept separate from the fs::read/
 // list_contains_target I/O in synthetic_profile_for_live_mount below, which
 // shells out to the real mountos binary and can't run in a test environment.
-fn live_mount_config_to_profile(mount_path: &str, backend: Backend, config: LiveMountConfig) -> Result<MountProfile, DesktopError> {
+fn live_mount_config_to_profile(
+    mount_path: &str,
+    backend: Backend,
+    config: LiveMountConfig,
+) -> Result<MountProfile, DesktopError> {
     if config.volume_type.eq_ignore_ascii_case("iceberg") {
         return Err(DesktopError::Message(
             "Iceberg volumes don't support this view".to_string(),
@@ -2741,15 +3287,19 @@ fn live_mount_config_to_profile(mount_path: &str, backend: Backend, config: Live
     })
 }
 
-fn synthetic_profile_for_live_mount(mount_path: &str, backend: Backend) -> Result<MountProfile, DesktopError> {
+fn synthetic_profile_for_live_mount(
+    mount_path: &str,
+    backend: Backend,
+) -> Result<MountProfile, DesktopError> {
     if !list_contains_target(mount_path)? {
         return Err(DesktopError::Message(format!(
             "not a currently active mount: {mount_path}"
         )));
     }
     let config_path = PathBuf::from(mount_path).join(".mountOS").join(".config");
-    let bytes = fs::read(&config_path)
-        .map_err(|err| DesktopError::Message(format!("failed to read {}: {err}", config_path.display())))?;
+    let bytes = fs::read(&config_path).map_err(|err| {
+        DesktopError::Message(format!("failed to read {}: {err}", config_path.display()))
+    })?;
     let config: LiveMountConfig = serde_json::from_slice(&bytes)?;
     live_mount_config_to_profile(mount_path, backend, config)
 }
@@ -2774,10 +3324,17 @@ fn open_deleted_view_for_instance_blocking(
     }
     reject_managed_extra_args(&profile)?;
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
-    let args = build_deleted_argv(&profile, &destination, from.as_deref(), idle_timeout.as_deref());
+    let args = build_deleted_argv(
+        &profile,
+        &destination,
+        from.as_deref(),
+        idle_timeout.as_deref(),
+    );
     let suffix = short_hash(&destination);
-    let stderr_path = runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stdout.log", profile.id));
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("deleted-{}-{suffix}-stdout.log", profile.id));
     spawn_foreground_view_and_poll(
         &mountos_path()?,
         &args,
@@ -2800,7 +3357,15 @@ async fn open_deleted_view_for_instance(
     secret: Option<String>,
 ) -> Result<MountResult, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || {
-        open_deleted_view_for_instance_blocking(app, mount_path, backend, destination, from, idle_timeout, secret)
+        open_deleted_view_for_instance_blocking(
+            app,
+            mount_path,
+            backend,
+            destination,
+            from,
+            idle_timeout,
+            secret,
+        )
     })
     .await
     .map_err(|error| DesktopError::Message(format!("deleted view task failed: {error}")))?
@@ -2821,10 +3386,17 @@ fn open_version_view_for_instance_blocking(
 ) -> Result<MountResult, DesktopError> {
     let mut profile = synthetic_profile_for_live_mount(&mount_path, backend)?;
     validate_view_destination(&profile, &destination)?;
-    let path = path.as_deref().map(str::trim).filter(|value| !value.is_empty());
+    let path = path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     // Inodes travel as strings end-to-end (see MountInstance.version_inode):
     // a JS `number` silently loses precision above Number.MAX_SAFE_INTEGER.
-    let parsed_inode: Option<u64> = match inode.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    let parsed_inode: Option<u64> = match inode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some(raw) => Some(
             raw.parse()
                 .map_err(|_| DesktopError::Message(format!("invalid inode number: {raw:?}")))?,
@@ -2832,7 +3404,9 @@ fn open_version_view_for_instance_blocking(
         None => None,
     };
     if path.is_none() && parsed_inode.is_none() {
-        return Err(DesktopError::Message("provide a file path or an inode number".to_string()));
+        return Err(DesktopError::Message(
+            "provide a file path or an inode number".to_string(),
+        ));
     }
     validate_backend_for_platform(&profile.backend)?;
     resolve_auto_backend(&mut profile)?;
@@ -2853,8 +3427,10 @@ fn open_version_view_for_instance_blocking(
         full_chain,
     );
     let suffix = short_hash(&destination);
-    let stderr_path = runtime_dir(&app)?.join(format!("version-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("version-{}-{suffix}-stdout.log", profile.id));
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("version-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("version-{}-{suffix}-stdout.log", profile.id));
     spawn_foreground_view_and_poll(
         &mountos_path()?,
         &args,
@@ -3085,8 +3661,10 @@ fn open_gateway_blocking(
         key_path.as_deref(),
     );
     let suffix = short_hash(&format!("{gateway_only}-{}", protocols.join(",")));
-    let stderr_path = runtime_dir(&app)?.join(format!("gateway-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("gateway-{}-{suffix}-stdout.log", profile.id));
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("gateway-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("gateway-{}-{suffix}-stdout.log", profile.id));
     let result = if gateway_only {
         spawn_gateway_only_and_wait(
             &mountos_path()?,
@@ -3405,7 +3983,12 @@ fn list_active_targets() -> Result<Vec<String>, DesktopError> {
         .unwrap_or_default();
     Ok(entries
         .iter()
-        .filter_map(|entry| entry.get("mountPath").and_then(Value::as_str).map(ToString::to_string))
+        .filter_map(|entry| {
+            entry
+                .get("mountPath")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
         .collect())
 }
 
@@ -3526,7 +4109,11 @@ struct InstanceConfigExtras {
 }
 
 fn read_instance_config_extras(mount_path: &str) -> InstanceConfigExtras {
-    let empty = InstanceConfigExtras { mount_time: None, volume_kind: None, temporary_fork: None };
+    let empty = InstanceConfigExtras {
+        mount_time: None,
+        volume_kind: None,
+        temporary_fork: None,
+    };
     let config_path = PathBuf::from(mount_path).join(".mountOS").join(".config");
     let Ok(bytes) = fs::read(&config_path) else {
         return empty;
@@ -3535,8 +4122,14 @@ fn read_instance_config_extras(mount_path: &str) -> InstanceConfigExtras {
         return empty;
     };
     InstanceConfigExtras {
-        mount_time: value.get("mountTime").and_then(Value::as_str).map(ToString::to_string),
-        volume_kind: value.get("volumeType").and_then(Value::as_str).map(ToString::to_string),
+        mount_time: value
+            .get("mountTime")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        volume_kind: value
+            .get("volumeType")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
         temporary_fork: value.get("isTemporaryFork").and_then(Value::as_bool),
     }
 }
@@ -3560,10 +4153,7 @@ fn get_instance_config(target: String) -> Result<String, DesktopError> {
     }
     let config_path = PathBuf::from(&target).join(".mountOS").join(".config");
     let bytes = fs::read(&config_path).map_err(|err| {
-        DesktopError::Message(format!(
-            "failed to read {}: {err}",
-            config_path.display()
-        ))
+        DesktopError::Message(format!("failed to read {}: {err}", config_path.display()))
     })?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)?;
     Ok(serde_json::to_string_pretty(&value)?)
@@ -3838,7 +4428,10 @@ fn spawn_dashboard_terminal(
     gui: bool,
     preferred: Option<&str>,
 ) -> Result<(), DesktopError> {
-    let mut shell_cmd = format!("mode con: cols={TUI_COLS} lines={TUI_ROWS} && \"{}\" dashboard", mountos.display());
+    let mut shell_cmd = format!(
+        "mode con: cols={TUI_COLS} lines={TUI_ROWS} && \"{}\" dashboard",
+        mountos.display()
+    );
     if gui {
         shell_cmd.push_str(" --gui");
     }
@@ -3855,7 +4448,11 @@ fn spawn_dashboard_terminal(
     let available = available_terminals();
     let chosen = preferred
         .filter(|id| available.iter().any(|option| option.id == *id))
-        .unwrap_or(if which::which("wt").is_ok() { "wt" } else { "cmd" });
+        .unwrap_or(if which::which("wt").is_ok() {
+            "wt"
+        } else {
+            "cmd"
+        });
 
     if chosen == "wt" {
         if let Ok(wt) = which::which("wt") {
@@ -3881,7 +4478,11 @@ fn spawn_dashboard_terminal(
 #[cfg(not(any(windows, target_os = "macos")))]
 const KNOWN_TERMINALS: &[(&str, &str, &str)] = &[
     // (id, label, binary to probe on PATH)
-    ("x-terminal-emulator", "System default", "x-terminal-emulator"),
+    (
+        "x-terminal-emulator",
+        "System default",
+        "x-terminal-emulator",
+    ),
     ("gnome-terminal", "GNOME Terminal", "gnome-terminal"),
     ("konsole", "Konsole", "konsole"),
     ("xterm", "xterm", "xterm"),
@@ -3944,7 +4545,11 @@ fn spawn_dashboard_terminal(
     ))
 }
 
-fn launch_dashboard_blocking(app: AppHandle, target: String, gui: bool) -> Result<(), DesktopError> {
+fn launch_dashboard_blocking(
+    app: AppHandle,
+    target: String,
+    gui: bool,
+) -> Result<(), DesktopError> {
     if !is_openable_target(&target) {
         return Err(DesktopError::Message(
             "mount target is not an absolute filesystem path".to_string(),
@@ -3959,7 +4564,9 @@ fn launch_dashboard_blocking(app: AppHandle, target: String, gui: bool) -> Resul
     // A broken/missing settings.json must not block the dashboard; fall back to
     // no preference (the stock terminal) rather than surfacing a settings error
     // from a button that has nothing to do with settings.
-    let preferred = get_settings(app).ok().and_then(|settings| settings.terminal);
+    let preferred = get_settings(app)
+        .ok()
+        .and_then(|settings| settings.terminal);
     spawn_dashboard_terminal(&mountos_path()?, &target, gui, preferred.as_deref())
 }
 
@@ -4019,7 +4626,11 @@ fn open_lost_found(target: String) -> Result<(), DesktopError> {
 // the directory and turn this into an arbitrary "open any file" primitive.
 #[tauri::command]
 fn open_diagnostics_bundle(app: AppHandle, path: String) -> Result<(), DesktopError> {
-    let dir = app.path().app_cache_dir()?.join("diagnostics").canonicalize()?;
+    let dir = app
+        .path()
+        .app_cache_dir()?
+        .join("diagnostics")
+        .canonicalize()?;
     let target = PathBuf::from(&path).canonicalize()?;
     if !target.starts_with(&dir) {
         return Err(DesktopError::Message(
@@ -4173,8 +4784,20 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         }
     }
     items.push(Box::new(PredefinedMenuItem::separator(app)?));
-    items.push(Box::new(MenuItem::with_id(app, "show", "Open mountOS", true, None::<&str>)?));
-    items.push(Box::new(MenuItem::with_id(app, "quit", "Quit mountOS", true, None::<&str>)?));
+    items.push(Box::new(MenuItem::with_id(
+        app,
+        "show",
+        "Open mountOS",
+        true,
+        None::<&str>,
+    )?));
+    items.push(Box::new(MenuItem::with_id(
+        app,
+        "quit",
+        "Quit mountOS",
+        true,
+        None::<&str>,
+    )?));
 
     let refs: Vec<&dyn IsMenuItem<tauri::Wry>> = items.iter().map(|item| item.as_ref()).collect();
     Menu::with_items(app, &refs)
@@ -4200,7 +4823,8 @@ pub fn run() {
             set_dock_visible(app.handle(), main_visible);
 
             let menu = build_tray_menu(app.handle())?;
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+            let tray_icon =
+                tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
 
             TrayIconBuilder::new()
                 .icon(tray_icon)
@@ -4269,6 +4893,12 @@ pub fn run() {
             fork_create,
             fork_delete,
             fork_restore,
+            list_uploads,
+            start_upload,
+            resume_upload,
+            cancel_upload,
+            retry_failed_upload,
+            prune_uploads,
             open_snapshot_view,
             open_deleted_view,
             open_version_view,
@@ -4375,7 +5005,12 @@ mod tests {
     // longer exists; it must land on Auto rather than fail the whole listing.
     #[test]
     fn deserializes_unknown_backend_ids_as_auto() {
-        for raw in ["\"fileprovider\"", "\"cloudfilter\"", "\"\"", "\"nonsense\""] {
+        for raw in [
+            "\"fileprovider\"",
+            "\"cloudfilter\"",
+            "\"\"",
+            "\"nonsense\"",
+        ] {
             let backend: Backend = serde_json::from_str(raw).expect("unknown id must not fail");
             assert!(matches!(backend, Backend::Auto), "{raw} should map to Auto");
         }
@@ -4413,7 +5048,9 @@ mod tests {
         assert!(validate_mount_path_for_backend(&Backend::Nfs, "relative/path").is_err());
         assert!(validate_mount_path_for_backend(&Backend::Nfs, "not-a-path").is_err());
         if cfg!(windows) {
-            assert!(validate_mount_path_for_backend(&Backend::Mountosio, "C:\\Mounts\\Team").is_ok());
+            assert!(
+                validate_mount_path_for_backend(&Backend::Mountosio, "C:\\Mounts\\Team").is_ok()
+            );
             assert!(validate_mount_path_for_backend(&Backend::Mountosio, "D:").is_ok());
             assert!(validate_mount_path_for_backend(&Backend::Mountosio, "/Volumes/Team").is_err());
         } else {
@@ -4627,7 +5264,8 @@ mod tests {
         let padded = build_deleted_argv(&profile(), "/tmp/deleted-view", None, Some("  1h  "));
         assert!(padded.contains(&"--idle-timeout=1h".to_string()));
 
-        let padded_from = build_deleted_argv(&profile(), "/tmp/deleted-view", Some("  30d  "), None);
+        let padded_from =
+            build_deleted_argv(&profile(), "/tmp/deleted-view", Some("  30d  "), None);
         assert!(padded_from.contains(&"--from=30d".to_string()));
     }
 
@@ -4636,7 +5274,15 @@ mod tests {
         // Round-trips at u64::MAX unchanged: the string-not-number decision
         // guards against precision loss above Number.MAX_SAFE_INTEGER on the
         // JS side, which a numeric type here would silently reintroduce.
-        let argv = build_version_argv(&profile(), "/tmp/version-view", None, Some(u64::MAX), None, None, false);
+        let argv = build_version_argv(
+            &profile(),
+            "/tmp/version-view",
+            None,
+            Some(u64::MAX),
+            None,
+            None,
+            false,
+        );
         assert!(argv
             .windows(2)
             .any(|pair| pair == ["-i", &u64::MAX.to_string()]));
@@ -4648,14 +5294,30 @@ mod tests {
         assert!(!argv.iter().any(|arg| arg.starts_with("--version-format")));
         assert!(!argv.contains(&"--full-chain".to_string()));
 
-        let dated = build_version_argv(&profile(), "/tmp/version-view", None, Some(1), Some("date"), Some("5m"), false);
+        let dated = build_version_argv(
+            &profile(),
+            "/tmp/version-view",
+            None,
+            Some(1),
+            Some("date"),
+            Some("5m"),
+            false,
+        );
         assert!(dated.contains(&"--version-format=date".to_string()));
         assert!(dated.contains(&"--idle-timeout=5m".to_string()));
 
         // cmd_version.go checks `format != "number" && format != "date"` with
         // no trimming, so a padded value must be trimmed here or it fails
         // that exact-match check server-side.
-        let padded = build_version_argv(&profile(), "/tmp/version-view", None, Some(1), Some("  date  "), None, false);
+        let padded = build_version_argv(
+            &profile(),
+            "/tmp/version-view",
+            None,
+            Some(1),
+            Some("  date  "),
+            None,
+            false,
+        );
         assert!(padded.contains(&"--version-format=date".to_string()));
     }
 
@@ -4685,7 +5347,9 @@ mod tests {
         let mut p = profile();
         p.backend = Backend::Mountosio;
         let argv = build_deleted_argv(&p, "/tmp/deleted-view", None, None);
-        assert!(argv.windows(2).any(|pair| pair == ["--backend", "mountosio"]));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--backend", "mountosio"]));
 
         p.backend = Backend::Nfs;
         let argv = build_deleted_argv(&p, "/tmp/deleted-view", None, None);
@@ -4728,7 +5392,8 @@ mod tests {
             volume_name: "Team files".to_string(),
             volume_type: "general".to_string(),
         };
-        let profile = live_mount_config_to_profile("/Volumes/MountOS/Team", Backend::Fskit, config).unwrap();
+        let profile =
+            live_mount_config_to_profile("/Volumes/MountOS/Team", Backend::Fskit, config).unwrap();
         assert_eq!(profile.discovery_url, "https://hub.example.com");
         assert_eq!(profile.fork, "main");
         assert_eq!(profile.access_key_id, "ABCDEFGHIJKLMNOPQRST");
@@ -4833,9 +5498,13 @@ mod tests {
             None,
         );
         assert_eq!(argv[0], "mount");
-        assert!(argv.windows(2).any(|pair| pair == ["-m", p.mount_path.as_str()]));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["-m", p.mount_path.as_str()]));
         assert!(argv.windows(2).any(|pair| pair == ["--gateway", "s3,hdfs"]));
-        assert!(argv.windows(2).any(|pair| pair == ["--gateway-port", "9001"]));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--gateway-port", "9001"]));
         assert!(!argv.contains(&"--gateway-only".to_string()));
     }
 
@@ -4847,13 +5516,15 @@ mod tests {
         let combo = build_gateway_argv(&p, &["s3".to_string()], None, false, false, None, None);
         assert!(combo.contains(&"--temporary-fork".to_string()));
 
-        let gateway_only = build_gateway_argv(&p, &["hdfs".to_string()], None, true, false, None, None);
+        let gateway_only =
+            build_gateway_argv(&p, &["hdfs".to_string()], None, true, false, None, None);
         assert_eq!(gateway_only[0], "gateway");
         assert!(gateway_only.contains(&"--temporary-fork".to_string()));
 
         p.temporary_fork = false;
         let combo_off = build_gateway_argv(&p, &["s3".to_string()], None, false, false, None, None);
-        let gateway_only_off = build_gateway_argv(&p, &["s3".to_string()], None, true, false, None, None);
+        let gateway_only_off =
+            build_gateway_argv(&p, &["s3".to_string()], None, true, false, None, None);
         assert!(!combo_off.contains(&"--temporary-fork".to_string()));
         assert!(!gateway_only_off.contains(&"--temporary-fork".to_string()));
     }
@@ -4879,11 +5550,23 @@ mod tests {
             Some("/tmp/cert.pem"),
             Some("/tmp/key.pem"),
         );
-        assert!(argv.windows(2).any(|pair| pair == ["--gateway-cert", "/tmp/cert.pem"]));
-        assert!(argv.windows(2).any(|pair| pair == ["--gateway-key", "/tmp/key.pem"]));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--gateway-cert", "/tmp/cert.pem"]));
+        assert!(argv
+            .windows(2)
+            .any(|pair| pair == ["--gateway-key", "/tmp/key.pem"]));
         assert!(argv.contains(&"--gateway-no-loopback".to_string()));
 
-        let missing_key = build_gateway_argv(&p, &["s3".to_string()], None, true, false, Some("/tmp/cert.pem"), None);
+        let missing_key = build_gateway_argv(
+            &p,
+            &["s3".to_string()],
+            None,
+            true,
+            false,
+            Some("/tmp/cert.pem"),
+            None,
+        );
         assert!(!missing_key.contains(&"--gateway-cert".to_string()));
 
         // checkCertKeyReadable opens the path verbatim (no trimming); a
@@ -4898,8 +5581,12 @@ mod tests {
             Some("  /tmp/cert.pem  "),
             Some("  /tmp/key.pem  "),
         );
-        assert!(padded.windows(2).any(|pair| pair == ["--gateway-cert", "/tmp/cert.pem"]));
-        assert!(padded.windows(2).any(|pair| pair == ["--gateway-key", "/tmp/key.pem"]));
+        assert!(padded
+            .windows(2)
+            .any(|pair| pair == ["--gateway-cert", "/tmp/cert.pem"]));
+        assert!(padded
+            .windows(2)
+            .any(|pair| pair == ["--gateway-key", "/tmp/key.pem"]));
     }
 
     #[test]
@@ -4913,7 +5600,8 @@ mod tests {
         let snapshot = build_snapshot_argv(&p, "/tmp/snap-view", "1d");
         let deleted = build_deleted_argv(&p, "/tmp/deleted-view", None, None);
         let version = build_version_argv(&p, "/tmp/version-view", None, Some(1), None, None, false);
-        let gateway_only = build_gateway_argv(&p, &["s3".to_string()], None, true, false, None, None);
+        let gateway_only =
+            build_gateway_argv(&p, &["s3".to_string()], None, true, false, None, None);
         for argv in [&snapshot, &deleted, &version, &gateway_only] {
             assert!(
                 argv.windows(2)
@@ -4921,7 +5609,8 @@ mod tests {
                 "missing --disk-cache-dir in {argv:?}"
             );
             assert!(
-                argv.windows(2).any(|pair| pair == ["--disk-cache-size", "10G"]),
+                argv.windows(2)
+                    .any(|pair| pair == ["--disk-cache-size", "10G"]),
                 "missing --disk-cache-size in {argv:?}"
             );
             assert!(
@@ -4995,5 +5684,149 @@ mod tests {
         let result = stop_gateway_blocking(unknown_pid);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("refusing to stop"));
+    }
+
+    fn upload_params() -> UploadStartParams {
+        UploadStartParams {
+            fork: None,
+            once: false,
+            overwrite: false,
+            dry_run: false,
+            rescan_interval: None,
+            restart: false,
+            bwlimit: None,
+            include: Vec::new(),
+            exclude: Vec::new(),
+            follow_symlinks: false,
+            create_source_directory: false,
+        }
+    }
+
+    #[test]
+    fn build_upload_start_argv_emits_source_and_dest_as_bare_positionals() {
+        let argv = build_upload_start_argv(
+            &profile(),
+            "/local/photos",
+            "/remote/photos",
+            &upload_params(),
+        );
+        assert_eq!(argv[0], "upload");
+        assert_eq!(argv[1], "/local/photos");
+        assert_eq!(argv[2], "/remote/photos");
+        assert!(argv
+            .windows(2)
+            .any(|args| args == ["--discovery-url", "https://hub.example.com"]));
+        assert!(argv.contains(&"-a".to_string()));
+        assert!(argv.contains(&"-s".to_string()));
+        // Defaults: no flags for anything the form left off.
+        assert!(!argv.contains(&"--once".to_string()));
+        assert!(!argv.contains(&"--overwrite".to_string()));
+        assert!(!argv.contains(&"--dry-run".to_string()));
+        assert!(!argv.contains(&"--restart".to_string()));
+        assert!(!argv.contains(&"--follow-symlinks".to_string()));
+        assert!(!argv.contains(&"--create-source-directory".to_string()));
+        assert!(!argv.contains(&"--fork".to_string()));
+    }
+
+    #[test]
+    fn build_upload_start_argv_emits_every_flag_when_set() {
+        let mut params = upload_params();
+        params.fork = Some(" backup ".to_string());
+        params.once = true;
+        params.overwrite = true;
+        params.dry_run = true;
+        params.rescan_interval = Some(" 1m ".to_string());
+        params.restart = true;
+        params.bwlimit = Some(50);
+        params.include = vec!["*.jpg".to_string(), "  ".to_string()];
+        params.exclude = vec!["*.tmp".to_string()];
+        params.follow_symlinks = true;
+        params.create_source_directory = true;
+
+        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params);
+        assert!(argv.windows(2).any(|a| a == ["--fork", "backup"]));
+        assert!(argv.contains(&"--once".to_string()));
+        assert!(argv.contains(&"--overwrite".to_string()));
+        assert!(argv.contains(&"--dry-run".to_string()));
+        assert!(argv.windows(2).any(|a| a == ["--rescan-interval", "1m"]));
+        assert!(argv.contains(&"--restart".to_string()));
+        assert!(argv.windows(2).any(|a| a == ["--bwlimit", "50"]));
+        assert!(argv.windows(2).any(|a| a == ["--include", "*.jpg"]));
+        // A blank include/exclude entry (e.g. a stray empty row in the form)
+        // must never reach argv as a bare "--include" with nothing after it.
+        assert_eq!(argv.iter().filter(|a| *a == "--include").count(), 1);
+        assert!(argv.windows(2).any(|a| a == ["--exclude", "*.tmp"]));
+        assert!(argv.contains(&"--follow-symlinks".to_string()));
+        assert!(argv.contains(&"--create-source-directory".to_string()));
+    }
+
+    #[test]
+    fn build_upload_start_argv_omits_bwlimit_when_zero() {
+        let mut params = upload_params();
+        params.bwlimit = Some(0);
+        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params);
+        assert!(!argv.contains(&"--bwlimit".to_string()));
+    }
+
+    #[test]
+    fn build_upload_resume_argv_has_a_smaller_flag_surface_than_start() {
+        let argv = build_upload_resume_argv(&profile(), "abcdef1234567890", true, Some(" 45s "));
+        assert_eq!(argv[0], "upload");
+        assert_eq!(argv[1], "resume");
+        assert_eq!(argv[2], "abcdef1234567890");
+        assert!(argv.contains(&"--once".to_string()));
+        assert!(argv.windows(2).any(|a| a == ["--rescan-interval", "45s"]));
+        assert!(!argv.contains(&"--overwrite".to_string()));
+        assert!(!argv.contains(&"--bwlimit".to_string()));
+        assert!(!argv.contains(&"--dry-run".to_string()));
+    }
+
+    #[test]
+    fn upload_local_only_argv_builders_carry_no_credentials_or_discovery_url() {
+        assert_eq!(
+            build_upload_list_argv(),
+            vec!["list", "--kind", "upload", "--json"]
+        );
+        assert_eq!(
+            build_upload_cancel_argv("job123"),
+            vec!["upload", "cancel", "job123"]
+        );
+        assert_eq!(
+            build_upload_retry_failed_argv("job123"),
+            vec!["upload", "retry-failed", "job123"]
+        );
+        assert_eq!(build_upload_prune_argv(0), vec!["upload", "prune"]);
+        assert_eq!(
+            build_upload_prune_argv(5),
+            vec!["upload", "prune", "--keep", "5"]
+        );
+    }
+
+    #[test]
+    fn parse_uploads_value_skips_non_upload_kinds_and_fills_defaults() {
+        let value: Value = serde_json::from_str(
+            r#"[
+                {"kind": "mount", "name": "Team", "mountPath": "/Volumes/MountOS/Team"},
+                {"kind": "upload", "name": "upload-abc123", "jobId": "abc123",
+                 "sourcePath": "/local/photos", "destPath": "/remote/photos",
+                 "state": "running", "counts": {"done": 3, "pending": 1}}
+            ]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_id, "abc123");
+        assert_eq!(jobs[0].source_path.as_deref(), Some("/local/photos"));
+        assert_eq!(jobs[0].dest_path.as_deref(), Some("/remote/photos"));
+        assert_eq!(jobs[0].state, "running");
+        assert_eq!(jobs[0].counts.get("done"), Some(&3));
+        assert_eq!(jobs[0].counts.get("pending"), Some(&1));
+    }
+
+    #[test]
+    fn parse_uploads_value_drops_an_entry_with_no_job_id() {
+        let value: Value =
+            serde_json::from_str(r#"[{"kind": "upload", "name": "broken"}]"#).unwrap();
+        assert!(parse_uploads_value(&value).is_empty());
     }
 }
