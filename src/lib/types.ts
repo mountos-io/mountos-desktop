@@ -73,6 +73,12 @@ export interface UploadJob {
   // credentials, so this is informational only (lets the UI show/warn
   // which volume a job belongs to), not itself the enforcement point.
   volumeId?: number
+  // job.json's own UnixNano timestamps, unrelated to any filesystem mtime
+  // -- lets the list be sorted meaningfully (list --kind upload otherwise
+  // returns directory-name/hex-hash order, arbitrary with respect to
+  // recency).
+  createdAt?: number
+  completedAt?: number
 }
 
 // An upload source that's a live running mount instance rather than a

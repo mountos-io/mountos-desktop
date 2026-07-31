@@ -339,6 +339,11 @@ struct UploadJob {
     // informational (lets the UI show/warn which volume a job belongs to),
     // not itself the enforcement point.
     volume_id: Option<u32>,
+    // job.json's own UnixNano timestamps, unrelated to any filesystem mtime
+    // -- lets the GUI sort the job list meaningfully; `mountos list --kind
+    // upload` otherwise returns directory-name (hex-hash lexical) order.
+    created_at: Option<i64>,
+    completed_at: Option<i64>,
 }
 
 // Frontend-supplied flags for the `mountos upload <source> <dest>` run form
@@ -3117,6 +3122,8 @@ fn parse_uploads_value(value: &Value) -> Vec<UploadJob> {
                     .get("volumeId")
                     .and_then(Value::as_u64)
                     .and_then(|v| u32::try_from(v).ok()),
+                created_at: entry.get("createdAt").and_then(Value::as_i64),
+                completed_at: entry.get("completedAt").and_then(Value::as_i64),
             })
         })
         .collect()
@@ -6365,5 +6372,29 @@ mod tests {
         let value: Value =
             serde_json::from_str(r#"[{"kind": "upload", "name": "broken"}]"#).unwrap();
         assert!(parse_uploads_value(&value).is_empty());
+    }
+
+    #[test]
+    fn parse_uploads_value_carries_created_and_completed_at() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc",
+                 "state": "completed", "createdAt": 1000, "completedAt": 2000}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].created_at, Some(1000));
+        assert_eq!(jobs[0].completed_at, Some(2000));
+    }
+
+    #[test]
+    fn parse_uploads_value_defaults_created_and_completed_at_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].created_at, None);
+        assert_eq!(jobs[0].completed_at, None);
     }
 }

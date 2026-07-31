@@ -656,9 +656,29 @@ const uploadHiddenCompletedCount = $derived(state.uploads.filter(isCleanlyComple
 // turn the list into thousands of unvirtualized DOM nodes.
 const UPLOAD_VISIBLE_JOB_CAP = 300
 
+// `list --kind upload` has no stable ordering of its own (ListJobDirs
+// returns directory-name/hex-hash order, arbitrary with respect to state or
+// recency), so without this a genuinely running job could sort behind an
+// old completed one and get pushed past the cap.
+export function uploadStateRank(job: UploadJob): number {
+  if (job.state === 'running') return 0
+  if (job.state === 'halted' || job.state === 'resumable') return 1
+  return 2 // completed
+}
+
+// Pulled out of the $derived below as a plain function so the ordering
+// logic is unit-testable without a reactive context.
+export function sortUploadJobs(jobs: UploadJob[]): UploadJob[] {
+  return [...jobs].sort((a, b) => {
+    const rankDiff = uploadStateRank(a) - uploadStateRank(b)
+    return rankDiff !== 0 ? rankDiff : (b.createdAt ?? 0) - (a.createdAt ?? 0)
+  })
+}
+
 const uploadVisibleJobs = $derived.by(() => {
   const base = state.uploadShowCompleted ? state.uploads : state.uploads.filter((job) => !isCleanlyCompletedUpload(job))
-  return base.slice(0, UPLOAD_VISIBLE_JOB_CAP)
+  const sorted = sortUploadJobs(base)
+  return sorted.slice(0, UPLOAD_VISIBLE_JOB_CAP)
 })
 
 const uploadVisibleJobsTotal = $derived(
