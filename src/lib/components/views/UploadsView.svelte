@@ -217,41 +217,51 @@
           <div class="grid gap-3 border border-border/40 p-3">
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadOnce} label="Settle and exit" />
-              <InfoTip text="Runs until a rescan finds nothing new, then exits (--once). Without it, the job keeps running in the background and re-scanning the source." />
+              <InfoTip text="Runs until a rescan finds nothing new, then exits (`--once`).
+
+Without it, the job keeps running in the background and re-scanning the source." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadOverwrite} label="Re-upload changed files" />
-              <InfoTip text="On a rescan, re-uploads a done path if its local size has changed (--overwrite). Without this, a done path is never re-checked." />
+              <InfoTip text="On a rescan, re-uploads a **done** path if its local size has changed (`--overwrite`).
+
+Without this, a done path is never re-checked." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadDryRun} label="Dry run" />
-              <InfoTip text="Scans and reports the plan only -- no connection, no writes at all (--dry-run)." />
+              <InfoTip text="Scans and reports the plan only (`--dry-run`).
+
+No connection, no writes at all." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadRestart} label="Force a fresh job" />
-              <InfoTip text="Starts a brand new job even if a resumable one already matches this (source, dest) pair (--restart)." />
+              <InfoTip text="Starts a brand new job (`--restart`), even if a resumable one already matches this **(source, dest)** pair." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadFollowSymlinks} label="Follow symlinks" />
-              <InfoTip text="Dereferences symlinks to regular files instead of skipping them (--follow-symlinks)." />
+              <InfoTip text="Dereferences symlinks to regular files instead of skipping them (`--follow-symlinks`)." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadCreateSourceDirectory} label="Nest under source folder name" />
-              <InfoTip text="Uploads into DEST_PATH/<source-folder-name>/ instead of writing directly into DEST_PATH (--create-source-directory)." />
+              <InfoTip text="Uploads into `DEST_PATH/<source-folder-name>/` instead of writing directly into `DEST_PATH` (`--create-source-directory`)." />
             </div>
 
             <div class="grid grid-cols-2 gap-4">
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="upload-rescan-interval">Rescan interval</Label>
-                  <InfoTip text="How often to re-walk the source for new/changed files while the job keeps running (default 30s)." />
+                  <InfoTip text="How often to re-walk the source for new/changed files while the job keeps running.
+
+Default: `30s`." />
                 </span>
                 <Input id="upload-rescan-interval" bind:value={appState.uploadRescanInterval} placeholder="30s" />
               </div>
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="upload-bwlimit">Bandwidth limit, Mbps</Label>
-                  <InfoTip text="Caps upload bandwidth in Mbps. 0 or blank means unlimited." />
+                  <InfoTip text="Caps upload bandwidth in Mbps.
+
+`0` or blank means unlimited." />
                 </span>
                 <Input id="upload-bwlimit" type="number" min="0" bind:value={appState.uploadBwlimit} placeholder="0 (unlimited)" />
               </div>
@@ -261,14 +271,18 @@
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="upload-include">Include globs (one per line)</Label>
-                  <InfoTip text="Only upload paths matching one of these globs. Repeatable, one pattern per line." />
+                  <InfoTip text="Only upload paths matching one of these globs.
+
+Repeatable, one pattern per line, e.g. `*.jpg`." />
                 </span>
                 <Textarea id="upload-include" bind:value={appState.uploadIncludeText} rows={3} placeholder="*.jpg" />
               </div>
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="upload-exclude">Exclude globs (one per line)</Label>
-                  <InfoTip text="Never upload paths matching one of these globs. Wins over include when both match." />
+                  <InfoTip text="Never upload paths matching one of these globs.
+
+**Exclude always wins** over include when both match." />
                 </span>
                 <Textarea id="upload-exclude" bind:value={appState.uploadExcludeText} rows={3} placeholder="*.tmp" />
               </div>
@@ -300,7 +314,7 @@
     </form>
   </section>
 {:else}
-  <section class="grid grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
+  <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
     <div class="surface p-4">
       <div class="flex items-center justify-between gap-2 mb-4">
         <h3 class="flex items-center gap-2"><Upload size={18} aria-hidden="true" /> Uploads</h3>
