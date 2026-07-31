@@ -192,15 +192,21 @@ export async function ensureUploadBrowseMount(
   return invoke<string>('ensure_upload_browse_mount', { profileId, instance, secret })
 }
 
+// Resume works from discoveryUrl/accessKeyId alone (independent of any
+// saved profile -- a job resumes purely by id, job.json already fixes its
+// volume/fork/paths server-side), so it's not scoped to a profileId. If
+// a saved profile shares the given accessKeyId, the backend reuses its
+// cached vault secret; otherwise `secret` is required.
 export async function resumeUpload(
-  profileId: string,
+  discoveryUrl: string,
+  accessKeyId: string,
   jobId: string,
   once: boolean,
   rescanInterval?: string,
   secret?: string,
 ): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
-  return invoke<string>('resume_upload', { profileId, jobId, once, rescanInterval, secret })
+  return invoke<string>('resume_upload', { discoveryUrl, accessKeyId, jobId, once, rescanInterval, secret })
 }
 
 export async function cancelUpload(jobId: string): Promise<string> {

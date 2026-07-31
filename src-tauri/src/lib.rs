@@ -3173,20 +3173,96 @@ async fn start_upload(
     .map_err(|error| DesktopError::Message(format!("start upload task failed: {error}")))?
 }
 
+// Resume only ever needs discovery_url + access_key_id -- build_upload_
+// resume_argv reads neither volume/fork/mountPath/backend from its profile
+// (job.json already fixes those server-side; a job resumes purely by id).
+// This lets Resume work for ANY job, including one started from the CLI
+// with no corresponding saved GUI profile at all: the caller supplies
+// discovery_url/access_key_id directly (the frontend defaults them from a
+// matching saved profile when one is selected, but they're always
+// editable) instead of requiring a profile_id lookup. Backend is never
+// read by this argv builder; Auto is just a neutral placeholder.
+fn resume_profile(discovery_url: String, access_key_id: String) -> MountProfile {
+    MountProfile {
+        id: "resume".to_string(),
+        schema_version: 1,
+        kind: "mount".to_string(),
+        name: String::new(),
+        volume: String::new(),
+        fork: String::new(),
+        mount_path: String::new(),
+        discovery_url,
+        access_key_id,
+        secret_ref: "prompt".to_string(),
+        backend: Backend::Auto,
+        cache_dir: None,
+        cache_size: None,
+        read_only: false,
+        auto_remount: false,
+        temporary_fork: false,
+        trusted_discovery_host: None,
+        extra_args: Vec::new(),
+        created_at: String::new(),
+        updated_at: String::new(),
+        volume_kind: None,
+    }
+}
+
+// An access key id has exactly one matching secret (it encodes a specific
+// user+volume pairing server-side), so Resume doesn't need the caller to
+// pick a saved profile -- if a saved profile happens to share this access
+// key id, reuse whatever secret is already cached for it; otherwise fall
+// through to requiring an explicit secret, exactly like resolve_satellite_
+// secret's own "not cached, ask for it" behavior.
+fn resolve_secret_for_access_key(
+    app: &AppHandle,
+    access_key_id: &str,
+    secret: Option<String>,
+) -> Result<Option<String>, DesktopError> {
+    if access_key_id.is_empty() {
+        return Ok(None);
+    }
+    if let Some(secret) = secret {
+        return Ok(Some(secret));
+    }
+    let matched = read_profiles(app)?
+        .into_iter()
+        .find(|profile| profile.access_key_id == access_key_id);
+    if let Some(profile) = matched {
+        if profile.secret_ref == "vault" {
+            return Ok(Some(keyring_entry(&profile.id)?.get_password()?));
+        }
+    }
+    Err(DesktopError::Message("secret required".to_string()))
+}
+
 fn resume_upload_blocking(
     app: AppHandle,
-    profile_id: String,
+    discovery_url: String,
+    access_key_id: String,
     job_id: String,
     once: bool,
     rescan_interval: Option<String>,
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
-    let profile = find_profile(&app, &profile_id)?;
+    let discovery_url = discovery_url.trim().to_string();
+    let access_key_id = access_key_id.trim().to_string();
+    if discovery_url.is_empty() {
+        return Err(DesktopError::Message(
+            "discovery URL is required".to_string(),
+        ));
+    }
+    if access_key_id.is_empty() {
+        return Err(DesktopError::Message(
+            "access key ID is required".to_string(),
+        ));
+    }
     let job_id = job_id.trim().to_string();
     if job_id.is_empty() {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
-    let resolved_secret = resolve_satellite_secret(&profile, secret)?;
+    let resolved_secret = resolve_secret_for_access_key(&app, &access_key_id, secret)?;
+    let profile = resume_profile(discovery_url, access_key_id);
     let argv = build_upload_resume_argv(&profile, &job_id, once, rescan_interval.as_deref());
     let stderr_path = runtime_dir(&app)?.join(format!("upload-resume-{job_id}-stderr.log"));
     let stdout_path = runtime_dir(&app)?.join(format!("upload-resume-{job_id}-stdout.log"));
@@ -3203,14 +3279,15 @@ fn resume_upload_blocking(
 #[tauri::command]
 async fn resume_upload(
     app: AppHandle,
-    profile_id: String,
+    discovery_url: String,
+    access_key_id: String,
     job_id: String,
     once: bool,
     rescan_interval: Option<String>,
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || {
-        resume_upload_blocking(app, profile_id, job_id, once, rescan_interval, secret)
+        resume_upload_blocking(app, discovery_url, access_key_id, job_id, once, rescan_interval, secret)
     })
     .await
     .map_err(|error| DesktopError::Message(format!("resume upload task failed: {error}")))?
@@ -6082,6 +6159,19 @@ mod tests {
         assert!(!argv.contains(&"--overwrite".to_string()));
         assert!(!argv.contains(&"--bwlimit".to_string()));
         assert!(!argv.contains(&"--dry-run".to_string()));
+    }
+
+    #[test]
+    fn resume_profile_carries_only_discovery_url_and_access_key_into_the_argv() {
+        // Resume must work from just these two fields, independent of any
+        // saved profile (e.g. a job started via the CLI with no GUI profile
+        // at all) -- the synthetic profile's other fields (volume/fork/
+        // mountPath/backend) must never leak into the resume argv.
+        let profile = resume_profile("https://discovery.example".to_string(), "ak_1234567890".to_string());
+        let argv = build_upload_resume_argv(&profile, "abcdef1234567890", false, None);
+        assert!(argv.windows(2).any(|a| a == ["--discovery-url", "https://discovery.example"]));
+        assert!(argv.windows(2).any(|a| a == ["-a", "ak_1234567890"]));
+        assert!(argv.contains(&"-s".to_string()));
     }
 
     #[test]

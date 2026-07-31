@@ -306,6 +306,13 @@ const state = $state({
   uploadDryRunReport: '',
 
   uploadResumePromptFor: null as UploadJob | null,
+  // Resume works from these two fields alone (job.json already fixes the
+  // job's volume/fork/paths server-side, see resumeUpload's own comment),
+  // not a saved profile -- a job may not have one at all (e.g. started via
+  // CLI). Prefilled from the Profiles-page selection as a convenience
+  // default when requestUploadResume opens, always editable.
+  uploadResumeDiscoveryUrl: '',
+  uploadResumeAccessKeyId: '',
   uploadResumeOnce: false,
   uploadResumeRescanInterval: '',
   uploadResumeSecretValue: '',
@@ -1332,6 +1339,12 @@ export async function browseUploadDestination() {
 
 export function requestUploadResume(job: UploadJob) {
   state.uploadResumePromptFor = job
+  // Best-effort convenience default, not a requirement -- the Uploads list
+  // is cross-profile, so the job being resumed may have nothing to do with
+  // whatever's selected on the Profiles page (or there may be no profiles
+  // at all). Both fields stay editable regardless.
+  state.uploadResumeDiscoveryUrl = selectedProfile?.discoveryUrl ?? ''
+  state.uploadResumeAccessKeyId = selectedProfile?.accessKeyId ?? ''
   state.uploadResumeOnce = false
   state.uploadResumeRescanInterval = ''
   state.uploadResumeSecretValue = ''
@@ -1345,13 +1358,19 @@ export function cancelUploadResume() {
 
 export async function confirmUploadResume() {
   const job = state.uploadResumePromptFor
-  const profile = selectedProfile
-  if (!job || !profile) return
+  if (!job) return
+  const discoveryUrl = state.uploadResumeDiscoveryUrl.trim()
+  const accessKeyId = state.uploadResumeAccessKeyId.trim()
+  if (!discoveryUrl || !accessKeyId) {
+    state.uploadResumeError = !discoveryUrl ? 'Discovery URL is required' : 'Access key ID is required'
+    return
+  }
   state.uploadsBusy = true
   state.uploadResumeError = ''
   try {
     await resumeUpload(
-      profile.id,
+      discoveryUrl,
+      accessKeyId,
       job.jobId,
       state.uploadResumeOnce,
       state.uploadResumeRescanInterval.trim() || undefined,
