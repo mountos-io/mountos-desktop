@@ -1327,7 +1327,15 @@ export async function browseUploadDestination() {
     if (!chosen) return
     const normalized = chosen.replace(/\/+$/, '')
     const root = mountPath.replace(/\/+$/, '')
-    const relative = normalized === root ? '' : normalized.startsWith(`${root}/`) ? normalized.slice(root.length) : normalized
+    if (normalized !== root && !normalized.startsWith(`${root}/`)) {
+      // The native picker isn't sandboxed to the scratch mount -- a pick
+      // outside it (root re-navigated away from) is a local filesystem
+      // path, not a mountOS-relative one, and must never be accepted as
+      // the destination as-is.
+      state.uploadDestError = 'Choose a folder inside the browsed volume'
+      return
+    }
+    const relative = normalized === root ? '' : normalized.slice(root.length)
     state.uploadDest = relative || '/'
     state.uploadDestError = ''
   } catch (error) {

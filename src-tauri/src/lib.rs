@@ -443,6 +443,18 @@ const FORK_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 // explicitly-triggered action the user is actively watching for, so a firm
 // upper bound with a clear timeout message still beats hanging forever.
 const DRY_RUN_TIMEOUT: Duration = Duration::from_secs(300);
+// `upload --once`/`upload resume --once` deliberately do NOT daemonize
+// server-side (shouldDaemonizeUpload/startUploadJob, cmd_upload.go) --
+// --once's whole purpose is to block in the foreground until the job
+// actually settles, then report a definitive exit code. Using LAUNCH_
+// TIMEOUT's 65s here (as if exit 0 were a daemonize confirmation, which it
+// never is for --once) would SIGKILL a perfectly healthy job mid-upload
+// the moment it ran longer than a minute. This bounds the wait for the
+// REAL settle instead -- generous since --once uploads data, not just
+// scans a tree like DRY_RUN_TIMEOUT's read-only walk -- while still firm
+// per this file's own established preference for a clear timeout over
+// hanging forever.
+const UPLOAD_ONCE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // A local `--version` probe of a user-picked candidate binary, not a network
 // round trip -- bounded tight so an unresponsive/hung pick fails fast rather
 // than leaving the settings UI stuck validating.
@@ -678,6 +690,18 @@ fn spawn_browse_mount_sweeper(app: AppHandle) {
                 .collect()
         };
         for (key, local_path) in idle {
+            // Re-check under the lock, right before the (possibly slow)
+            // unmount call: a Browse click landing between the snapshot
+            // above and here refreshes last_used, and this entry must not
+            // be reaped out from under whatever just opened it.
+            let still_idle = browse_mounts()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&key)
+                .is_some_and(|entry| entry.last_used.elapsed() >= BROWSE_MOUNT_IDLE_TIMEOUT);
+            if !still_idle {
+                continue;
+            }
             let target = local_path.to_string_lossy().into_owned();
             // Best-effort: an unmount failure (busy, already gone) just means
             // this entry is retried next sweep rather than removed now, so a
@@ -1233,6 +1257,23 @@ fn build_fork_restore_argv(profile: &MountProfile, name: &str) -> Vec<String> {
 // flag, a destination that's literally "-rf" or "--restart" is almost
 // certainly a mistake (a stray paste, a copy-paste of a flag instead of a
 // path) the user would want to know about before a real upload starts.
+// Mirrors uploadjob.validJobID server-side (cmd/mfuse/uploadjob/job.go):
+// exactly 16 lowercase hex characters, the only shape FolderJobID/
+// ProfileJobID ever produce. job_id reaches resume/cancel/retry-failed as a
+// bare positional with no `--` separator ahead of it (unlike source/dest),
+// so a value shaped like a flag would otherwise be eaten by pflag and
+// surface as a confusing cobra arity error instead of a clear one here.
+fn validate_upload_job_id(job_id: &str) -> Result<(), DesktopError> {
+    let valid = job_id.len() == 16 && job_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    if valid {
+        Ok(())
+    } else {
+        Err(DesktopError::Message(format!(
+            "invalid job id: {job_id:?}"
+        )))
+    }
+}
+
 fn validate_upload_positional(value: &str, field: &str) -> Result<(), DesktopError> {
     if value.starts_with('-') {
         return Err(DesktopError::Message(format!(
@@ -2665,13 +2706,17 @@ fn spawn_daemonizing_and_wait(
 // no single mount-path-shaped target to poll for readiness, and exit code 0
 // IS the confirmation. Callers re-fetch list_uploads afterward rather than
 // this returning a job id, so this only needs to report success/failure, not
-// a MountResult.
+// a MountResult. `timeout` is caller-supplied rather than a hardcoded
+// LAUNCH_TIMEOUT because --once breaks the "exit 0 means daemonized"
+// assumption entirely -- it never daemonizes, exit 0 there means the job
+// actually settled (see UPLOAD_ONCE_TIMEOUT's own comment).
 fn spawn_daemonizing_upload_and_wait(
     mountos: &Path,
     args: &[String],
     secret: Option<&str>,
     stdout_path: &Path,
     stderr_path: &Path,
+    timeout: Duration,
 ) -> Result<(), DesktopError> {
     let stderr_file = fs::File::create(stderr_path)?;
     let stdout_file = fs::File::create(stdout_path)?;
@@ -2690,7 +2735,7 @@ fn spawn_daemonizing_upload_and_wait(
     }
     drop(child.stdin.take());
 
-    let Some(status) = wait_child(&mut child, LAUNCH_TIMEOUT)? else {
+    let Some(status) = wait_child(&mut child, timeout)? else {
         return Err(DesktopError::Message(
             "upload launch timed out and the child process was terminated".to_string(),
         ));
@@ -3152,6 +3197,7 @@ fn start_upload_blocking(
         resolved_secret.as_deref(),
         &stdout_path,
         &stderr_path,
+        if params.once { UPLOAD_ONCE_TIMEOUT } else { LAUNCH_TIMEOUT },
     )?;
     Ok("upload job started".to_string())
 }
@@ -3214,6 +3260,21 @@ fn resume_profile(discovery_url: String, access_key_id: String) -> MountProfile 
 // key id, reuse whatever secret is already cached for it; otherwise fall
 // through to requiring an explicit secret, exactly like resolve_satellite_
 // secret's own "not cached, ask for it" behavior.
+// Pulled out of resolve_secret_for_access_key as a pure function so the
+// matching logic is unit-testable without a real AppHandle. Matches on
+// BOTH access_key_id AND secret_ref == "vault" together, not access_key_id
+// alone -- multiple saved profiles can share one access key id (e.g. one
+// created via "save as profile" off a live mount, another added manually),
+// and if the first one found (read_profiles sorts newest-updated-first) has
+// secret_ref == "prompt" while an older sibling has the actual cached vault
+// secret, matching on access_key_id alone would shadow the vault entry that
+// actually exists and wrongly demand a fresh secret every time.
+fn matching_vault_profile<'a>(profiles: &'a [MountProfile], access_key_id: &str) -> Option<&'a MountProfile> {
+    profiles
+        .iter()
+        .find(|profile| profile.access_key_id == access_key_id && profile.secret_ref == "vault")
+}
+
 fn resolve_secret_for_access_key(
     app: &AppHandle,
     access_key_id: &str,
@@ -3225,13 +3286,9 @@ fn resolve_secret_for_access_key(
     if let Some(secret) = secret {
         return Ok(Some(secret));
     }
-    let matched = read_profiles(app)?
-        .into_iter()
-        .find(|profile| profile.access_key_id == access_key_id);
-    if let Some(profile) = matched {
-        if profile.secret_ref == "vault" {
-            return Ok(Some(keyring_entry(&profile.id)?.get_password()?));
-        }
+    let profiles = read_profiles(app)?;
+    if let Some(profile) = matching_vault_profile(&profiles, access_key_id) {
+        return Ok(Some(keyring_entry(&profile.id)?.get_password()?));
     }
     Err(DesktopError::Message("secret required".to_string()))
 }
@@ -3261,6 +3318,7 @@ fn resume_upload_blocking(
     if job_id.is_empty() {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
+    validate_upload_job_id(&job_id)?;
     let resolved_secret = resolve_secret_for_access_key(&app, &access_key_id, secret)?;
     let profile = resume_profile(discovery_url, access_key_id);
     let argv = build_upload_resume_argv(&profile, &job_id, once, rescan_interval.as_deref());
@@ -3272,6 +3330,7 @@ fn resume_upload_blocking(
         resolved_secret.as_deref(),
         &stdout_path,
         &stderr_path,
+        if once { UPLOAD_ONCE_TIMEOUT } else { LAUNCH_TIMEOUT },
     )?;
     Ok("upload job resumed".to_string())
 }
@@ -3317,6 +3376,7 @@ fn cancel_upload_blocking(job_id: String) -> Result<String, DesktopError> {
     if job_id.is_empty() {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
+    validate_upload_job_id(job_id)?;
     upload_command_blocking(build_upload_cancel_argv(job_id), FORK_COMMAND_TIMEOUT)
 }
 
@@ -3332,6 +3392,7 @@ fn retry_failed_upload_blocking(job_id: String) -> Result<String, DesktopError> 
     if job_id.is_empty() {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
+    validate_upload_job_id(job_id)?;
     upload_command_blocking(build_upload_retry_failed_argv(job_id), FORK_COMMAND_TIMEOUT)
 }
 
@@ -5301,8 +5362,30 @@ pub fn run() {
             validate_cli_candidate,
             show_main_window,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running mountOS Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building mountOS Desktop")
+        .run(|app_handle, event| {
+            // Best-effort cleanup on quit: a read-only browse scratch mount
+            // (ensure_upload_browse_mount_blocking) only gets reaped by the
+            // in-process idle sweeper, which dies with this process and has
+            // no persisted registry -- without this, quitting mid-idle-
+            // window (not just closing the window, which only hides it)
+            // leaves it orphaned until the user notices it manually in
+            // Instances. RunEvent::Exit fires once, right before the
+            // process actually terminates.
+            if let tauri::RunEvent::Exit = event {
+                let entries: Vec<std::path::PathBuf> = browse_mounts()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .values()
+                    .map(|entry| entry.local_path.clone())
+                    .collect();
+                for local_path in entries {
+                    let target = local_path.to_string_lossy().into_owned();
+                    let _ = unmount_target_blocking(app_handle.clone(), target, false);
+                }
+            }
+        });
 }
 
 #[cfg(test)]
@@ -6162,6 +6245,47 @@ mod tests {
     }
 
     #[test]
+    fn matching_vault_profile_finds_none_when_no_profile_shares_the_key() {
+        let profiles = vec![profile()];
+        assert!(matching_vault_profile(&profiles, "SOME-OTHER-ACCESS-KEY").is_none());
+    }
+
+    #[test]
+    fn matching_vault_profile_finds_none_when_the_only_match_is_prompt_only() {
+        let mut p = profile();
+        p.secret_ref = "prompt".to_string();
+        let profiles = vec![p.clone()];
+        assert!(matching_vault_profile(&profiles, &p.access_key_id).is_none());
+    }
+
+    #[test]
+    fn matching_vault_profile_finds_the_single_vault_match() {
+        let mut p = profile();
+        p.secret_ref = "vault".to_string();
+        let profiles = vec![p.clone()];
+        let found = matching_vault_profile(&profiles, &p.access_key_id).expect("expected a match");
+        assert_eq!(found.id, p.id);
+    }
+
+    #[test]
+    fn matching_vault_profile_finds_the_vault_sibling_even_when_a_prompt_only_profile_matches_first() {
+        // Regression: read_profiles sorts newest-updated-first, so a naive
+        // "first profile with this access key" match can land on a
+        // secret_ref: "prompt" profile while an older sibling actually has
+        // the secret cached in the vault -- the vault entry must still be
+        // found, not shadowed by the prompt-only profile ordered ahead of it.
+        let mut prompt_only = profile();
+        prompt_only.id = "profile-newer".to_string();
+        prompt_only.secret_ref = "prompt".to_string();
+        let mut vault_backed = profile();
+        vault_backed.id = "profile-older".to_string();
+        vault_backed.secret_ref = "vault".to_string();
+        let profiles = vec![prompt_only, vault_backed.clone()];
+        let found = matching_vault_profile(&profiles, &vault_backed.access_key_id).expect("expected a match");
+        assert_eq!(found.id, "profile-older");
+    }
+
+    #[test]
     fn resume_profile_carries_only_discovery_url_and_access_key_into_the_argv() {
         // Resume must work from just these two fields, independent of any
         // saved profile (e.g. a job started via the CLI with no GUI profile
@@ -6193,6 +6317,17 @@ mod tests {
             build_upload_prune_argv(5),
             vec!["upload", "prune", "--keep", "5"]
         );
+    }
+
+    #[test]
+    fn validate_upload_job_id_accepts_only_16_lowercase_hex_chars() {
+        assert!(validate_upload_job_id("0123456789abcdef").is_ok());
+        assert!(validate_upload_job_id("").is_err());
+        assert!(validate_upload_job_id("-rf").is_err());
+        assert!(validate_upload_job_id("0123456789ABCDEF").is_err());
+        assert!(validate_upload_job_id("0123456789abcde").is_err());
+        assert!(validate_upload_job_id("0123456789abcdef0").is_err());
+        assert!(validate_upload_job_id("0123456789abcdeg").is_err());
     }
 
     #[test]
