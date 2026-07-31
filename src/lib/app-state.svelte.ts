@@ -576,12 +576,16 @@ const uploadSelectedProfile = $derived(state.profiles.find((profile) => profile.
 // Mounted, active, and NOT a Snapshot/Deleted/Version view or a gateway-only
 // entry -- those are read-only historical/derived views, not a real
 // browsable filesystem an upload could source from. viewModeBadge is the
-// same check InstancesView itself uses to badge those rows.
-const uploadEligibleInstances = $derived(
-  state.systemState.instances.filter(
-    (instance) => instance.kind !== 'gateway' && instance.health === 'healthy' && !instance.orphaned && !viewModeBadge(instance.viewMode),
-  ),
-)
+// same check InstancesView itself uses to badge those rows. Exported as a
+// standalone predicate (not just the derived list below) so InstancesView's
+// own per-row "Upload from here" action can gate on the identical
+// criterion without depending on array-reference equality against this
+// derived list.
+export function canUploadFrom(instance: MountInstance): boolean {
+  return instance.kind !== 'gateway' && instance.health === 'healthy' && !instance.orphaned && !viewModeBadge(instance.viewMode)
+}
+
+const uploadEligibleInstances = $derived(state.systemState.instances.filter(canUploadFrom))
 
 // The fork badge shown next to the create form -- always derived from
 // whichever source is picked, never a form field.
@@ -1257,6 +1261,16 @@ export async function selectUploadInstance(instance: MountInstance) {
   } catch (error) {
     state.uploadStartError = describeError(error)
   }
+}
+
+// Entry point from the Instances view's own per-row action menu -- jumps
+// straight into the create form with this instance already selected as the
+// source, instead of requiring New upload -> Running instance -> find it
+// again in the combobox.
+export function requestUploadFromInstance(instance: MountInstance) {
+  state.view = 'uploads'
+  state.uploadSubView = 'create'
+  void selectUploadInstance(instance)
 }
 
 function splitGlobLines(text: string): string[] {

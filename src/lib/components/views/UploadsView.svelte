@@ -2,9 +2,7 @@
   import {
     ChevronLeft,
     FolderOpen,
-    HardDrive,
     ListChecks,
-    MonitorDot,
     OctagonX,
     Plus,
     RefreshCw,
@@ -32,7 +30,6 @@
     exitUploadCreate,
     requestUploadPrune,
     requestUploadResume,
-    resetUploadForm,
     runUploadCancel,
     runUploadList,
     runUploadRetryFailed,
@@ -95,18 +92,34 @@
     }
   })
 
-  const profileOptions = $derived(computed.uploadFilteredProfiles.map((p) => ({ value: p.id, label: p.name })))
-
   function instanceLabel(instance: MountInstance): string {
     return instance.name || instance.mountPath
   }
 
-  function selectSourceKind(kind: 'profile' | 'instance') {
-    if (appState.uploadSourceKind === kind) return
-    appState.uploadSourceKind = kind
-    appState.uploadSourceProfileId = kind === 'profile' ? (appState.profiles[0]?.id ?? null) : null
-    appState.uploadSourceInstance = null
-    resetUploadForm()
+  // One combined picker instead of a profile/instance toggle plus two
+  // separate comboboxes -- values are prefixed to disambiguate on
+  // selection, since a profile id and a mount path share no namespace.
+  const uploadSourceOptions = $derived([
+    ...computed.uploadFilteredProfiles.map((p) => ({ value: `profile:${p.id}`, label: `Profile — ${p.name}` })),
+    ...computed.uploadEligibleInstances.map((i) => ({ value: `instance:${i.mountPath}`, label: `Running — ${instanceLabel(i)}` })),
+  ])
+
+  const uploadSourceValue = $derived(
+    appState.uploadSourceKind === 'profile' && appState.uploadSourceProfileId
+      ? `profile:${appState.uploadSourceProfileId}`
+      : appState.uploadSourceKind === 'instance' && appState.uploadSourceInstance
+        ? `instance:${appState.uploadSourceInstance.mountPath}`
+        : '',
+  )
+
+  function selectUploadSource(value: string) {
+    if (value.startsWith('profile:')) {
+      selectUploadProfile(value.slice('profile:'.length))
+    } else if (value.startsWith('instance:')) {
+      const mountPath = value.slice('instance:'.length)
+      const instance = computed.uploadEligibleInstances.find((i) => i.mountPath === mountPath)
+      if (instance) void selectUploadInstance(instance)
+    }
   }
 
   const uploadSourceReady = $derived(
@@ -116,82 +129,42 @@
 
 {#if appState.uploadSubView === 'create'}
   <section class="surface corner-brackets m-[22px] p-4 grid gap-4 outline-hidden" tabindex="-1" use:focusOnMount>
-    <button
-      type="button"
-      class="flex items-center gap-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring w-fit"
-      onclick={exitUploadCreate}
-    >
-      <ChevronLeft size={16} aria-hidden="true" /> Back to upload jobs
-    </button>
-
-    <h3 class="flex items-center gap-2"><Upload size={19} aria-hidden="true" /> New upload</h3>
-
     <form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void runUploadStart() }}>
-      <div class="flex justify-end">
+      <div class="flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring w-fit"
+            onclick={exitUploadCreate}
+          >
+            <ChevronLeft size={16} aria-hidden="true" /> Back to upload jobs
+          </button>
+          {#if uploadSourceReady}
+            <Badge variant="secondary" title="Fork: {computed.uploadResolvedFork || 'main'}">{computed.uploadResolvedFork || 'main'}</Badge>
+          {/if}
+        </div>
         <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy || !uploadSourceReady || !appState.uploadSource.trim() || !appState.uploadDest.trim()}>
           <Upload size={16} aria-hidden="true" />
           {appState.uploadDryRun ? 'Run dry run' : 'Start upload'}
         </Button>
       </div>
 
-      <div class="grid gap-1.5">
-        <Label>Source</Label>
-        <div class="flex gap-1.5" role="group" aria-label="Upload source kind">
-          <Button type="button" size="sm" variant={appState.uploadSourceKind === 'profile' ? 'primary' : 'outline'} onclick={() => selectSourceKind('profile')}>
-            <HardDrive size={14} aria-hidden="true" /> Saved profile
-          </Button>
-          <Button type="button" size="sm" variant={appState.uploadSourceKind === 'instance' ? 'primary' : 'outline'} onclick={() => selectSourceKind('instance')}>
-            <MonitorDot size={14} aria-hidden="true" /> Running instance
-          </Button>
-        </div>
+      <h3 class="flex items-center gap-2"><Upload size={19} aria-hidden="true" /> New upload</h3>
+
+      <div class="grid gap-1.5 max-w-sm">
+        <Combobox
+          options={uploadSourceOptions}
+          placeholder="Choose a profile or running instance..."
+          emptyText="No matching source."
+          aria-label="Upload source"
+          bind:value={() => uploadSourceValue, (value) => selectUploadSource(value)}
+        />
+        {#if computed.uploadFilteredProfiles.length === 0 && computed.uploadEligibleInstances.length === 0}
+          <p class="text-muted-foreground text-sm">No saved profiles or running instances found -- add a profile, or mount a volume first.</p>
+        {/if}
       </div>
 
-      {#if appState.uploadSourceKind === 'profile'}
-        {#if appState.profiles.length === 0}
-          <div class="tech-grid p-5 text-center">
-            <p>Add a profile first -- an upload needs a discovery URL and credentials to connect against.</p>
-          </div>
-        {:else}
-          <div class="grid gap-1.5 max-w-sm">
-            <Label id="upload-profile-label">Profile</Label>
-            <Combobox
-              options={profileOptions}
-              placeholder="Choose a profile..."
-              emptyText="No matching profiles."
-              aria-labelledby="upload-profile-label"
-              bind:value={() => appState.uploadSourceProfileId ?? '', (value) => selectUploadProfile(value)}
-            />
-          </div>
-        {/if}
-      {:else if computed.uploadEligibleInstances.length === 0}
-        <div class="tech-grid p-5 text-center">
-          <p>No mounted, active instances found. Mount a volume first (Snapshot/Deleted/Version views don't count).</p>
-        </div>
-      {:else}
-        <div class="grid gap-1.5 max-w-sm">
-          <Label id="upload-instance-label">Running instance</Label>
-          <Combobox
-            options={computed.uploadEligibleInstances.map((i) => ({ value: i.mountPath, label: instanceLabel(i) }))}
-            placeholder="Choose a running instance..."
-            emptyText="No matching instances."
-            aria-labelledby="upload-instance-label"
-            bind:value={
-              () => appState.uploadSourceInstance?.mountPath ?? '',
-              (value) => {
-                const instance = computed.uploadEligibleInstances.find((i) => i.mountPath === value)
-                if (instance) void selectUploadInstance(instance)
-              }
-            }
-          />
-        </div>
-      {/if}
-
       {#if uploadSourceReady}
-        <div class="flex items-center gap-2">
-          <span class="text-sm text-muted-foreground">Fork</span>
-          <Badge variant="secondary">{computed.uploadResolvedFork || 'main'}</Badge>
-        </div>
-
         <div class="grid gap-1.5">
           <Label for="upload-source">Source folder</Label>
           <div class="flex gap-2">
@@ -225,7 +198,6 @@
           <div class="grid gap-1.5 max-w-sm">
             <Label for="upload-start-secret">Secret access key</Label>
             <Input id="upload-start-secret" type="password" bind:value={appState.uploadStartSecretValue} autocomplete="current-password" />
-            <small class="text-muted-foreground text-sm">Used for both Browse and Start -- entering it once covers both.</small>
           </div>
         {/if}
 
@@ -448,14 +420,13 @@
         </div>
       </div>
     {:else}
+      <!-- No "New upload" button here -- the left panel already has the
+           primary one directly above this same empty state, so a second
+           identical CTA on screen at once was pure duplication. -->
       <div class="surface tech-grid grid justify-items-center gap-2 p-7 text-center">
         <Upload size={28} aria-hidden="true" />
         <strong>No active uploads</strong>
-        <p>Start a bulk upload from a saved profile or a running mount instance, with the exact CLI command shown before every action.</p>
-        <Button variant="primary" type="button" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
-          <Plus size={17} aria-hidden="true" />
-          New upload
-        </Button>
+        <p>Use "New upload" on the left to start a bulk upload from a saved profile or a running mount instance, with the exact CLI command shown before every action.</p>
       </div>
     {/if}
   </section>

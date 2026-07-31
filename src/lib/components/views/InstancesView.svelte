@@ -17,6 +17,7 @@
     Search,
     SquareTerminal,
     Unplug,
+    Upload,
   } from '@lucide/svelte'
   import { DropdownMenu } from 'bits-ui'
   import * as Table from '$lib/components/ui/table'
@@ -34,6 +35,7 @@
     appState,
     canOpen,
     canOpenViewsFor,
+    canUploadFrom,
     cloneProfileFor,
     copyConfig,
     copyText,
@@ -48,6 +50,7 @@
     requestExternalVersionView,
     requestUnmount,
     requestUnmountAll,
+    requestUploadFromInstance,
     requestVersionView,
     requestStopGatewayOnly,
     runOpen,
@@ -82,7 +85,7 @@
   // dropdown trigger would open onto nothing for an instance with no other
   // applicable item (not openable, no deleted/version view, no gateway).
   function hasMoreActions(instance: MountInstance): boolean {
-    return canOpen(instance) || canOpenViewsFor(instance) || Boolean(gatewayInfoForInstance(instance)?.pid)
+    return canOpen(instance) || canOpenViewsFor(instance) || canUploadFrom(instance) || Boolean(gatewayInfoForInstance(instance)?.pid)
   }
 
   // `unmount --all` only ever acts on real kernel mounts -- a standalone
@@ -344,6 +347,15 @@
                             <Copy size={16} aria-hidden="true" /> Clone profile
                           </DropdownMenu.Item>
                         {/if}
+                      {/if}
+                      {#if canUploadFrom(instance)}
+                        <DropdownMenu.Item
+                          class="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm outline-none data-highlighted:bg-accent"
+                          disabled={appState.busy}
+                          onSelect={() => requestUploadFromInstance(instance)}
+                        >
+                          <Upload size={16} aria-hidden="true" /> Upload to this volume
+                        </DropdownMenu.Item>
                       {/if}
                       <!-- .lost+found is a real directory inside the volume's
                            own namespace, so it doesn't exist under a
