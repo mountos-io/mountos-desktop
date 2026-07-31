@@ -2,7 +2,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -347,7 +347,6 @@ struct UploadJob {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UploadStartParams {
-    fork: Option<String>,
     once: bool,
     overwrite: bool,
     dry_run: bool,
@@ -555,6 +554,239 @@ fn find_profile(app: &AppHandle, profile_id: &str) -> Result<MountProfile, Deskt
         .into_iter()
         .find(|profile| profile.id == profile_id)
         .ok_or_else(|| DesktopError::Message("profile not found".to_string()))
+}
+
+// Uploads can be started/browsed from either a saved profile OR a live
+// running mount instance that has no saved profile at all (the same "no
+// profile, re-derive credentials from the live mount's own .mountOS/.config"
+// pattern open_deleted_view_for_instance/open_version_view_for_instance
+// already use via synthetic_profile_for_live_mount -- reused here rather
+// than a second implementation of the same idea). Exactly one of
+// profile_id/instance_mount_path is expected; profile_id wins if both are
+// somehow set.
+// A running mount instance chosen as an upload's source, carrying the
+// config the frontend already captured (via getInstanceConfig) the moment
+// it was selected -- discovery_url/fork/volume/access_key_id are static
+// config values, not tied to the mount being currently up, so they stay
+// valid to reuse even if the instance unmounts before Browse/Start actually
+// runs (which can happen well after selection). Only a live local FILESYSTEM
+// path genuinely needs the mount to still exist, and that's handled
+// separately by the browse-mount always creating its OWN scratch mount
+// rather than trusting this instance's mount_path to still be reachable.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UploadInstanceRef {
+    mount_path: String,
+    backend: Backend,
+    discovery_url: String,
+    fork: String,
+    volume: String,
+    access_key_id: String,
+}
+
+fn resolve_upload_source_profile(
+    app: &AppHandle,
+    profile_id: Option<&str>,
+    instance: Option<&UploadInstanceRef>,
+) -> Result<MountProfile, DesktopError> {
+    if let Some(profile_id) = profile_id.filter(|id| !id.is_empty()) {
+        return find_profile(app, profile_id);
+    }
+    if let Some(instance) = instance.filter(|i| !i.mount_path.is_empty()) {
+        if list_contains_target(&instance.mount_path)? {
+            // Still active: re-derive fresh from the live mount's own
+            // config rather than trusting whatever the frontend cached,
+            // matching open_deleted_view_for_instance's own precedent.
+            return synthetic_profile_for_live_mount(&instance.mount_path, instance.backend.clone());
+        }
+        // No longer active -- fall back to the config captured at
+        // selection time instead of failing outright.
+        if instance.discovery_url.is_empty() && instance.access_key_id.is_empty() {
+            return Err(DesktopError::Message(format!(
+                "instance is no longer mounted and no cached configuration is available: {}",
+                instance.mount_path
+            )));
+        }
+        return live_mount_config_to_profile(
+            &instance.mount_path,
+            instance.backend.clone(),
+            LiveMountConfig {
+                discovery_url: instance.discovery_url.clone(),
+                fork_name: instance.fork.clone(),
+                access_id: instance.access_key_id.clone(),
+                volume_name: instance.volume.clone(),
+                volume_type: String::new(),
+            },
+        );
+    }
+    Err(DesktopError::Message(
+        "either a profile or a running mount instance is required".to_string(),
+    ))
+}
+
+// Destination-path Browse needs a real local folder tree to hand the native
+// file picker (browseFolder), but a mountOS destination path lives on the
+// REMOTE volume -- there is no existing "list a remote directory" RPC/CLI to
+// call instead. Rather than build one, this mounts the volume READ-ONLY at a
+// throwaway scratch path (reusing the exact same mount/spawn_daemonizing_
+// and_wait machinery a real mount uses) so the native picker can browse it
+// like any other local folder, then leaves it mounted for a while in case
+// the user browses again soon (every click mounting+unmounting would be
+// slow and noisy) but reaps it after IDLE_TIMEOUT of inactivity so it's
+// never left mounted forever either. Keyed by the resolved profile's own id
+// (stable per profile / per live-instance-mount-path, see MountProfile::id
+// and live_mount_config_to_profile's "ext-<hash(mount_path)>").
+struct BrowseMountEntry {
+    local_path: PathBuf,
+    last_used: Instant,
+}
+
+const BROWSE_MOUNT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const BROWSE_MOUNT_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
+fn browse_mounts() -> &'static Mutex<HashMap<String, BrowseMountEntry>> {
+    static BROWSE_MOUNTS: OnceLock<Mutex<HashMap<String, BrowseMountEntry>>> = OnceLock::new();
+    BROWSE_MOUNTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Only one sweeper thread ever runs at a time; it exits once the map is
+// empty (nothing left to reap) rather than looping forever, and a fresh one
+// is spawned the next time a browse-mount is created if the map was empty.
+fn browse_sweeper_running() -> &'static Mutex<bool> {
+    static RUNNING: OnceLock<Mutex<bool>> = OnceLock::new();
+    RUNNING.get_or_init(|| Mutex::new(false))
+}
+
+fn spawn_browse_mount_sweeper(app: AppHandle) {
+    {
+        let mut running = browse_sweeper_running()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if *running {
+            return;
+        }
+        *running = true;
+    }
+    thread::spawn(move || loop {
+        thread::sleep(BROWSE_MOUNT_SWEEP_INTERVAL);
+        let idle: Vec<(String, PathBuf)> = {
+            let mounts = browse_mounts().lock().unwrap_or_else(|e| e.into_inner());
+            mounts
+                .iter()
+                .filter(|(_, entry)| entry.last_used.elapsed() >= BROWSE_MOUNT_IDLE_TIMEOUT)
+                .map(|(key, entry)| (key.clone(), entry.local_path.clone()))
+                .collect()
+        };
+        for (key, local_path) in idle {
+            let target = local_path.to_string_lossy().into_owned();
+            // Best-effort: an unmount failure (busy, already gone) just means
+            // this entry is retried next sweep rather than removed now, so a
+            // stale registry entry can never point at something that
+            // silently vanished without ever being cleaned up.
+            if unmount_target_blocking(app.clone(), target, false).is_ok() {
+                browse_mounts()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key);
+            }
+        }
+        let empty = browse_mounts()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty();
+        if empty {
+            *browse_sweeper_running()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = false;
+            break;
+        }
+    });
+}
+
+fn ensure_upload_browse_mount_blocking(
+    app: AppHandle,
+    profile_id: Option<String>,
+    instance: Option<UploadInstanceRef>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let mut profile =
+        resolve_upload_source_profile(&app, profile_id.as_deref(), instance.as_ref())?;
+    validate_backend_for_platform(&profile.backend)?;
+    resolve_auto_backend(&mut profile)?;
+
+    let key = profile.id.clone();
+    {
+        let mounts = browse_mounts().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = mounts.get(&key) {
+            let local_path = entry.local_path.clone();
+            drop(mounts);
+            if list_contains_target(&local_path.to_string_lossy())? {
+                if let Some(entry) = browse_mounts()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(&key)
+                {
+                    entry.last_used = Instant::now();
+                }
+                return Ok(local_path.to_string_lossy().into_owned());
+            }
+            // Reaped or otherwise gone since we last checked -- fall through
+            // and mount a fresh one.
+        }
+    }
+
+    // FSKit mounts are jailed to FSKIT_MOUNT_PREFIX by validate_mount_path_for_backend
+    // (checked right below) -- runtime_dir lives outside that jail, so an FSKit-backed
+    // scratch mount must go under the prefix instead, or every FSKit browse fails outright.
+    let local_path = if matches!(profile.backend, Backend::Fskit) {
+        PathBuf::from(FSKIT_MOUNT_PREFIX).join(format!("upload-browse-{}", short_hash(&key)))
+    } else {
+        runtime_dir(&app)?.join("upload-browse").join(short_hash(&key))
+    };
+    fs::create_dir_all(&local_path)?;
+    profile.read_only = true;
+    profile.mount_path = local_path.to_string_lossy().into_owned();
+    validate_mount_path_for_backend(&profile.backend, &profile.mount_path)?;
+    reject_managed_extra_args(&profile)?;
+    if !list_contains_target(&profile.mount_path)? {
+        let mount_secret = resolve_satellite_secret(&profile, secret)?;
+        let args = build_mount_argv(&profile);
+        let suffix = short_hash(&key);
+        let stderr_path = runtime_dir(&app)?.join(format!("upload-browse-{suffix}-stderr.log"));
+        let stdout_path = runtime_dir(&app)?.join(format!("upload-browse-{suffix}-stdout.log"));
+        let target = profile.mount_path.clone();
+        spawn_daemonizing_and_wait(
+            &mountos_path()?,
+            &args,
+            mount_secret.as_deref(),
+            &stdout_path,
+            &stderr_path,
+            &target,
+        )?;
+    }
+    browse_mounts().lock().unwrap_or_else(|e| e.into_inner()).insert(
+        key,
+        BrowseMountEntry {
+            local_path: local_path.clone(),
+            last_used: Instant::now(),
+        },
+    );
+    spawn_browse_mount_sweeper(app);
+    Ok(local_path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn ensure_upload_browse_mount(
+    app: AppHandle,
+    profile_id: Option<String>,
+    instance: Option<UploadInstanceRef>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_upload_browse_mount_blocking(app, profile_id, instance, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("browse mount task failed: {error}")))?
 }
 
 fn read_profiles(app: &AppHandle) -> Result<Vec<MountProfile>, DesktopError> {
@@ -993,6 +1225,28 @@ fn build_fork_restore_argv(profile: &MountProfile, name: &str) -> Vec<String> {
     argv
 }
 
+// Server-side re-check for whatever a user typed/pasted into source/dest --
+// not itself the security boundary (build_upload_start_argv's own "--"
+// separator is what actually makes an arbitrary value safe in argv), but a
+// value starting with '-' is *rejected outright* here rather than silently
+// forwarded, since even though "--" prevents it from being misparsed as a
+// flag, a destination that's literally "-rf" or "--restart" is almost
+// certainly a mistake (a stray paste, a copy-paste of a flag instead of a
+// path) the user would want to know about before a real upload starts.
+fn validate_upload_positional(value: &str, field: &str) -> Result<(), DesktopError> {
+    if value.starts_with('-') {
+        return Err(DesktopError::Message(format!(
+            "{field} must not start with '-': {value:?}"
+        )));
+    }
+    if value.contains('\0') {
+        return Err(DesktopError::Message(format!(
+            "{field} must not contain a NUL byte"
+        )));
+    }
+    Ok(())
+}
+
 // The upload run form's flag surface, confirmed against cmd_upload.go: --fork
 // (not --fork-name, unlike every mount/fork/gateway builder above), plus
 // --once/--overwrite/--dry-run/--rescan-interval/--restart/--bwlimit/
@@ -1007,17 +1261,24 @@ fn build_upload_start_argv(
     dest: &str,
     params: &UploadStartParams,
 ) -> Vec<String> {
-    let mut argv = vec!["upload".to_string(), source.to_string(), dest.to_string()];
+    // Every flag first, source/dest last behind a literal "--": pflag scans
+    // the whole token stream for anything starting with '-' regardless of
+    // position, so a source/dest value that happens to look like a flag
+    // (a folder genuinely named "-tmp", a pasted "--restart") would
+    // otherwise be misparsed as a NEW flag instead of the positional
+    // argument it is. "--" unconditionally ends flag parsing, so everything
+    // after it reaches cobra as the two positional args no matter what it
+    // contains -- this is the one argv shape that's actually safe for
+    // arbitrary user input, not just typical-looking paths.
+    let mut argv = vec!["upload".to_string()];
     if !profile.discovery_url.is_empty() {
         argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
     }
-    if let Some(fork) = params
-        .fork
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
-        argv.extend(["--fork".to_string(), fork.to_string()]);
+    // Fork is always derived from the resolved profile (saved profile or
+    // live/cached instance config), never a free-typed value -- there is no
+    // form field for it anymore.
+    if !profile.fork.is_empty() {
+        argv.extend(["--fork".to_string(), profile.fork.clone()]);
     }
     if params.once {
         argv.push("--once".to_string());
@@ -1065,6 +1326,7 @@ fn build_upload_start_argv(
         argv.push("--create-source-directory".to_string());
     }
     push_satellite_credentials(&mut argv, profile);
+    argv.extend(["--".to_string(), source.to_string(), dest.to_string()]);
     argv
 }
 
@@ -2840,13 +3102,14 @@ async fn list_uploads() -> Result<Vec<UploadJob>, DesktopError> {
 
 fn start_upload_blocking(
     app: AppHandle,
-    profile_id: String,
+    profile_id: Option<String>,
+    instance: Option<UploadInstanceRef>,
     source: String,
     dest: String,
     params: UploadStartParams,
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
-    let profile = find_profile(&app, &profile_id)?;
+    let profile = resolve_upload_source_profile(&app, profile_id.as_deref(), instance.as_ref())?;
     let source = source.trim();
     let dest = dest.trim();
     if source.is_empty() {
@@ -2857,6 +3120,8 @@ fn start_upload_blocking(
             "destination path is required".to_string(),
         ));
     }
+    validate_upload_positional(source, "source")?;
+    validate_upload_positional(dest, "destination")?;
     let argv = build_upload_start_argv(&profile, source, dest, &params);
     if params.dry_run {
         // Never connects (runUploadDryRun is checked before credentials are
@@ -2879,8 +3144,8 @@ fn start_upload_blocking(
     // short_hash-of-destination convention as the Snapshot/Deleted/Version
     // views below.
     let suffix = short_hash(&format!("{source}->{dest}"));
-    let stderr_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-{suffix}-stderr.log"));
-    let stdout_path = runtime_dir(&app)?.join(format!("upload-{profile_id}-{suffix}-stdout.log"));
+    let stderr_path = runtime_dir(&app)?.join(format!("upload-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path = runtime_dir(&app)?.join(format!("upload-{}-{suffix}-stdout.log", profile.id));
     spawn_daemonizing_upload_and_wait(
         &mountos_path()?,
         &argv,
@@ -2894,14 +3159,15 @@ fn start_upload_blocking(
 #[tauri::command]
 async fn start_upload(
     app: AppHandle,
-    profile_id: String,
+    profile_id: Option<String>,
+    instance: Option<UploadInstanceRef>,
     source: String,
     dest: String,
     params: UploadStartParams,
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || {
-        start_upload_blocking(app, profile_id, source, dest, params, secret)
+        start_upload_blocking(app, profile_id, instance, source, dest, params, secret)
     })
     .await
     .map_err(|error| DesktopError::Message(format!("start upload task failed: {error}")))?
@@ -4928,6 +5194,7 @@ pub fn run() {
             fork_restore,
             list_uploads,
             start_upload,
+            ensure_upload_browse_mount,
             resume_upload,
             cancel_upload,
             retry_failed_upload,
@@ -5721,7 +5988,6 @@ mod tests {
 
     fn upload_params() -> UploadStartParams {
         UploadStartParams {
-            fork: None,
             once: false,
             overwrite: false,
             dry_run: false,
@@ -5736,7 +6002,7 @@ mod tests {
     }
 
     #[test]
-    fn build_upload_start_argv_emits_source_and_dest_as_bare_positionals() {
+    fn build_upload_start_argv_emits_source_and_dest_as_bare_positionals_after_dashdash() {
         let argv = build_upload_start_argv(
             &profile(),
             "/local/photos",
@@ -5744,11 +6010,17 @@ mod tests {
             &upload_params(),
         );
         assert_eq!(argv[0], "upload");
-        assert_eq!(argv[1], "/local/photos");
-        assert_eq!(argv[2], "/remote/photos");
+        // Every flag comes before "--", then exactly the two positionals --
+        // this is what makes an arbitrary (even flag-shaped) source/dest
+        // value safe: pflag stops scanning for flags at "--".
+        let dashdash = argv.iter().position(|a| a == "--").expect("must contain a literal \"--\" separator");
+        assert_eq!(&argv[dashdash + 1..], &["/local/photos", "/remote/photos"]);
         assert!(argv
             .windows(2)
             .any(|args| args == ["--discovery-url", "https://hub.example.com"]));
+        // Fork is always derived from the profile now (fixture has "main"),
+        // never a form field.
+        assert!(argv.windows(2).any(|args| args == ["--fork", "main"]));
         assert!(argv.contains(&"-a".to_string()));
         assert!(argv.contains(&"-s".to_string()));
         // Defaults: no flags for anything the form left off.
@@ -5758,13 +6030,11 @@ mod tests {
         assert!(!argv.contains(&"--restart".to_string()));
         assert!(!argv.contains(&"--follow-symlinks".to_string()));
         assert!(!argv.contains(&"--create-source-directory".to_string()));
-        assert!(!argv.contains(&"--fork".to_string()));
     }
 
     #[test]
     fn build_upload_start_argv_emits_every_flag_when_set() {
         let mut params = upload_params();
-        params.fork = Some(" backup ".to_string());
         params.once = true;
         params.overwrite = true;
         params.dry_run = true;
@@ -5777,7 +6047,7 @@ mod tests {
         params.create_source_directory = true;
 
         let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params);
-        assert!(argv.windows(2).any(|a| a == ["--fork", "backup"]));
+        assert!(argv.windows(2).any(|a| a == ["--fork", "main"]));
         assert!(argv.contains(&"--once".to_string()));
         assert!(argv.contains(&"--overwrite".to_string()));
         assert!(argv.contains(&"--dry-run".to_string()));
@@ -5833,6 +6103,14 @@ mod tests {
             build_upload_prune_argv(5),
             vec!["upload", "prune", "--keep", "5"]
         );
+    }
+
+    #[test]
+    fn validate_upload_positional_rejects_flag_shaped_and_nul_values() {
+        assert!(validate_upload_positional("/normal/path", "source").is_ok());
+        assert!(validate_upload_positional("-rf", "source").is_err());
+        assert!(validate_upload_positional("--restart", "destination").is_err());
+        assert!(validate_upload_positional("path\0with\0nul", "source").is_err());
     }
 
     #[test]

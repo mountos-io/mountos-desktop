@@ -20,7 +20,9 @@ import {
   isValidFolderName,
   parseArgvInput,
   validateExtraArgs,
+  validateGlobPattern,
   validateMountPathForBackend,
+  validateUploadPositional,
 } from './cli'
 import type { UploadStartParams } from './cli'
 import type { MountProfile } from './types'
@@ -313,20 +315,27 @@ describe('cli helpers', () => {
     createSourceDirectory: false,
   })
 
-  it('builds upload start argv with source/dest as bare positionals and no flags by default', () => {
+  it('builds upload start argv with source/dest as bare positionals after "--" and no flags by default', () => {
     const argv = buildUploadStartArgv(profile, '/local/photos', '/remote/photos', uploadParams())
-    expect(argv.slice(0, 3)).toEqual(['upload', '/local/photos', '/remote/photos'])
+    expect(argv[0]).toEqual('upload')
+    // Flags first, then a literal "--", then exactly the two positionals --
+    // this is what makes an arbitrary (even flag-shaped) source/dest value
+    // safe: pflag stops scanning for flags at "--".
+    const dashdash = argv.indexOf('--')
+    expect(dashdash).toBeGreaterThan(-1)
+    expect(argv.slice(dashdash + 1)).toEqual(['/local/photos', '/remote/photos'])
     expect(argv).toEqual(expect.arrayContaining(['--discovery-url', 'https://hub.example.com']))
+    // Fork is always derived from the profile now (fixture has 'main'),
+    // never a form field.
+    expect(argv).toEqual(expect.arrayContaining(['--fork', 'main']))
     expect(argv).not.toContain('--once')
     expect(argv).not.toContain('--overwrite')
     expect(argv).not.toContain('--dry-run')
     expect(argv).not.toContain('--restart')
-    expect(argv).not.toContain('--fork')
   })
 
   it('builds upload start argv with every flag set', () => {
     const params: UploadStartParams = {
-      fork: ' backup ',
       once: true,
       overwrite: true,
       dryRun: true,
@@ -341,7 +350,7 @@ describe('cli helpers', () => {
     const argv = buildUploadStartArgv(profile, '/src', '/dst', params)
     expect(argv).toEqual(
       expect.arrayContaining([
-        '--fork', 'backup',
+        '--fork', 'main',
         '--once',
         '--overwrite',
         '--dry-run',
@@ -356,6 +365,16 @@ describe('cli helpers', () => {
     )
     // A blank include/exclude entry must never reach argv as a bare flag.
     expect(argv.filter((arg) => arg === '--include')).toHaveLength(1)
+    expect(argv.slice(-2)).toEqual(['/src', '/dst'])
+  })
+
+  it('validates positionals and glob patterns', () => {
+    expect(validateUploadPositional('/local/photos', 'Source')).toBeNull()
+    expect(validateUploadPositional('-rf', 'Source')).toMatch(/must not start with/)
+    expect(validateUploadPositional('a\0b', 'Source')).toMatch(/NUL/)
+    expect(validateGlobPattern('*.jpg')).toBeNull()
+    expect(validateGlobPattern('  ')).toMatch(/empty/)
+    expect(validateGlobPattern('a\x01b')).toMatch(/control/)
   })
 
   it('omits --bwlimit when zero', () => {

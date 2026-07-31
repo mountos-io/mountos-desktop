@@ -29,11 +29,13 @@
     DEFAULT_POLL_SECONDS,
     drillIntoFork,
     exitProfileSubView,
+    exitUploadCreate,
     HIDDEN_POLL_MS,
     loadSettings,
     newProfile,
     pollSystem,
     refresh,
+    runUploadList,
     toggleSidebar,
     viewTitle,
     type View,
@@ -48,6 +50,12 @@
 
   let commandPaletteOpen = $state(false)
   let viewScroller: HTMLDivElement | undefined = $state()
+
+  // Caps the sidebar badge at "99+" -- an uncapped 3+ digit count would
+  // stretch the pill wide enough to crowd the icon next to it.
+  function badgeCount(n: number): string {
+    return n > 99 ? '99+' : String(n)
+  }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
     const modPressed = modKeyPressed(event, appState.systemState.platform)
@@ -88,7 +96,8 @@
   const subViewLabels = { forks: 'Forks', snapshot: 'Snapshot view', deleted: 'Deleted files', version: 'File versions', gateway: 'Gateway' } as const
 
   const breadcrumbs = $derived.by((): Crumb[] => {
-    const crumbs: Array<Crumb & { onclick?: () => void }> = [{ label: viewTitle(appState.view), onclick: exitProfileSubView }]
+    const rootAction = appState.view === 'uploads' ? exitUploadCreate : exitProfileSubView
+    const crumbs: Array<Crumb & { onclick?: () => void }> = [{ label: viewTitle(appState.view), onclick: rootAction }]
     if (appState.view === 'profiles' && computed.selectedProfile) {
       crumbs.push({ label: computed.selectedProfile.name, onclick: exitProfileSubView })
       if (appState.profileSubView === 'forks') {
@@ -99,6 +108,8 @@
       } else if (appState.profileSubView !== 'editor') {
         crumbs.push({ label: subViewLabels[appState.profileSubView], onclick: exitProfileSubView })
       }
+    } else if (appState.view === 'uploads' && appState.uploadSubView === 'create') {
+      crumbs.push({ label: 'New upload', onclick: exitUploadCreate })
     }
     // Every crumb but the last is clickable; the last is the current page.
     return crumbs.map((crumb, index) => (index === crumbs.length - 1 ? { label: crumb.label } : crumb))
@@ -114,6 +125,10 @@
   $effect(() => {
     void loadSettings()
     void refresh(false)
+    // One-shot, not a poll loop: gives the sidebar's running-upload badge a
+    // real count from launch, without adding a background CLI shell-out
+    // most sessions (that never touch Uploads) would pay for nothing.
+    void runUploadList()
   })
 
   $effect(() => {
@@ -175,7 +190,17 @@
           aria-current={appState.view === item.id ? 'page' : undefined}
           onclick={() => (appState.view = item.id)}
         >
-          <item.icon size={18} aria-hidden="true" class="shrink-0" />
+          <span class="relative shrink-0">
+            <item.icon size={18} aria-hidden="true" />
+            {#if item.id === 'uploads' && computed.uploadRunningCount > 0}
+              <span
+                class="absolute -right-2.5 -top-2.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-base font-medium leading-none text-primary-foreground"
+                title="{computed.uploadRunningCount} upload job{computed.uploadRunningCount === 1 ? '' : 's'} running"
+              >
+                {badgeCount(computed.uploadRunningCount)}
+              </span>
+            {/if}
+          </span>
           {#if !appState.sidebarCollapsed}<span>{item.label}</span>{/if}
         </button>
       {/each}

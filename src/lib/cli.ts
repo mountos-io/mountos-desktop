@@ -350,7 +350,6 @@ export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchPar
 }
 
 export interface UploadStartParams {
-  fork?: string
   once: boolean
   overwrite: boolean
   dryRun: boolean
@@ -363,17 +362,52 @@ export interface UploadStartParams {
   createSourceDirectory: boolean
 }
 
+// Mirrors src-tauri/src/lib.rs's validate_upload_positional. Not itself the
+// security boundary -- buildUploadStartArgv's own "--" separator is what
+// actually makes an arbitrary value safe in argv -- but a value starting
+// with '-' is rejected outright here so the user sees a clear inline error
+// instead of a cryptic CLI failure (or, without the "--" fix, a genuinely
+// misparsed flag).
+export function validateUploadPositional(value: string, field: string): string | null {
+  if (value.startsWith('-')) return `${field} must not start with '-'`
+  if (value.includes('\0')) return `${field} must not contain a NUL byte`
+  return null
+}
+
+// --include/--exclude glob patterns are always sent as a flag's VALUE
+// (`--include <pattern>`), never scanned for flag-ness themselves -- pflag
+// consumes the token immediately following a value-taking flag
+// unconditionally, so a leading '-' or '*' here is not an argv-injection
+// risk the way a bare positional is. This is sanity validation only: reject
+// what can never be a meaningful glob (empty, NUL/control bytes), not what
+// looks unusual.
+export function validateGlobPattern(pattern: string): string | null {
+  const trimmed = pattern.trim()
+  if (!trimmed) return 'pattern must not be empty'
+  // eslint-disable-next-line no-control-regex -- deliberately matching control bytes to reject them
+  if (/[\0-\x1f]/.test(trimmed)) return 'pattern must not contain control characters'
+  return null
+}
+
 // The upload run form's flag surface, confirmed against cmd_upload.go: --fork
 // (not --fork-name, unlike every mount/fork/gateway builder above), plus
 // --once/--overwrite/--dry-run/--rescan-interval/--restart/--bwlimit/
 // --include/--exclude/--follow-symlinks/--create-source-directory, all only
 // on the top-level `upload <source> <dest>`. Included even for a dry run
 // (harmless -- runUploadDryRun never reads --fork/credentials at all).
-// Mirrors src-tauri/src/lib.rs's build_upload_start_argv.
+// Mirrors src-tauri/src/lib.rs's build_upload_start_argv, including the
+// flags-first-then-"--"-then-positionals ordering: pflag scans the whole
+// token stream for anything starting with '-' regardless of position, so a
+// source/dest value that happens to look like a flag would otherwise be
+// misparsed as a NEW flag instead of the positional argument it is. "--"
+// unconditionally ends flag parsing, making this the one argv shape that's
+// actually safe for arbitrary user input, not just typical-looking paths.
 export function buildUploadStartArgv(profile: MountProfile, source: string, dest: string, params: UploadStartParams): string[] {
-  const argv = ['upload', source, dest]
+  const argv = ['upload']
   if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
-  if (params.fork?.trim()) argv.push('--fork', params.fork.trim())
+  // Fork is always derived from the resolved profile (saved profile or
+  // live/cached instance config), never a free-typed value.
+  if (profile.fork) argv.push('--fork', profile.fork)
   if (params.once) argv.push('--once')
   if (params.overwrite) argv.push('--overwrite')
   if (params.dryRun) argv.push('--dry-run')
@@ -389,6 +423,7 @@ export function buildUploadStartArgv(profile: MountProfile, source: string, dest
   if (params.followSymlinks) argv.push('--follow-symlinks')
   if (params.createSourceDirectory) argv.push('--create-source-directory')
   pushSatelliteCredentials(argv, profile)
+  argv.push('--', source, dest)
   return argv
 }
 

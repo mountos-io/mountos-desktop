@@ -15,6 +15,7 @@ import type {
   ThirdPartyLicenses,
   UnmountResult,
   UnmountAllResult,
+  UploadInstanceRef,
   UploadJob,
 } from './types'
 
@@ -161,15 +162,34 @@ export async function listUploads(): Promise<UploadJob[]> {
   return invoke<UploadJob[]>('list_uploads')
 }
 
+// Exactly one of profileId/instance is expected -- mirrors src-tauri/src/
+// lib.rs's resolve_upload_source_profile.
 export async function startUpload(
-  profileId: string,
+  profileId: string | undefined,
+  instance: UploadInstanceRef | undefined,
   source: string,
   dest: string,
   params: UploadStartParams,
   secret?: string,
 ): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
-  return invoke<string>('start_upload', { profileId, source, dest, params, secret })
+  return invoke<string>('start_upload', { profileId, instance, source, dest, params, secret })
+}
+
+// Ensures a read-only scratch mount of the upload source's volume exists
+// (mounting it if needed, reusing an already-mounted one otherwise) and
+// returns its local filesystem path, so the destination-path Browse button
+// can hand that path to the native folder picker -- there is no "list a
+// remote directory" RPC to call instead. The mount is left up for a while
+// in case of a repeat browse, then reaped after being idle (see
+// ensure_upload_browse_mount_blocking's own doc comment).
+export async function ensureUploadBrowseMount(
+  profileId: string | undefined,
+  instance: UploadInstanceRef | undefined,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('ensure_upload_browse_mount', { profileId, instance, secret })
 }
 
 export async function resumeUpload(

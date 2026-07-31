@@ -22,7 +22,9 @@ import {
   isValidFolderName,
   parseArgvInput,
   validateExtraArgs,
+  validateGlobPattern,
   validateMountPathForBackend,
+  validateUploadPositional,
 } from './cli'
 import type { UploadStartParams } from './cli'
 import { viewModeBadge } from './health'
@@ -61,6 +63,7 @@ import {
   openTarget,
   openVersionView,
   openVersionViewForInstance,
+  ensureUploadBrowseMount,
   listUploads,
   pruneUploads,
   resumeUpload,
@@ -85,6 +88,7 @@ import type {
   MountProfile,
   SystemState,
   ThirdPartyLicenses,
+  UploadInstanceRef,
   UploadJob,
 } from './types'
 
@@ -239,24 +243,49 @@ const state = $state({
   forkRestoreSecretValue: '',
   forkRestoreError: '',
 
-  // Uploads: a top-level view (like Instances/Profiles), not entered from a
-  // specific profile the way Forks/Snapshot/Deleted/Version/Gateway are --
-  // `mountos list --kind upload --json` reports every job regardless of
-  // which profile started it, so the list itself needs no profile selection.
-  // Only the start/resume forms need one (to source discovery-url/fork/
-  // credentials), reusing the same selectedProfileId/selectedProfile every
-  // other profile-scoped action already uses.
+  // Uploads: a top-level view (like Instances/Profiles). List is the
+  // default sub-view (master-detail: job list on the left, selected job's
+  // detail on the right, same layout as ProfilesView); "New upload" opens a
+  // separate create-job sub-view with its own breadcrumb entry, mirroring
+  // Profiles' editor/forks/snapshot/... sub-view split.
+  uploadSubView: 'list' as 'list' | 'create',
   uploads: [] as UploadJob[],
   uploadsBusy: false,
   uploadsError: '',
+  uploadSelectedJobId: null as string | null,
+  // Cleanly-completed jobs are historical noise once done -- nothing
+  // pruned automatically accumulates them indefinitely (mountos-servers
+  // upload prune is manual-only), so the left panel hides them by default
+  // rather than growing unbounded. A completed job with failures still
+  // needs attention and stays visible regardless of this toggle.
+  uploadShowCompleted: false,
 
-  // Start form fields. include/exclude are newline-separated textareas
-  // (split into glob arrays at submit time) rather than a dynamic list of
-  // inputs -- simpler to bind, and --include/--exclude are themselves
-  // free-form globs a user is likely to paste several of at once.
+  // Create-job form: source is either a saved profile OR a live running
+  // mount instance with no saved profile (mirrors requestExternalDeletedView's
+  // "no profile, re-derive from the live mount's own config" pattern).
+  // Fork/discovery-url/access-key always come from whichever is picked --
+  // never a free-typed value -- so there is no separate form field for any
+  // of them.
+  uploadSourceKind: 'profile' as 'profile' | 'instance',
+  uploadSourceProfileId: null as string | null,
+  uploadProfileQuery: '',
+  // Captured once (via getInstanceConfig) the moment an instance is picked;
+  // reused verbatim by the Rust side if the instance is no longer mounted
+  // by the time Browse/Start actually runs (resolve_upload_source_profile's
+  // own fallback), so this is intentionally NOT re-fetched on every use.
+  uploadSourceInstance: null as UploadInstanceRef | null,
+
+  // Form fields. include/exclude are newline-separated textareas (split
+  // into glob arrays at submit time) rather than a dynamic list of inputs
+  // -- simpler to bind, and --include/--exclude are themselves free-form
+  // globs a user is likely to paste several of at once. bwlimit/rescan-
+  // interval/include/exclude/restart/follow-symlinks/create-source-dir all
+  // live behind the collapsed "Advanced options" disclosure.
   uploadSource: '',
   uploadDest: '',
-  uploadFork: '',
+  uploadSourceError: '',
+  uploadDestError: '',
+  uploadAdvancedOpen: false,
   uploadOnce: false,
   uploadOverwrite: false,
   uploadDryRun: false,
@@ -269,6 +298,7 @@ const state = $state({
   uploadCreateSourceDirectory: false,
   uploadStartSecretValue: '',
   uploadStartError: '',
+  uploadBrowseError: '',
   // Populated only after a --dry-run start (the report text itself, not a
   // real job) -- cleared at the start of the NEXT runUploadStart call
   // (dry-run or not), so a stale report never lingers past the point the
@@ -524,6 +554,111 @@ const filteredProfiles = $derived.by(() => {
   return state.profiles.filter((profile) => profile.id === state.selectedProfileId || profile.name.toLowerCase().includes(q))
 })
 
+// Search-filtered for the upload create form's profile picker -- unlike
+// filteredProfiles above, there's no "selected profile must stay visible"
+// exception needed here (uploadSourceProfileId is reset whenever the query
+// changes the visible set enough to matter, via selectUploadProfile).
+const uploadFilteredProfiles = $derived.by(() => {
+  const q = state.uploadProfileQuery.trim().toLowerCase()
+  if (!q) return state.profiles
+  return state.profiles.filter((profile) => profile.name.toLowerCase().includes(q))
+})
+
+const uploadSelectedProfile = $derived(state.profiles.find((profile) => profile.id === state.uploadSourceProfileId))
+
+// Mounted, active, and NOT a Snapshot/Deleted/Version view or a gateway-only
+// entry -- those are read-only historical/derived views, not a real
+// browsable filesystem an upload could source from. viewModeBadge is the
+// same check InstancesView itself uses to badge those rows.
+const uploadEligibleInstances = $derived(
+  state.systemState.instances.filter(
+    (instance) => instance.kind !== 'gateway' && instance.health === 'healthy' && !instance.orphaned && !viewModeBadge(instance.viewMode),
+  ),
+)
+
+// The fork badge shown next to the create form -- always derived from
+// whichever source is picked, never a form field.
+const uploadResolvedFork = $derived(
+  state.uploadSourceKind === 'profile' ? (uploadSelectedProfile?.fork ?? '') : (state.uploadSourceInstance?.fork ?? ''),
+)
+
+// A saved profile may have its secret cached in the vault already, so the
+// field is conditional there. A running-instance source is never a saved
+// profile -- there's no vault entry to check, ever -- so the secret field
+// always needs to be offered (this is also the "browse doesn't need a
+// secret, only upload does" case from the source spec).
+const uploadNeedsSecret = $derived(
+  state.uploadSourceKind === 'profile'
+    ? Boolean(uploadSelectedProfile) && (uploadSelectedProfile!.secretRef === 'prompt' || !state.vaultStatus[uploadSelectedProfile!.id])
+    : Boolean(state.uploadSourceInstance),
+)
+
+// A profile-shaped object purely for COMMAND PREVIEW / argv building --
+// never sent anywhere itself (the real start_upload call re-derives its own
+// profile server-side, see resolve_upload_source_profile), same trick
+// previewProfileFromExternalConfig below uses for Deleted/Version.
+const uploadPreviewProfile = $derived.by((): MountProfile | null => {
+  if (state.uploadSourceKind === 'profile') return uploadSelectedProfile ?? null
+  const instance = state.uploadSourceInstance
+  if (!instance) return null
+  return {
+    id: 'instance',
+    schemaVersion: 1,
+    kind: 'mount',
+    name: instance.volume || 'Running instance',
+    volume: instance.volume,
+    fork: instance.fork,
+    mountPath: instance.mountPath,
+    discoveryUrl: instance.discoveryUrl,
+    accessKeyId: instance.accessKeyId,
+    secretRef: 'prompt',
+    backend: instance.backend,
+    readOnly: false,
+    autoRemount: false,
+    temporaryFork: false,
+    extraArgs: [],
+    createdAt: '',
+    updatedAt: '',
+  }
+})
+
+const uploadCommandText = $derived.by(() => {
+  const profile = uploadPreviewProfile
+  if (!profile || !state.uploadSource.trim() || !state.uploadDest.trim()) return ''
+  return `mountos ${buildUploadStartArgv(profile, state.uploadSource.trim(), state.uploadDest.trim(), uploadStartParams()).join(' ')}`
+})
+
+// Sidebar badge count -- lazily updated (whatever `uploads` last held from
+// the most recent runUploadList call, not a dedicated poll loop), per the
+// design's deliberate choice not to add background CLI shell-outs for a
+// feature most sessions never touch.
+const uploadRunningCount = $derived(state.uploads.filter((job) => job.state === 'running').length)
+
+function isCleanlyCompletedUpload(job: UploadJob): boolean {
+  return job.state === 'completed' && (job.counts.failed ?? 0) === 0
+}
+
+// A completed job with permanent failures still needs attention and stays
+// visible regardless of the toggle -- only a clean completion is hidden.
+const uploadHiddenCompletedCount = $derived(state.uploads.filter(isCleanlyCompletedUpload).length)
+
+// Bounded independent of how many historical jobs `list --kind upload`
+// returns (nothing prunes them automatically -- see uploadShowCompleted's
+// own comment): the left panel never renders more than this many rows even
+// with "show completed" on, so a long-lived install's job history can't
+// turn the list into thousands of unvirtualized DOM nodes.
+const UPLOAD_VISIBLE_JOB_CAP = 300
+
+const uploadVisibleJobs = $derived.by(() => {
+  const base = state.uploadShowCompleted ? state.uploads : state.uploads.filter((job) => !isCleanlyCompletedUpload(job))
+  return base.slice(0, UPLOAD_VISIBLE_JOB_CAP)
+})
+
+const uploadVisibleJobsTotal = $derived(
+  state.uploadShowCompleted ? state.uploads.length : state.uploads.length - uploadHiddenCompletedCount,
+)
+const uploadVisibleJobsTruncated = $derived(uploadVisibleJobsTotal > UPLOAD_VISIBLE_JOB_CAP)
+
 const backends = $derived<Backend[]>(
   state.systemState.platform === 'windows'
     ? ['auto', 'mountosio']
@@ -577,6 +712,17 @@ export const computed = {
   get selectedProfile() { return selectedProfile },
   get filteredInstances() { return filteredInstances },
   get filteredProfiles() { return filteredProfiles },
+  get uploadFilteredProfiles() { return uploadFilteredProfiles },
+  get uploadSelectedProfile() { return uploadSelectedProfile },
+  get uploadEligibleInstances() { return uploadEligibleInstances },
+  get uploadResolvedFork() { return uploadResolvedFork },
+  get uploadNeedsSecret() { return uploadNeedsSecret },
+  get uploadCommandText() { return uploadCommandText },
+  get uploadRunningCount() { return uploadRunningCount },
+  get uploadHiddenCompletedCount() { return uploadHiddenCompletedCount },
+  get uploadVisibleJobs() { return uploadVisibleJobs },
+  get uploadVisibleJobsTotal() { return uploadVisibleJobsTotal },
+  get uploadVisibleJobsTruncated() { return uploadVisibleJobsTruncated },
   get backends() { return backends },
   get mountPathError() { return mountPathError },
   get trimmedSecret() { return trimmedSecret },
@@ -1012,6 +1158,80 @@ export async function runUploadList() {
   }
 }
 
+// Clears every create-form field back to defaults -- called both when
+// entering the create sub-view fresh and whenever the source (profile or
+// instance) changes, so a value typed against the PREVIOUS source (a
+// destination path, a fork-specific include glob) can never be silently
+// carried over and submitted against a different volume.
+export function resetUploadForm() {
+  state.uploadSource = ''
+  state.uploadDest = ''
+  state.uploadSourceError = ''
+  state.uploadDestError = ''
+  state.uploadAdvancedOpen = false
+  state.uploadOnce = false
+  state.uploadOverwrite = false
+  state.uploadDryRun = false
+  state.uploadRescanInterval = ''
+  state.uploadRestart = false
+  state.uploadBwlimit = ''
+  state.uploadIncludeText = ''
+  state.uploadExcludeText = ''
+  state.uploadFollowSymlinks = false
+  state.uploadCreateSourceDirectory = false
+  state.uploadStartSecretValue = ''
+  state.uploadStartError = ''
+  state.uploadBrowseError = ''
+  state.uploadDryRunReport = ''
+}
+
+export function enterUploadCreate() {
+  state.uploadSubView = 'create'
+  state.uploadSourceKind = 'profile'
+  state.uploadSourceProfileId = selectedProfile?.id ?? appState.profiles[0]?.id ?? null
+  state.uploadProfileQuery = ''
+  state.uploadSourceInstance = null
+  resetUploadForm()
+}
+
+export function exitUploadCreate() {
+  state.uploadSubView = 'list'
+}
+
+export function selectUploadProfile(profileId: string) {
+  if (state.uploadSourceKind === 'profile' && state.uploadSourceProfileId === profileId) return
+  state.uploadSourceKind = 'profile'
+  state.uploadSourceProfileId = profileId
+  state.uploadSourceInstance = null
+  resetUploadForm()
+}
+
+// Captures the instance's live config once (getInstanceConfig) rather than
+// re-reading it on every subsequent Browse/Start -- resolve_upload_source_
+// profile (Rust) falls back to exactly this cached value if the instance is
+// no longer mounted by the time it's actually used.
+export async function selectUploadInstance(instance: MountInstance) {
+  state.uploadSourceKind = 'instance'
+  state.uploadSourceProfileId = null
+  resetUploadForm()
+  const backend = instance.backend ?? 'auto'
+  state.uploadSourceInstance = { mountPath: instance.mountPath, backend, discoveryUrl: '', fork: '', volume: '', accessKeyId: '' }
+  try {
+    const config = JSON.parse(await getInstanceConfig(instance.mountPath))
+    if (state.uploadSourceInstance?.mountPath !== instance.mountPath) return
+    state.uploadSourceInstance = {
+      mountPath: instance.mountPath,
+      backend,
+      discoveryUrl: typeof config.discoveryUrl === 'string' ? config.discoveryUrl : '',
+      fork: typeof config.forkName === 'string' ? config.forkName : '',
+      volume: typeof config.volumeName === 'string' ? config.volumeName : '',
+      accessKeyId: typeof config.accessId === 'string' ? config.accessId : '',
+    }
+  } catch (error) {
+    state.uploadStartError = describeError(error)
+  }
+}
+
 function splitGlobLines(text: string): string[] {
   return text
     .split('\n')
@@ -1022,7 +1242,6 @@ function splitGlobLines(text: string): string[] {
 export function uploadStartParams(): UploadStartParams {
   const bwlimit = Number.parseInt(state.uploadBwlimit, 10)
   return {
-    fork: state.uploadFork.trim() || undefined,
     once: state.uploadOnce,
     overwrite: state.uploadOverwrite,
     dryRun: state.uploadDryRun,
@@ -1036,25 +1255,76 @@ export function uploadStartParams(): UploadStartParams {
   }
 }
 
+// Every glob line entered (include and exclude) must be individually valid,
+// not just non-empty -- reported against the field it came from so the
+// error is actionable.
+function uploadGlobError(): string {
+  for (const [label, text] of [['Include', state.uploadIncludeText], ['Exclude', state.uploadExcludeText]] as const) {
+    for (const line of splitGlobLines(text)) {
+      const error = validateGlobPattern(line)
+      if (error) return `${label} glob "${line}": ${error}`
+    }
+  }
+  return ''
+}
+
 export async function runUploadStart() {
-  const profile = selectedProfile
+  const profileId = state.uploadSourceKind === 'profile' ? (state.uploadSourceProfileId ?? undefined) : undefined
+  const instance = state.uploadSourceKind === 'instance' ? (state.uploadSourceInstance ?? undefined) : undefined
+  if (!profileId && !instance) return
   const source = state.uploadSource.trim()
   const dest = state.uploadDest.trim()
-  if (!profile || !source || !dest) return
+  state.uploadSourceError = source ? (validateUploadPositional(source, 'Source folder') ?? '') : 'Source folder is required'
+  state.uploadDestError = dest ? (validateUploadPositional(dest, 'Destination path') ?? '') : 'Destination path is required'
+  if (state.uploadSourceError || state.uploadDestError) return
+  const globError = uploadGlobError()
+  if (globError) {
+    state.uploadStartError = globError
+    return
+  }
   state.uploadsBusy = true
   state.uploadStartError = ''
   state.uploadDryRunReport = ''
   try {
-    const result = await startUpload(profile.id, source, dest, uploadStartParams(), state.uploadStartSecretValue || undefined)
-    state.uploadStartSecretValue = ''
+    const result = await startUpload(profileId, instance, source, dest, uploadStartParams(), state.uploadStartSecretValue || undefined)
     if (state.uploadDryRun) {
       state.uploadDryRunReport = result
     } else {
       notify(`Upload started: ${source} -> ${dest}`)
+      state.uploadSubView = 'list'
       await runUploadList()
     }
   } catch (error) {
     state.uploadStartError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
+// Destination Browse has no "list a remote directory" RPC to call -- it
+// mounts the source's volume read-only at a throwaway scratch path
+// (ensureUploadBrowseMount) and hands that local path to the native folder
+// picker, then translates the picked local path back into a mountOS-
+// relative destination. The secret typed here is the SAME field Start
+// uses (and vice versa): entering it once during a browse must not
+// require re-entering it again to actually start the job.
+export async function browseUploadDestination() {
+  const profileId = state.uploadSourceKind === 'profile' ? (state.uploadSourceProfileId ?? undefined) : undefined
+  const instance = state.uploadSourceKind === 'instance' ? (state.uploadSourceInstance ?? undefined) : undefined
+  if (!profileId && !instance) return
+  state.uploadsBusy = true
+  state.uploadBrowseError = ''
+  try {
+    const mountPath = await ensureUploadBrowseMount(profileId, instance, state.uploadStartSecretValue || undefined)
+    const chosen = await browseFolder('Choose destination folder', mountPath)
+    if (!chosen) return
+    const normalized = chosen.replace(/\/+$/, '')
+    const root = mountPath.replace(/\/+$/, '')
+    const relative = normalized === root ? '' : normalized.startsWith(`${root}/`) ? normalized.slice(root.length) : normalized
+    state.uploadDest = relative || '/'
+    state.uploadDestError = ''
+  } catch (error) {
+    state.uploadBrowseError = describeError(error)
   } finally {
     state.uploadsBusy = false
   }

@@ -75,6 +75,22 @@ export interface UploadJob {
   volumeId?: number
 }
 
+// An upload source that's a live running mount instance rather than a
+// saved profile -- discoveryUrl/fork/volume/accessKeyId are captured once
+// (via getInstanceConfig) the moment the instance is picked, and reused
+// verbatim by the Rust side if the instance is no longer mounted by the
+// time Browse/Start actually runs (see src-tauri/src/lib.rs's
+// resolve_upload_source_profile). Mirrors src-tauri/src/lib.rs's
+// UploadInstanceRef field-for-field.
+export interface UploadInstanceRef {
+  mountPath: string
+  backend: Backend
+  discoveryUrl: string
+  fork: string
+  volume: string
+  accessKeyId: string
+}
+
 export interface MountInstance {
   key: string
   name: string
