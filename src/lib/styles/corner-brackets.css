@@ -108,6 +108,34 @@
     color: var(--bracket-color-dark);
   }
 
+  /* Diagonal two-corner accent (top-left + bottom-right only) -- a lighter,
+     "title"-weight mark for secondary/inline content nested inside a view's
+     one primary bracketed panel, so it doesn't compete with .corner-brackets
+     for the "one bracketed surface per view" role. */
+  .corner-accent {
+    position: relative;
+  }
+
+  .corner-accent::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    background:
+      /* Top-left corner */
+      linear-gradient(to right, currentColor 12px, transparent 12px) 0 0 / 12px 1.5px,
+      linear-gradient(to bottom, currentColor 12px, transparent 12px) 0 0 / 1.5px 12px,
+      /* Bottom-right corner */
+        linear-gradient(to left, currentColor 12px, transparent 12px) 100% 100% / 12px 1.5px,
+      linear-gradient(to top, currentColor 12px, transparent 12px) 100% 100% / 1.5px 12px;
+    background-repeat: no-repeat;
+    color: var(--bracket-color);
+    pointer-events: none;
+  }
+
+  .dark .corner-accent::before {
+    color: var(--bracket-color-dark);
+  }
+
   /* Large corner brackets */
   .corner-brackets-lg {
     position: relative;
@@ -240,7 +268,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 1rem;
     font-weight: 300;
     line-height: 1;
     color: var(--bracket-color);
@@ -275,7 +303,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 14px;
+    font-size: 1rem;
     font-weight: 300;
     line-height: 1;
     color: var(--bracket-color);
@@ -314,15 +342,19 @@
       linear-gradient(90deg, oklch(0.93 0.005 200 / 0.08) 1px, transparent 1px);
   }
 
-  /* Dashed connecting lines */
+  /* Dashed connecting lines. A repeating-gradient background instead of
+     border-style:dashed -- native dashed borders render as chunky, uneven
+     segments (thickness/spacing isn't controllable and varies by browser),
+     which reads as messy at the thin 1px heights this is used at. */
   .dashed-connector {
     border: none;
-    border-top: 1px dashed var(--grid-line);
+    height: 1px;
+    background-image: repeating-linear-gradient(to right, var(--grid-line) 0 2px, transparent 2px 5px);
     opacity: 0.5;
   }
 
   .dark .dashed-connector {
-    border-top-color: var(--bracket-color-dark);
+    background-image: repeating-linear-gradient(to right, var(--bracket-color-dark) 0 2px, transparent 2px 5px);
   }
 
   /* Minimal borders */
@@ -578,12 +610,16 @@
     background: linear-gradient(90deg, transparent, oklch(from var(--accent-glow-dark) l c h / 0.35), transparent);
   }
 
-  /* Cyberpunk table header labels; scan-line underline */
+  /* Cyberpunk table header labels; scan-line underline. 1rem, not 0.7rem:
+     same PRODUCT.md 16px floor as .mono-label (app.css), and the same fix --
+     tracking halves 0.2em -> 0.1em since it was tuned for 11px and is
+     relative to size, so carrying it up unchanged would push every header
+     ~45% wider for no legibility gain. */
   .th-cyber {
     position: relative;
     font-family: var(--font-mono);
-    font-size: 0.7rem;
-    letter-spacing: 0.2em;
+    font-size: 1rem;
+    letter-spacing: 0.1em;
     color: var(--th-color);
     padding-bottom: 0.5rem !important;
   }

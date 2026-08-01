@@ -18,7 +18,6 @@
   import ForkCreateDialog from '$lib/components/dialogs/ForkCreateDialog.svelte'
   import ForkDeleteDialog from '$lib/components/dialogs/ForkDeleteDialog.svelte'
   import ForkRestoreDialog from '$lib/components/dialogs/ForkRestoreDialog.svelte'
-  import UploadResumeDialog from '$lib/components/dialogs/UploadResumeDialog.svelte'
   import UploadPruneDialog from '$lib/components/dialogs/UploadPruneDialog.svelte'
   import TipsDialog from '$lib/components/dialogs/TipsDialog.svelte'
   import ThirdPartyLicensesDialog from '$lib/components/dialogs/ThirdPartyLicensesDialog.svelte'
@@ -50,12 +49,6 @@
 
   let commandPaletteOpen = $state(false)
   let viewScroller: HTMLDivElement | undefined = $state()
-
-  // Caps the sidebar badge at "99+" -- an uncapped 3+ digit count would
-  // stretch the pill wide enough to crowd the icon next to it.
-  function badgeCount(n: number): string {
-    return n > 99 ? '99+' : String(n)
-  }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
     const modPressed = modKeyPressed(event, appState.systemState.platform)
@@ -193,12 +186,12 @@
           <span class="relative shrink-0">
             <item.icon size={18} aria-hidden="true" />
             {#if item.id === 'uploads' && computed.uploadRunningCount > 0}
-              <span
-                class="absolute -right-2.5 -top-2.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-base font-medium leading-none text-primary-foreground"
-                title="{computed.uploadRunningCount} upload job{computed.uploadRunningCount === 1 ? '' : 's'} running"
-              >
-                {badgeCount(computed.uploadRunningCount)}
+              {@const runningLabel = `${computed.uploadRunningCount} upload job${computed.uploadRunningCount === 1 ? '' : 's'} running`}
+              <span class="absolute -right-1.5 -top-1.5 flex h-2.5 w-2.5" title={runningLabel} aria-hidden="true">
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+                <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary"></span>
               </span>
+              <span class="sr-only">{runningLabel}</span>
             {/if}
           </span>
           {#if !appState.sidebarCollapsed}<span>{item.label}</span>{/if}
@@ -299,7 +292,6 @@
 <ForkCreateDialog />
 <ForkDeleteDialog />
 <ForkRestoreDialog />
-<UploadResumeDialog />
 <UploadPruneDialog />
 <TipsDialog />
 <ThirdPartyLicensesDialog />

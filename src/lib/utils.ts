@@ -24,6 +24,18 @@ export function modKeyPressed(event: KeyboardEvent, platform: string): boolean {
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey
 }
 
+// Binary units (KiB/MiB/...), not decimal (KB/MB/...) -- matches the rest of
+// mountOS's byte-size vocabulary (block size, buffer budgets, disk cache).
+const BYTE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const;
+
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1)
+  const value = bytes / 1024 ** exponent
+  return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${BYTE_UNITS[exponent]}`
+}
+
 export type WithoutChild<T> = T extends { child?: any } ? Omit<T, "child"> : T;
 
 export type WithoutChildren<T> = T extends { children?: any } ? Omit<T, "children"> : T;

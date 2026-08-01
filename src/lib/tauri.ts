@@ -352,6 +352,11 @@ export async function openDiagnosticsBundle(path: string): Promise<void> {
   await invoke('open_diagnostics_bundle', { path })
 }
 
+export async function openUploadLog(path: string): Promise<void> {
+  if (!hasDesktopBridge()) return
+  await invoke('open_upload_log', { path })
+}
+
 export async function getInstanceConfig(target: string): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('get_instance_config', { target })

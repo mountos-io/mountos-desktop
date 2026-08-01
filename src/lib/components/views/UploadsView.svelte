@@ -1,10 +1,15 @@
 <script lang="ts">
   import {
+    ArrowRight,
     ChevronLeft,
+    Clock,
+    Copy,
+    ExternalLink,
     FolderOpen,
     ListChecks,
     OctagonX,
     Plus,
+    Radar,
     RefreshCw,
     RotateCcw,
     Trash2,
@@ -16,6 +21,7 @@
   import { Checkbox } from '$lib/components/ui/checkbox'
   import { Textarea } from '$lib/components/ui/textarea'
   import { Badge, type BadgeVariant } from '$lib/components/ui/badge'
+  import { Table, TableBody, TableRow, TableCell } from '$lib/components/ui/table'
   import Combobox from '$lib/components/shared/Combobox.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
   import CliErrorOutput from '$lib/components/CliErrorOutput.svelte'
@@ -25,9 +31,14 @@
     appState,
     browseUploadDestination,
     browseUploadSource,
+    buildUploadResumeArgv,
+    cancelUploadResume,
     computed,
+    confirmUploadResume,
+    copyUploadJobLogPath,
     enterUploadCreate,
     exitUploadCreate,
+    openUploadJobLog,
     requestUploadPrune,
     requestUploadResume,
     runUploadCancel,
@@ -37,7 +48,8 @@
     selectUploadInstance,
     selectUploadProfile,
   } from '$lib/app-state.svelte'
-  import type { MountInstance, UploadJob } from '$lib/types'
+  import type { MountInstance, MountProfile, UploadJob } from '$lib/types'
+  import { formatBytes } from '$lib/utils'
 
   // Fetch exactly once per mount, not gated on uploads.length === 0 -- unlike
   // forks (every profile always has at least "main", so that gate never
@@ -50,6 +62,25 @@
       void runUploadList()
     }
   })
+
+  // Ticks so "Updated Xs ago" stays live without a real refetch -- there's
+  // no auto-poll for the uploads list (see uploadsLastFetchedAt's own doc
+  // comment), so this is purely a staleness indicator, not a feed.
+  let now = $state(Date.now())
+  $effect(() => {
+    const id = setInterval(() => { now = Date.now() }, 1000)
+    return () => clearInterval(id)
+  })
+
+  function lastFetchedLabel(fetchedAt: number | null, current: number): string {
+    if (fetchedAt == null) return ''
+    const diffSec = Math.max(0, Math.floor((current - fetchedAt) / 1000))
+    if (diffSec < 5) return 'Updated just now'
+    if (diffSec < 60) return `Updated ${diffSec}s ago`
+    const diffMin = Math.floor(diffSec / 60)
+    if (diffMin < 60) return `Updated ${diffMin}m ago`
+    return `Updated ${Math.floor(diffMin / 60)}h ago`
+  }
 
   const stateBadgeVariant: Record<string, BadgeVariant> = {
     running: 'success',
@@ -70,11 +101,15 @@
     return job.state === 'completed' && (job.counts.failed ?? 0) > 0 ? 'completed (failures)' : job.state
   }
 
-  function countsSummary(job: UploadJob): string {
-    const parts = Object.entries(job.counts)
-      .filter(([, n]) => n > 0)
-      .map(([status, n]) => `${n} ${status}`)
-    return parts.length ? parts.join(', ') : 'no entries yet'
+  // A daemon-mode job (started/resumed without --once) never transitions to
+  // "completed" on its own, no matter how empty its queue is -- it just
+  // idles and rescans on --rescan-interval forever (mountos-servers
+  // upload_daemon.go: only --once, or a settled source-profile job, ever
+  // exits on a settled pass). Without this, "running" looks identical
+  // whether it's actively transferring data or has nothing left to do --
+  // the state most likely to be mistaken for "stuck".
+  function isIdleRunning(job: UploadJob): boolean {
+    return job.state === 'running' && !(job.counts.pending || job.counts.uploading)
   }
 
   const selectedJob = $derived(appState.uploads.find((job) => job.jobId === appState.uploadSelectedJobId) ?? null)
@@ -124,6 +159,38 @@
 
   const uploadSourceReady = $derived(
     appState.uploadSourceKind === 'profile' ? Boolean(appState.uploadSourceProfileId) : Boolean(appState.uploadSourceInstance),
+  )
+
+  const resumeJob = $derived(appState.uploadResumePromptFor)
+
+  // Resume works from discoveryUrl/accessKeyId alone -- see resumeUpload's
+  // own comment -- not a saved profile, so this synthetic object exists
+  // purely to feed the shared argv builder/command preview the same way
+  // start/browse's own synthetic profiles do for their no-profile sources.
+  const resumeProfile = $derived({
+    id: 'resume',
+    schemaVersion: 1,
+    kind: 'mount',
+    name: '',
+    volume: '',
+    fork: '',
+    mountPath: '',
+    discoveryUrl: appState.uploadResumeDiscoveryUrl.trim(),
+    accessKeyId: appState.uploadResumeAccessKeyId.trim(),
+    secretRef: 'prompt',
+    backend: 'auto',
+    readOnly: false,
+    autoRemount: false,
+    temporaryFork: false,
+    extraArgs: [],
+    createdAt: '',
+    updatedAt: '',
+  } satisfies MountProfile)
+
+  const resumeCommandText = $derived(
+    resumeJob
+      ? `mountos ${buildUploadResumeArgv(resumeProfile, resumeJob.jobId, appState.uploadResumeOnce, appState.uploadResumeRescanInterval || undefined).join(' ')}`
+      : '',
   )
 </script>
 
@@ -313,10 +380,92 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
       </div>
     </form>
   </section>
+{:else if appState.uploadSubView === 'resume' && resumeJob}
+  <section class="surface corner-brackets m-[22px] p-4 grid gap-4 outline-hidden" tabindex="-1" use:focusOnMount>
+    <form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void confirmUploadResume() }}>
+      <div class="flex items-center justify-between gap-4">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring w-fit"
+          onclick={cancelUploadResume}
+        >
+          <ChevronLeft size={16} aria-hidden="true" /> Back to upload jobs
+        </button>
+        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy}>
+          <RefreshCw size={16} aria-hidden="true" /> Resume
+        </Button>
+      </div>
+
+      <h3 class="flex items-center gap-2"><RefreshCw size={19} aria-hidden="true" /> Resume upload</h3>
+
+      <div class="grid gap-1 max-w-sm">
+        <Label>Job ID</Label>
+        <code class="truncate">{resumeJob.jobId}</code>
+      </div>
+
+      <div class="corner-brackets grid grid-cols-[1fr_auto_1fr] items-end gap-3 p-3 max-w-2xl">
+        <div class="grid min-w-0 gap-1">
+          <Label>Source</Label>
+          <p class="truncate" title={resumeJob.sourcePath}>{resumeJob.sourcePath ?? 'source profile'}</p>
+        </div>
+        <ArrowRight size={18} aria-hidden="true" class="text-muted-foreground mb-1 shrink-0" />
+        <div class="grid min-w-0 gap-1">
+          <Label>Destination</Label>
+          <p class="truncate" title={resumeJob.destPath}>{resumeJob.destPath}</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 max-w-2xl">
+        <div class="grid gap-1.5">
+          <Label for="upload-resume-discovery-url">Discovery URL</Label>
+          <Input id="upload-resume-discovery-url" bind:value={appState.uploadResumeDiscoveryUrl} placeholder="https://discovery.example.com" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="upload-resume-access-key">Access key ID</Label>
+          <Input id="upload-resume-access-key" bind:value={appState.uploadResumeAccessKeyId} />
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1.5">
+        <Checkbox bind:checked={appState.uploadResumeOnce} label="Settle and exit (--once)" />
+        <InfoTip text="Once every pending file is uploaded, exits the job with a real completed status (`--once`).
+
+**Leave this unchecked** and the job goes back to running as a background daemon: it rescans the source on an interval forever, watching for new/changed files, and never marks itself completed on its own -- even once there's nothing left to do. That's the `running` + nothing pending state you'd otherwise see.
+
+Check this when you just want the current backlog cleared and the job to finish for real." />
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 max-w-2xl">
+        <div class="grid gap-1.5">
+          <Label for="upload-resume-rescan-interval">Rescan interval (optional)</Label>
+          <Input id="upload-resume-rescan-interval" bind:value={appState.uploadResumeRescanInterval} placeholder="30s" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="upload-resume-secret">Secret access key (optional)</Label>
+          <Input id="upload-resume-secret" type="password" bind:value={appState.uploadResumeSecretValue} autocomplete="current-password" />
+        </div>
+      </div>
+      <p class="text-muted-foreground text-sm -mt-2">Leave the secret blank to reuse a saved profile's cached secret for this access key ID, if one exists.</p>
+
+      {#if appState.uploadResumeError}
+        <CliErrorOutput role="alert" text={appState.uploadResumeError} command={resumeCommandText} />
+      {/if}
+      <CommandPreview label="COMMAND PREVIEW" text={resumeCommandText}>
+        <code>{resumeCommandText}</code>
+      </CommandPreview>
+
+      <div class="flex justify-end gap-2">
+        <Button type="button" variant="outline" onclick={cancelUploadResume}>Cancel</Button>
+        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy}>
+          <RefreshCw size={16} aria-hidden="true" /> Resume
+        </Button>
+      </div>
+    </form>
+  </section>
 {:else}
   <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
     <div class="surface p-4">
-      <div class="flex items-center justify-between gap-2 mb-4">
+      <div class="mb-4 flex items-center justify-between gap-2">
         <h3 class="flex items-center gap-2"><Upload size={18} aria-hidden="true" /> Uploads</h3>
         <div class="flex items-center gap-1">
           <Button type="button" size="icon" variant="ghost" onclick={runUploadList} disabled={appState.uploadsBusy} title="Refresh job list" aria-label="Refresh job list">
@@ -335,13 +484,11 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         <p class="text-destructive text-sm mb-2" role="alert">{appState.uploadsError}</p>
       {/if}
       {#if computed.uploadHiddenCompletedCount > 0}
-        <button
-          type="button"
-          class="mb-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring w-fit"
-          onclick={() => (appState.uploadShowCompleted = !appState.uploadShowCompleted)}
-        >
-          {appState.uploadShowCompleted ? 'Hide' : 'Show'} completed ({computed.uploadHiddenCompletedCount})
-        </button>
+        <Checkbox
+          bind:checked={appState.uploadShowCompleted}
+          label="Show completed ({computed.uploadHiddenCompletedCount})"
+          class="mb-2"
+        />
       {/if}
       <div class="grid gap-1.5">
         {#if appState.uploadsBusy && appState.uploads.length === 0}
@@ -352,7 +499,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
           </div>
         {:else if computed.uploadVisibleJobs.length === 0}
           <div class="tech-grid p-5 text-center">
-            <p>All {appState.uploads.length} job{appState.uploads.length === 1 ? '' : 's'} completed cleanly.</p>
+            <p>All {appState.uploads.length} job{appState.uploads.length === 1 ? '' : 's'} completed.</p>
           </div>
         {:else}
           {#each computed.uploadVisibleJobs as job (job.jobId)}
@@ -381,18 +528,23 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
     {#if selectedJob}
       {@const job = selectedJob}
-      <div class="surface corner-brackets p-4 grid gap-4">
+      {@const resumable = job.state === 'halted' || job.state === 'resumable'}
+      <!-- content-start: this panel is a grid cell stretched to the full
+           section height (grid-rows-1 on the parent section above), and
+           CSS grid's default align-content is stretch -- without this, the
+           header/detail/progress rows spread apart to fill that height
+           instead of staying compact at the top. -->
+      <div class="surface corner-brackets p-4 grid content-start gap-4">
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
             <h3 class="flex items-center gap-2 truncate"><Upload size={19} aria-hidden="true" class="shrink-0" /> {job.destPath || job.jobId}</h3>
-            <code class="text-muted-foreground text-sm">{job.jobId}</code>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             {#if job.state === 'running'}
               <Button type="button" variant="destructive" disabled={appState.uploadsBusy} onclick={() => runUploadCancel(job)}>
                 <OctagonX size={16} aria-hidden="true" /> Cancel
               </Button>
-            {:else}
+            {:else if resumable}
               <Button type="button" onclick={() => requestUploadResume(job)} disabled={appState.uploadsBusy}>
                 <RotateCcw size={16} aria-hidden="true" /> Resume
               </Button>
@@ -407,6 +559,10 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
         <div class="grid grid-cols-2 gap-4">
           <div class="grid gap-1">
+            <Label>Job ID</Label>
+            <code class="truncate">{job.jobId}</code>
+          </div>
+          <div class="grid gap-1">
             <Label>Source</Label>
             <p class="truncate" title={job.sourcePath}>{job.sourcePath ?? 'source profile'}</p>
           </div>
@@ -416,28 +572,91 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
           </div>
           <div class="grid gap-1">
             <Label>Fork</Label>
-            <Badge variant="secondary">{job.forkName || 'main'}</Badge>
+            <p class="truncate">{job.forkName || 'main'}</p>
           </div>
           <div class="grid gap-1">
             <Label>State</Label>
-            <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{displayState(job)}</Badge>
+            <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'} class="w-fit">{displayState(job)}</Badge>
+          </div>
+          <div class="grid gap-1">
+            <Label>Total</Label>
+            {#if job.totalFiles}
+              <p class="tabular-nums">
+                {job.totalFiles} file{job.totalFiles === 1 ? '' : 's'}, {formatBytes(job.totalBytes ?? 0)}
+                {#if job.state !== 'completed' && job.state !== 'halted'}
+                  <span class="text-muted-foreground text-xs" title="A daemon-mode job keeps discovering more on every rescan -- this isn't final until the job settles.">(as of last scan)</span>
+                {/if}
+              </p>
+            {:else}
+              <p class="text-muted-foreground">unknown</p>
+            {/if}
           </div>
         </div>
+
+        {#if isIdleRunning(job)}
+          <div class="corner-accent flex items-start gap-3 p-3.5">
+            <Radar size={20} aria-hidden="true" class="text-primary mt-0.5 shrink-0 animate-pulse" />
+            <div class="grid min-w-0 flex-1 gap-1">
+              <p class="font-semibold">Watching for changes</p>
+              <p class="text-muted-foreground text-sm">
+                Nothing to upload right now, but it keeps rescanning and won't stop on its own. Use <strong class="text-foreground font-semibold">Cancel</strong> above to stop it, then resume with <strong class="text-foreground font-semibold">Settle and exit</strong> checked to finish it for good.
+              </p>
+            </div>
+          </div>
+        {/if}
 
         {#if job.haltReason}
           <CliErrorOutput role="alert" text={job.haltReason} />
         {/if}
 
-        <div class="grid gap-1">
-          <Label>Progress</Label>
-          <p>{countsSummary(job)}</p>
+        {#if job.logPath}
+          <div class="grid gap-1">
+            <Label>Log</Label>
+            <div class="flex items-center gap-2">
+              <code class="min-w-0 flex-1 truncate" title={job.logPath}>{job.logPath}</code>
+              <Button type="button" variant="outline" size="icon" title="Copy log path" aria-label="Copy log path" onclick={() => copyUploadJobLogPath(job)}>
+                <Copy size={16} aria-hidden="true" />
+              </Button>
+              <Button type="button" variant="outline" size="icon" title="Open log" aria-label="Open log" onclick={() => openUploadJobLog(job)}>
+                <ExternalLink size={16} aria-hidden="true" />
+              </Button>
+            </div>
+          </div>
+        {/if}
+
+        <div class="grid gap-2">
+          <div class="flex items-center justify-between gap-2 border-b-2 border-primary pb-1.5">
+            <p class="text-xs font-bold uppercase tracking-wide">Progress</p>
+            {#if appState.uploadsLastFetchedAt != null}
+              <span
+                class="flex items-center gap-1 font-mono text-xs tabular-nums text-muted-foreground"
+                title={new Date(appState.uploadsLastFetchedAt).toLocaleString()}
+              >
+                <Clock size={12} aria-hidden="true" />
+                {lastFetchedLabel(appState.uploadsLastFetchedAt, now)}
+              </span>
+            {/if}
+          </div>
+          <Table containerLabel="Upload progress by status" class="max-w-xs">
+            <TableBody>
+              {#each [['Pending', job.counts.pending, ''], ['Uploading', job.counts.uploading, ''], ['Done', job.counts.done, 'text-success'], ['Failed', job.counts.failed, 'text-destructive'], ['Skipped', job.counts.skipped, ''], ['Missing', job.counts.missing, '']] as [countLabel, count, tone] (countLabel)}
+                <TableRow>
+                  <TableCell class="text-muted-foreground text-xs uppercase tracking-wide">{countLabel}</TableCell>
+                  <TableCell class="text-right tabular-nums {tone}">{count ?? 0}</TableCell>
+                </TableRow>
+              {/each}
+            </TableBody>
+          </Table>
         </div>
       </div>
     {:else}
       <!-- No "New upload" button here -- the left panel already has the
            primary one directly above this same empty state, so a second
-           identical CTA on screen at once was pure duplication. -->
-      <div class="surface tech-grid grid justify-items-center gap-2 p-7 text-center">
+           identical CTA on screen at once was pure duplication. content-center:
+           same grid-cell-stretched-to-full-height issue as the job detail
+           panel above -- without it, icon/heading/paragraph spread apart to
+           fill the panel instead of sitting together as one centered cluster. -->
+      <div class="surface tech-grid grid content-center justify-items-center gap-2 p-7 text-center">
         <Upload size={28} aria-hidden="true" />
         <strong>No active uploads</strong>
         <p>Use "New upload" on the left to start a bulk upload from a saved profile or a running mount instance, with the exact CLI command shown before every action.</p>

@@ -344,6 +344,14 @@ struct UploadJob {
     // upload` otherwise returns directory-name (hex-hash lexical) order.
     created_at: Option<i64>,
     completed_at: Option<i64>,
+    // Path to the file logger's output for this job's last terminal run,
+    // only present when that file still exists on disk (see
+    // mountos-servers' uploadjob.JobSpec.LogPath doc comment).
+    log_path: Option<String>,
+    // A live aggregate as of the server's last scan pass, not a fixed total
+    // -- see uploadjob.JobSpec's TotalFiles/TotalBytes doc comment.
+    total_bytes: Option<i64>,
+    total_files: Option<i64>,
 }
 
 // Frontend-supplied flags for the `mountos upload <source> <dest>` run form
@@ -3124,6 +3132,12 @@ fn parse_uploads_value(value: &Value) -> Vec<UploadJob> {
                     .and_then(|v| u32::try_from(v).ok()),
                 created_at: entry.get("createdAt").and_then(Value::as_i64),
                 completed_at: entry.get("completedAt").and_then(Value::as_i64),
+                log_path: entry
+                    .get("logPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                total_bytes: entry.get("totalBytes").and_then(Value::as_i64),
+                total_files: entry.get("totalFiles").and_then(Value::as_i64),
             })
         })
         .collect()
@@ -5085,6 +5099,30 @@ fn open_diagnostics_bundle(app: AppHandle, path: String) -> Result<(), DesktopEr
     Ok(())
 }
 
+// Opens an upload job's file-logger output (mountos-servers'
+// internal/logger.getDefaultLogDir -- always ~/.mountOS/logs for a desktop
+// app, which never runs as Linux root).
+//
+// Mirrors open_diagnostics_bundle's guard: the path is confined to that
+// fixed directory rather than opened because the frontend asked. Both sides
+// are canonicalized first, so a symlink or `..` inside the argument cannot
+// escape the directory and turn this into an arbitrary "open any file"
+// primitive.
+#[tauri::command]
+fn open_upload_log(path: String) -> Result<(), DesktopError> {
+    let home =
+        std::env::var("HOME").map_err(|_| DesktopError::Message("HOME is not set".to_string()))?;
+    let dir = PathBuf::from(home).join(".mountOS").join("logs").canonicalize()?;
+    let target = PathBuf::from(&path).canonicalize()?;
+    if !target.starts_with(&dir) {
+        return Err(DesktopError::Message(
+            "refusing to open a path outside the mountOS logs directory".to_string(),
+        ));
+    }
+    open::that_detached(target)?;
+    Ok(())
+}
+
 // The Dock icon (and Cmd+Tab entry) tracks the main window's own visibility
 // rather than being permanently off: hidden behind the tray only while the
 // window is actually hidden, so it doesn't strand an actively-open window
@@ -5360,6 +5398,7 @@ pub fn run() {
             launch_dashboard,
             create_diagnostics_bundle,
             open_diagnostics_bundle,
+            open_upload_log,
             mcp_status,
             mcp_install,
             mcp_uninstall,
@@ -6396,5 +6435,52 @@ mod tests {
         let jobs = parse_uploads_value(&value);
         assert_eq!(jobs[0].created_at, None);
         assert_eq!(jobs[0].completed_at, None);
+    }
+
+    #[test]
+    fn parse_uploads_value_carries_log_path() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc",
+                 "state": "completed", "logPath": "/Users/x/.mountOS/logs/mountos-mfuse-123.log"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(
+            jobs[0].log_path.as_deref(),
+            Some("/Users/x/.mountOS/logs/mountos-mfuse-123.log")
+        );
+    }
+
+    #[test]
+    fn parse_uploads_value_defaults_log_path_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].log_path, None);
+    }
+
+    #[test]
+    fn parse_uploads_value_carries_totals() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc",
+                 "state": "completed", "totalFiles": 3, "totalBytes": 6144}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].total_files, Some(3));
+        assert_eq!(jobs[0].total_bytes, Some(6144));
+    }
+
+    #[test]
+    fn parse_uploads_value_defaults_totals_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].total_files, None);
+        assert_eq!(jobs[0].total_bytes, None);
     }
 }

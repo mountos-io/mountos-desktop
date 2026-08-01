@@ -79,6 +79,16 @@ export interface UploadJob {
   // recency).
   createdAt?: number
   completedAt?: number
+  // Path to the file logger's output for this job's last terminal run, only
+  // present when that file still exists on disk (see uploadjob.JobSpec's
+  // LogPath doc comment server-side).
+  logPath?: string
+  // A live aggregate as of the server's last scan pass, not a fixed total --
+  // a daemon-mode job (state running/resumable) can keep discovering more on
+  // every rescan, so treat this as provisional unless state is
+  // completed/halted.
+  totalFiles?: number
+  totalBytes?: number
 }
 
 // An upload source that's a live running mount instance rather than a

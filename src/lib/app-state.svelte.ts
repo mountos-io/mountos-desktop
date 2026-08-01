@@ -61,6 +61,7 @@ import {
   openLostFound,
   openSnapshotView,
   openTarget,
+  openUploadLog,
   openVersionView,
   openVersionViewForInstance,
   ensureUploadBrowseMount,
@@ -245,13 +246,19 @@ const state = $state({
 
   // Uploads: a top-level view (like Instances/Profiles). List is the
   // default sub-view (master-detail: job list on the left, selected job's
-  // detail on the right, same layout as ProfilesView); "New upload" opens a
-  // separate create-job sub-view with its own breadcrumb entry, mirroring
-  // Profiles' editor/forks/snapshot/... sub-view split.
-  uploadSubView: 'list' as 'list' | 'create',
+  // detail on the right, same layout as ProfilesView); "New upload" and
+  // "Resume" each open their own full-panel sub-view with a back button
+  // (not a modal -- a resume/create form has too many fields to cram into
+  // a dialog cleanly), mirroring Profiles' editor/forks/snapshot/... split.
+  uploadSubView: 'list' as 'list' | 'create' | 'resume',
   uploads: [] as UploadJob[],
   uploadsBusy: false,
   uploadsError: '',
+  // Wall-clock ms of the last successful runUploadList() -- there's no
+  // auto-poll for this list (only the mount-on-first-view fetch plus a
+  // refetch after every mutating action), so surfacing this tells the user
+  // how stale the list might be rather than implying a live feed.
+  uploadsLastFetchedAt: null as number | null,
   uploadSelectedJobId: null as string | null,
   // Cleanly-completed jobs are historical noise once done -- nothing
   // pruned automatically accumulates them indefinitely (mountos-servers
@@ -1181,7 +1188,15 @@ export async function runUploadList() {
   state.uploadsBusy = true
   state.uploadsError = ''
   try {
-    state.uploads = await listUploads()
+    // `list --kind upload` itself returns directory-name/hex-hash order,
+    // arbitrary with respect to recency (see UploadJob.createdAt's own doc
+    // comment) -- sort newest-first here so a just-started job lands at the
+    // top of the list and becomes the default selection instead of an
+    // unrelated older job.
+    const jobs = await listUploads()
+    jobs.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+    state.uploads = jobs
+    state.uploadsLastFetchedAt = Date.now()
   } catch (error) {
     state.uploadsError = describeError(error)
   } finally {
@@ -1381,6 +1396,7 @@ export async function browseUploadDestination() {
 
 export function requestUploadResume(job: UploadJob) {
   state.uploadResumePromptFor = job
+  state.uploadSubView = 'resume'
   // Best-effort convenience default, not a requirement -- the Uploads list
   // is cross-profile, so the job being resumed may have nothing to do with
   // whatever's selected on the Profiles page (or there may be no profiles
@@ -1396,6 +1412,7 @@ export function requestUploadResume(job: UploadJob) {
 export function cancelUploadResume() {
   state.uploadResumePromptFor = null
   state.uploadResumeSecretValue = ''
+  state.uploadSubView = 'list'
 }
 
 export async function confirmUploadResume() {
@@ -1420,6 +1437,7 @@ export async function confirmUploadResume() {
     )
     state.uploadResumePromptFor = null
     state.uploadResumeSecretValue = ''
+    state.uploadSubView = 'list'
     notify(`Upload job ${job.jobId} resumed`)
     await runUploadList()
   } catch (error) {
@@ -1458,6 +1476,25 @@ export async function runUploadRetryFailed(job: UploadJob) {
     state.uploadsError = describeError(error)
   } finally {
     state.uploadsBusy = false
+  }
+}
+
+export async function openUploadJobLog(job: UploadJob) {
+  if (!job.logPath) return
+  try {
+    await openUploadLog(job.logPath)
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Could not open the log file', 'error')
+  }
+}
+
+export async function copyUploadJobLogPath(job: UploadJob) {
+  if (!job.logPath) return
+  try {
+    await navigator.clipboard.writeText(job.logPath)
+    notify('Log path copied')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Failed to copy log path', 'error')
   }
 }
 
