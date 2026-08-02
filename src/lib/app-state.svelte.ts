@@ -661,7 +661,7 @@ const cliStatusSummary = $derived.by(() => {
   }
   const severityRank = { error: 0, warning: 1, info: 2 } as const
   const worst = [...state.systemState.issues].sort((a, b) => severityRank[a.severity] - severityRank[b.severity])[0]
-  return worst ? `mountOS CLI issue: ${worst.title}` : 'mountOS CLI issue, see Settings for details'
+  return worst ? worst.title : 'mountOS CLI issue, see Settings for details'
 })
 
 function isCleanlyCompletedUpload(job: UploadJob): boolean {
