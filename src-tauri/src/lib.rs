@@ -622,7 +622,10 @@ fn resolve_upload_source_profile(
             // Still active: re-derive fresh from the live mount's own
             // config rather than trusting whatever the frontend cached,
             // matching open_deleted_view_for_instance's own precedent.
-            return synthetic_profile_for_live_mount(&instance.mount_path, instance.backend.clone());
+            return synthetic_profile_for_live_mount(
+                &instance.mount_path,
+                instance.backend.clone(),
+            );
         }
         // No longer active -- fall back to the config captured at
         // selection time instead of failing outright.
@@ -778,7 +781,9 @@ fn ensure_upload_browse_mount_blocking(
     let local_path = if matches!(profile.backend, Backend::Fskit) {
         PathBuf::from(FSKIT_MOUNT_PREFIX).join(format!("upload-browse-{}", short_hash(&key)))
     } else {
-        runtime_dir(&app)?.join("upload-browse").join(short_hash(&key))
+        runtime_dir(&app)?
+            .join("upload-browse")
+            .join(short_hash(&key))
     };
     fs::create_dir_all(&local_path)?;
     profile.read_only = true;
@@ -801,13 +806,16 @@ fn ensure_upload_browse_mount_blocking(
             &target,
         )?;
     }
-    browse_mounts().lock().unwrap_or_else(|e| e.into_inner()).insert(
-        key,
-        BrowseMountEntry {
-            local_path: local_path.clone(),
-            last_used: Instant::now(),
-        },
-    );
+    browse_mounts()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(
+            key,
+            BrowseMountEntry {
+                local_path: local_path.clone(),
+                last_used: Instant::now(),
+            },
+        );
     spawn_browse_mount_sweeper(app);
     Ok(local_path.to_string_lossy().into_owned())
 }
@@ -1277,13 +1285,14 @@ fn build_fork_restore_argv(profile: &MountProfile, name: &str) -> Vec<String> {
 // so a value shaped like a flag would otherwise be eaten by pflag and
 // surface as a confusing cobra arity error instead of a clear one here.
 fn validate_upload_job_id(job_id: &str) -> Result<(), DesktopError> {
-    let valid = job_id.len() == 16 && job_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    let valid = job_id.len() == 16
+        && job_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
     if valid {
         Ok(())
     } else {
-        Err(DesktopError::Message(format!(
-            "invalid job id: {job_id:?}"
-        )))
+        Err(DesktopError::Message(format!("invalid job id: {job_id:?}")))
     }
 }
 
@@ -3154,7 +3163,9 @@ fn list_uploads_blocking() -> Result<Vec<UploadJob>, DesktopError> {
         )));
     }
     let value = serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
-        DesktopError::Message(format!("mountos list --kind upload returned unparseable output: {error}"))
+        DesktopError::Message(format!(
+            "mountos list --kind upload returned unparseable output: {error}"
+        ))
     })?;
     Ok(parse_uploads_value(&value))
 }
@@ -3218,7 +3229,11 @@ fn start_upload_blocking(
         resolved_secret.as_deref(),
         &stdout_path,
         &stderr_path,
-        if params.once { UPLOAD_ONCE_TIMEOUT } else { LAUNCH_TIMEOUT },
+        if params.once {
+            UPLOAD_ONCE_TIMEOUT
+        } else {
+            LAUNCH_TIMEOUT
+        },
     )?;
     Ok("upload job started".to_string())
 }
@@ -3290,7 +3305,10 @@ fn resume_profile(discovery_url: String, access_key_id: String) -> MountProfile 
 // secret_ref == "prompt" while an older sibling has the actual cached vault
 // secret, matching on access_key_id alone would shadow the vault entry that
 // actually exists and wrongly demand a fresh secret every time.
-fn matching_vault_profile<'a>(profiles: &'a [MountProfile], access_key_id: &str) -> Option<&'a MountProfile> {
+fn matching_vault_profile<'a>(
+    profiles: &'a [MountProfile],
+    access_key_id: &str,
+) -> Option<&'a MountProfile> {
     profiles
         .iter()
         .find(|profile| profile.access_key_id == access_key_id && profile.secret_ref == "vault")
@@ -3351,7 +3369,11 @@ fn resume_upload_blocking(
         resolved_secret.as_deref(),
         &stdout_path,
         &stderr_path,
-        if once { UPLOAD_ONCE_TIMEOUT } else { LAUNCH_TIMEOUT },
+        if once {
+            UPLOAD_ONCE_TIMEOUT
+        } else {
+            LAUNCH_TIMEOUT
+        },
     )?;
     Ok("upload job resumed".to_string())
 }
@@ -3367,7 +3389,15 @@ async fn resume_upload(
     secret: Option<String>,
 ) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || {
-        resume_upload_blocking(app, discovery_url, access_key_id, job_id, once, rescan_interval, secret)
+        resume_upload_blocking(
+            app,
+            discovery_url,
+            access_key_id,
+            job_id,
+            once,
+            rescan_interval,
+            secret,
+        )
     })
     .await
     .map_err(|error| DesktopError::Message(format!("resume upload task failed: {error}")))?
@@ -5112,7 +5142,10 @@ fn open_diagnostics_bundle(app: AppHandle, path: String) -> Result<(), DesktopEr
 fn open_upload_log(path: String) -> Result<(), DesktopError> {
     let home =
         std::env::var("HOME").map_err(|_| DesktopError::Message("HOME is not set".to_string()))?;
-    let dir = PathBuf::from(home).join(".mountOS").join("logs").canonicalize()?;
+    let dir = PathBuf::from(home)
+        .join(".mountOS")
+        .join("logs")
+        .canonicalize()?;
     let target = PathBuf::from(&path).canonicalize()?;
     if !target.starts_with(&dir) {
         return Err(DesktopError::Message(
@@ -6219,7 +6252,10 @@ mod tests {
         // Every flag comes before "--", then exactly the two positionals --
         // this is what makes an arbitrary (even flag-shaped) source/dest
         // value safe: pflag stops scanning for flags at "--".
-        let dashdash = argv.iter().position(|a| a == "--").expect("must contain a literal \"--\" separator");
+        let dashdash = argv
+            .iter()
+            .position(|a| a == "--")
+            .expect("must contain a literal \"--\" separator");
         assert_eq!(&argv[dashdash + 1..], &["/local/photos", "/remote/photos"]);
         assert!(argv
             .windows(2)
@@ -6314,7 +6350,8 @@ mod tests {
     }
 
     #[test]
-    fn matching_vault_profile_finds_the_vault_sibling_even_when_a_prompt_only_profile_matches_first() {
+    fn matching_vault_profile_finds_the_vault_sibling_even_when_a_prompt_only_profile_matches_first(
+    ) {
         // Regression: read_profiles sorts newest-updated-first, so a naive
         // "first profile with this access key" match can land on a
         // secret_ref: "prompt" profile while an older sibling actually has
@@ -6327,7 +6364,8 @@ mod tests {
         vault_backed.id = "profile-older".to_string();
         vault_backed.secret_ref = "vault".to_string();
         let profiles = vec![prompt_only, vault_backed.clone()];
-        let found = matching_vault_profile(&profiles, &vault_backed.access_key_id).expect("expected a match");
+        let found = matching_vault_profile(&profiles, &vault_backed.access_key_id)
+            .expect("expected a match");
         assert_eq!(found.id, "profile-older");
     }
 
@@ -6337,9 +6375,14 @@ mod tests {
         // saved profile (e.g. a job started via the CLI with no GUI profile
         // at all) -- the synthetic profile's other fields (volume/fork/
         // mountPath/backend) must never leak into the resume argv.
-        let profile = resume_profile("https://discovery.example".to_string(), "ak_1234567890".to_string());
+        let profile = resume_profile(
+            "https://discovery.example".to_string(),
+            "ak_1234567890".to_string(),
+        );
         let argv = build_upload_resume_argv(&profile, "abcdef1234567890", false, None);
-        assert!(argv.windows(2).any(|a| a == ["--discovery-url", "https://discovery.example"]));
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--discovery-url", "https://discovery.example"]));
         assert!(argv.windows(2).any(|a| a == ["-a", "ak_1234567890"]));
         assert!(argv.contains(&"-s".to_string()));
     }
