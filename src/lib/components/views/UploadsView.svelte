@@ -546,7 +546,7 @@ Check this when you just want the current backlog cleared and the job to finish 
             >
               <Upload size={16} aria-hidden="true" class="shrink-0" />
               <span class="min-w-0 flex-1">
-                <strong class="block truncate">{job.destPath || job.jobId}</strong>
+                <strong class="block truncate">{job.name || job.destPath || job.jobId}</strong>
                 <span class="block truncate text-muted-foreground text-sm">{job.sourcePath ?? 'source profile'}</span>
               </span>
               <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{job.state}</Badge>
@@ -572,7 +572,7 @@ Check this when you just want the current backlog cleared and the job to finish 
       <div class="surface corner-brackets p-4 grid content-start gap-4">
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <h3 class="flex items-center gap-2 truncate"><Upload size={19} aria-hidden="true" class="shrink-0" /> {job.destPath || job.jobId}</h3>
+            <h3 class="flex items-center gap-2 truncate"><Upload size={19} aria-hidden="true" class="shrink-0" /> {job.name || job.destPath || job.jobId}</h3>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             {#if job.state === 'running'}

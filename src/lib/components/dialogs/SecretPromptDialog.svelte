@@ -11,7 +11,11 @@
 <Dialog.Root bind:open={() => appState.secretPromptFor !== null, (open) => { if (!open) cancelSecret() }}>
   <Dialog.Content class="sm:max-w-md" aria-describedby={undefined}>
     {#if appState.secretPromptFor}
-      <form onsubmit={(event) => { event.preventDefault(); void doMount(appState.secretPromptFor!, computed.trimmedSecret) }}>
+      <form onsubmit={(event) => {
+        event.preventDefault()
+        if (appState.secretPromptResume) void appState.secretPromptResume(computed.trimmedSecret)
+        else void doMount(appState.secretPromptFor!, computed.trimmedSecret)
+      }}>
         <Dialog.Header>
           <Dialog.Title class="flex items-center gap-2"><KeyRound size={20} aria-hidden="true" /> Enter secret access key</Dialog.Title>
         </Dialog.Header>

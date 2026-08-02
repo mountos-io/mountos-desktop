@@ -605,7 +605,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
             >
               <Download size={16} aria-hidden="true" class="shrink-0" />
               <span class="min-w-0 flex-1">
-                <strong class="block truncate">{job.sourcePath || job.jobId}</strong>
+                <strong class="block truncate">{job.name || job.sourcePath || job.jobId}</strong>
                 <span class="block truncate text-muted-foreground text-sm">{job.destPath ?? ''}</span>
               </span>
               <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{job.state}</Badge>
@@ -626,7 +626,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
       <div class="surface corner-brackets p-4 grid content-start gap-4">
         <div class="flex items-start justify-between gap-4">
           <div class="min-w-0">
-            <h3 class="flex items-center gap-2 truncate"><Download size={19} aria-hidden="true" class="shrink-0" /> {job.sourcePath || job.jobId}</h3>
+            <h3 class="flex items-center gap-2 truncate"><Download size={19} aria-hidden="true" class="shrink-0" /> {job.name || job.sourcePath || job.jobId}</h3>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             {#if job.state === 'running'}

@@ -208,11 +208,16 @@ const state = $state({
   licensesError: '',
   licensesData: {} as Partial<Record<'rust' | 'js', ThirdPartyLicenses>>,
 
-  // Secret prompt (mount)
+  // Secret prompt (mount). secretPromptResume, when set, is what the
+  // dialog's submit calls instead of the hardcoded main-mount doMount --
+  // the generic path a scratch-mount Browse flow uses (see
+  // ensureBrowseSecret) to fill the prompted secret into its own form field
+  // and retry, rather than failing with a raw "secret required" error.
   secretPromptFor: null as string | null,
   secretValue: '',
   secretError: '',
   savePromptedSecret: false,
+  secretPromptResume: null as ((secret: string) => Promise<void>) | null,
 
   // Delete-profile confirm
   deletePromptFor: null as MountProfile | null,
@@ -1567,6 +1572,64 @@ export async function runUploadStart() {
   }
 }
 
+// Opens the shared secret-prompt dialog for a scratch-mount Browse flow.
+// Mirrors runMount's own prompt setup, but the resume action is generic
+// (onSecretKnown) instead of the hardcoded doMount -- the dialog closes
+// first (mirroring doMount's own success path), then onSecretKnown runs;
+// any error from it lands back in secretError so the dialog reopens with
+// the failure shown rather than silently vanishing.
+function openSecretPrompt(profile: MountProfile, onSecretKnown: (secret: string) => Promise<void>) {
+  state.secretPromptFor = profile.id
+  state.secretValue = ''
+  state.secretError = ''
+  state.savePromptedSecret = profile.secretRef === 'vault'
+  state.secretPromptResume = async (secret: string) => {
+    state.busy = true
+    try {
+      if (state.savePromptedSecret) {
+        await setProfileSecret(profile.id, secret)
+        state.profiles = state.profiles.map((candidate) => (candidate.id === profile.id ? { ...candidate, secretRef: 'vault' } : candidate))
+        state.vaultStatus = { ...state.vaultStatus, [profile.id]: true }
+      }
+      state.secretPromptFor = null
+      state.secretValue = ''
+      state.secretError = ''
+      state.secretPromptResume = null
+      await onSecretKnown(secret)
+    } catch (error) {
+      state.secretError = describeError(error)
+    } finally {
+      state.busy = false
+    }
+  }
+}
+
+// Proactive secret check for every scratch-mount Browse flow (the pattern
+// runMount already uses for the real mount action, applied here too instead
+// of attempting the mount and parsing "secret required" out of a generic
+// error string). When a secret is already typed in the form, or the vault
+// already has one, this is a no-op and the caller proceeds immediately.
+// Otherwise it opens the prompt, writes the entered secret into secretField
+// (the SAME field Start/Confirm reads, so it survives past this one
+// browse), and re-invokes retry -- the caller's own function, now that the
+// field is populated and this check passes on the second call.
+async function ensureBrowseSecret(
+  profileId: string,
+  secretField: 'uploadStartSecretValue' | 'downloadStartSecretValue',
+  retry: () => Promise<void>,
+): Promise<boolean> {
+  if (state[secretField]) return true
+  const profile = state.profiles.find((candidate) => candidate.id === profileId)
+  if (!profile) return true
+  const stored = profile.secretRef === 'vault' ? (await getProfileSecretStatus(profile.id)).stored : false
+  if (profile.secretRef !== 'prompt' && stored) return true
+  openSecretPrompt(profile, async (secret) => {
+    state[secretField] = secret
+    await retry()
+  })
+  return false
+}
+
 // Destination Browse has no "list a remote directory" RPC to call. It
 // mounts the source's volume read-only at a throwaway scratch path
 // (ensureUploadBrowseMount) and hands that local path to the native folder
@@ -1581,6 +1644,7 @@ export async function browseUploadDestination() {
   state.uploadsBusy = true
   state.uploadBrowseError = ''
   try {
+    if (profileId && !(await ensureBrowseSecret(profileId, 'uploadStartSecretValue', browseUploadDestination))) return
     const mountPath = await ensureUploadBrowseMount(profileId, instance, state.uploadStartSecretValue || undefined)
     const chosen = await browseFolder('Choose destination folder', mountPath)
     if (!chosen) return
@@ -1945,6 +2009,7 @@ async function browseDownloadSourceFromProfile() {
   state.downloadsBusy = true
   state.downloadBrowseError = ''
   try {
+    if (!(await ensureBrowseSecret(profileId, 'downloadStartSecretValue', browseDownloadSourceFromProfile))) return
     const mountPath = await ensureDownloadBrowseMount(profileId, downloadAsOf.trim() || undefined, state.downloadStartSecretValue || undefined)
     const chosen = await browseFolder('Choose a folder to download from', mountPath)
     if (!chosen) return
@@ -2834,6 +2899,7 @@ export function cancelSecret() {
   state.secretPromptFor = null
   state.secretValue = ''
   state.secretError = ''
+  state.secretPromptResume = null
 }
 
 export async function refreshVaultStatus(nextProfiles = state.profiles) {
