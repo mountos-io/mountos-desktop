@@ -4649,6 +4649,7 @@ fn get_instance_config(target: String) -> Result<String, DesktopError> {
 
 // POSIX single-quote wrap: closes the quote, emits an escaped literal quote,
 // reopens it. Safe for any byte sequence, including embedded quotes.
+#[cfg(not(windows))]
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
@@ -5607,6 +5608,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn shell_quote_survives_a_shell_round_trip() {
         // Every quoted value, fed through `sh -c 'printf %s ' + quoted`,
         // must come back byte-for-byte identical — this is the actual
