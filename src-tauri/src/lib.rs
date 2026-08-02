@@ -5338,12 +5338,21 @@ pub fn run() {
             set_dock_visible(app.handle(), main_visible);
 
             let menu = build_tray_menu(app.handle())?;
-            let tray_icon =
-                tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+            // macOS re-tints a template image to match the menu bar's
+            // light/dark state, so it gets the grayscale asset built for
+            // that. Windows/Linux trays have no such retinting -- they would
+            // just render that grayscale asset flat, so they get the actual
+            // color logo instead, and icon_as_template stays macOS-only.
+            let is_macos = cfg!(target_os = "macos");
+            let tray_icon = if is_macos {
+                tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?
+            } else {
+                tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?
+            };
 
             TrayIconBuilder::new()
                 .icon(tray_icon)
-                .icon_as_template(true)
+                .icon_as_template(is_macos)
                 .tooltip("mountOS")
                 .menu(&menu)
                 .on_menu_event(|app, event| {
