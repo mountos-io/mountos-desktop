@@ -652,6 +652,18 @@ const uploadCommandText = $derived.by(() => {
 // feature most sessions never touch.
 const uploadRunningCount = $derived(state.uploads.filter((job) => job.state === 'running').length)
 
+// Sidebar CLI-status tooltip: names the actual problem (or version, when
+// healthy) instead of a generic "see Settings for details" -- the most
+// severe issue is the one worth surfacing without opening Settings at all.
+const cliStatusSummary = $derived.by(() => {
+  if (state.systemState.checkOk) {
+    return state.systemState.cliVersion ? `mountOS CLI ready (${state.systemState.cliVersion})` : 'mountOS CLI ready'
+  }
+  const severityRank = { error: 0, warning: 1, info: 2 } as const
+  const worst = [...state.systemState.issues].sort((a, b) => severityRank[a.severity] - severityRank[b.severity])[0]
+  return worst ? `mountOS CLI issue: ${worst.title}` : 'mountOS CLI issue, see Settings for details'
+})
+
 function isCleanlyCompletedUpload(job: UploadJob): boolean {
   return job.state === 'completed' && (job.counts.failed ?? 0) === 0
 }
@@ -757,6 +769,7 @@ export const computed = {
   get uploadNeedsSecret() { return uploadNeedsSecret },
   get uploadCommandText() { return uploadCommandText },
   get uploadRunningCount() { return uploadRunningCount },
+  get cliStatusSummary() { return cliStatusSummary },
   get uploadHiddenCompletedCount() { return uploadHiddenCompletedCount },
   get uploadVisibleJobs() { return uploadVisibleJobs },
   get uploadVisibleJobsTotal() { return uploadVisibleJobsTotal },

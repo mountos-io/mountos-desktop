@@ -348,7 +348,14 @@
   {/if}
   <div class="flex items-center justify-between gap-4">
     <span><strong>CLI path</strong></span>
-    <code>{appState.systemState.cliPath ?? 'not found on PATH'}</code>
+    {#if appState.systemState.cliPath}
+      <code>{appState.systemState.cliPath}</code>
+    {:else}
+      <span class="flex items-center gap-1.5 text-warning">
+        <AlertTriangle size={14} aria-hidden="true" />
+        Not found on PATH -- pin it below
+      </span>
+    {/if}
   </div>
 
   {#if appState.systemState.cliPathAlternates.length}

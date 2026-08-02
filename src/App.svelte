@@ -165,7 +165,19 @@
   style:grid-template-columns={appState.sidebarCollapsed ? '4.5rem minmax(0,1fr)' : '14.5rem minmax(0,1fr)'}
 >
   <aside class="flex min-h-full flex-col overflow-hidden border-r border-border bg-card">
-    <div class="relative flex items-center gap-3 px-4 pb-4.5 pt-7.5 -top-[5px]" class:justify-center={appState.sidebarCollapsed} class:px-0={appState.sidebarCollapsed} data-tauri-drag-region="deep">
+    <div
+      class={cn(
+        'relative flex items-center gap-3 px-4 pb-4.5',
+        // macOS's overlay title bar floats native traffic lights over this row,
+        // so the logo needs the extra top padding + nudge to sit below them.
+        // Windows/Linux decorations sit in their own row above the webview, so
+        // that offset would just be unwanted empty space here.
+        appState.systemState.platform === 'macos' ? 'pt-7.5 -top-[5px]' : 'pt-4.5',
+      )}
+      class:justify-center={appState.sidebarCollapsed}
+      class:px-0={appState.sidebarCollapsed}
+      data-tauri-drag-region="deep"
+    >
       <img class="shrink-0" src="/logo.png" alt="" width="36" height="36" />
       {#if !appState.sidebarCollapsed}<h1 class="text-xl font-semibold">mountOS</h1>{/if}
     </div>
@@ -205,7 +217,7 @@
         appState.sidebarCollapsed && 'justify-center px-0',
       )}
       type="button"
-      title="mountOS CLI status, see Settings for details"
+      title={computed.cliStatusSummary}
       onclick={() => (appState.view = 'settings')}
     >
       <span class="led" class:warning={!appState.systemState.checkOk}></span>
