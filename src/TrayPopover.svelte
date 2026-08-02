@@ -23,8 +23,8 @@
   // Themed in the main window; this popover's own webview persists across
   // show/hide cycles, so it must react to both a system-preference change and
   // a theme change made in the main window's Settings (a cross-window
-  // localStorage write, which fires 'storage' here but not in the writer) --
-  // initThemeSync() wires up both.
+  // localStorage write, which fires 'storage' here but not in the writer),
+  // since initThemeSync() wires up both.
   $effect(() => initThemeSync())
 
   function canOpen(instance: MountInstance) {

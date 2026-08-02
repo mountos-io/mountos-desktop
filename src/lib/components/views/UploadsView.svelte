@@ -483,22 +483,24 @@ Check this when you just want the current backlog cleared and the job to finish 
        "empty" shell would. A 280px sidebar showing only its own "no jobs"
        echo of this same panel is dead weight anyway, not a real second
        source of information. -->
-  <section class="surface tech-grid flex-1 grid content-center justify-items-center gap-3 m-[22px] px-7 py-10 text-center outline-hidden" tabindex="-1" use:focusOnMount>
-    {#if appState.uploadsBusy}
-      <Upload size={28} aria-hidden="true" class="animate-pulse" />
-      <p class="text-muted-foreground">Loading upload jobs...</p>
-    {:else}
-      <Upload size={28} aria-hidden="true" />
-      <strong>No active uploads</strong>
-      {#if appState.uploadsError}
-        <p class="text-destructive text-sm" role="alert">{appState.uploadsError}</p>
+  <section class="surface tech-grid flex-1 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
+    <div class="grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
+      {#if appState.uploadsBusy}
+        <Upload size={28} aria-hidden="true" class="animate-pulse" />
+        <p class="text-muted-foreground">Loading upload jobs...</p>
+      {:else}
+        <Upload size={28} aria-hidden="true" />
+        <strong>No active uploads</strong>
+        {#if appState.uploadsError}
+          <p class="text-destructive text-sm" role="alert">{appState.uploadsError}</p>
+        {/if}
+        <p>Push a local folder or file list into a mountOS volume, with the exact CLI command shown before every action.</p>
+        <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
+          <Plus size={16} aria-hidden="true" />
+          New upload
+        </Button>
       {/if}
-      <p>Push a local folder or file list into a mountOS volume, with the exact CLI command shown before every action.</p>
-      <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
-        <Plus size={16} aria-hidden="true" />
-        New upload
-      </Button>
-    {/if}
+    </div>
   </section>
 {:else}
   <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
@@ -692,14 +694,13 @@ Check this when you just want the current backlog cleared and the job to finish 
     {:else}
       <!-- No "New upload" button here, the left panel already has the
            primary one directly above this same empty state, so a second
-           identical CTA on screen at once was pure duplication. content-center:
-           same grid-cell-stretched-to-full-height issue as the job detail
-           panel above. Without it, icon/heading/paragraph spread apart to
-           fill the panel instead of sitting together as one centered cluster. -->
-      <div class="surface tech-grid grid content-center justify-items-center gap-3 px-7 py-10 text-center">
-        <Upload size={28} aria-hidden="true" />
-        <strong>No job selected</strong>
-        <p>Pick a job on the left to see its progress and details.</p>
+           identical CTA on screen at once was pure duplication. -->
+      <div class="surface tech-grid">
+        <div class="grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
+          <Upload size={28} aria-hidden="true" />
+          <strong>No job selected</strong>
+          <p>Pick a job on the left to see its progress and details.</p>
+        </div>
       </div>
     {/if}
   </section>

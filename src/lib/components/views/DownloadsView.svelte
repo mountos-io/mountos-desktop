@@ -542,22 +542,24 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
        "empty" shell would. A 280px sidebar showing only its own "no jobs"
        echo of this same panel is dead weight anyway, not a real second
        source of information. -->
-  <section class="surface tech-grid flex-1 grid content-center justify-items-center gap-3 m-[22px] px-7 py-10 text-center outline-hidden" tabindex="-1" use:focusOnMount>
-    {#if appState.downloadsBusy}
-      <Download size={28} aria-hidden="true" class="animate-pulse" />
-      <p class="text-muted-foreground">Loading download jobs...</p>
-    {:else}
-      <Download size={28} aria-hidden="true" />
-      <strong>No active downloads</strong>
-      {#if appState.downloadsError}
-        <p class="text-destructive text-sm" role="alert">{appState.downloadsError}</p>
+  <section class="surface tech-grid flex-1 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
+    <div class="grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
+      {#if appState.downloadsBusy}
+        <Download size={28} aria-hidden="true" class="animate-pulse" />
+        <p class="text-muted-foreground">Loading download jobs...</p>
+      {:else}
+        <Download size={28} aria-hidden="true" />
+        <strong>No active downloads</strong>
+        {#if appState.downloadsError}
+          <p class="text-destructive text-sm" role="alert">{appState.downloadsError}</p>
+        {/if}
+        <p>Pull files from an already-mounted instance or a saved profile's fork, with the exact CLI command shown before every action.</p>
+        <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
+          <Plus size={16} aria-hidden="true" />
+          New download
+        </Button>
       {/if}
-      <p>Pull files from an already-mounted instance or a saved profile's fork, with the exact CLI command shown before every action.</p>
-      <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
-        <Plus size={16} aria-hidden="true" />
-        New download
-      </Button>
-    {/if}
+    </div>
   </section>
 {:else}
   <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
@@ -739,10 +741,12 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         </div>
       </div>
     {:else}
-      <div class="surface tech-grid grid content-center justify-items-center gap-3 px-7 py-10 text-center">
-        <Download size={28} aria-hidden="true" />
-        <strong>No job selected</strong>
-        <p>Pick a job on the left to see its progress and details.</p>
+      <div class="surface tech-grid">
+        <div class="grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
+          <Download size={28} aria-hidden="true" />
+          <strong>No job selected</strong>
+          <p>Pick a job on the left to see its progress and details.</p>
+        </div>
       </div>
     {/if}
   </section>

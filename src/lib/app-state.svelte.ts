@@ -2233,7 +2233,7 @@ export async function browseVersionDestination() {
 }
 
 // Primary action for the mounted case: pick a file directly from the live
-// mount. Rooting the native picker there is enough -- the CLI resolves
+// mount. Rooting the native picker there is enough, since the CLI resolves
 // inode/parent/name itself via stat(2), see buildVersionArgv/--path.
 export async function browseVersionFile(profile: MountProfile) {
   const instance = primaryInstanceForProfile(profile.id)
@@ -2251,7 +2251,7 @@ export async function browseVersionFile(profile: MountProfile) {
 // If a secret prompt interrupted it, the user completes that via the
 // existing flow and can click Browse again once mounted. If the mount
 // failed outright, runMount/doMount already reported it via their own
-// error toast -- do not also emit a second, contradictory "Mounting..."
+// error toast, so do not also emit a second, contradictory "Mounting..."
 // toast implying it's still in progress.
 export async function mountAndBrowseVersionFile(profile: MountProfile) {
   await runMount(profile)
@@ -2305,7 +2305,7 @@ export function cancelExternalDeletedView() {
 // Reached only from InstancesView's row dropdown, for an instance
 // canOpenViewsFor allows but profileForInstance can't resolve. Fetches a
 // destination suggestion and a needs-secret hint from the live mount's own
-// config -- best-effort, same as requestDeletedView's own destination
+// config, best-effort, same as requestDeletedView's own destination
 // fetch; confirmExternalDeletedView computes its own fallback either way.
 export async function requestExternalDeletedView(instance: MountInstance) {
   state.externalDeletedPromptFor = instance
@@ -2417,8 +2417,8 @@ export async function browseExternalVersionDestination() {
 }
 
 // Unlike browseVersionFile (profile-based, may not be mounted yet), an
-// external instance in the dropdown IS already a live mount -- that's the
-// only way it got a row to click this from -- so there is no "mount first"
+// external instance in the dropdown IS already a live mount, since that's the
+// only way it got a row to click this from, so there is no "mount first"
 // branch to handle here.
 export async function browseExternalVersionFile(instance: MountInstance) {
   const chosen = await pickVersionFile(`Choose a file from "${instance.name || 'this mount'}"`, instance.mountPath)
@@ -2480,7 +2480,7 @@ export async function browseGatewayKey() {
 }
 
 // Gateway launches never appear in `mountos list --json` at all when
-// gateway-only (no control socket, no mount entry -- confirmed against
+// gateway-only (no control socket, no mount entry, confirmed against
 // cmd_gateway.go), and even the mount+gateway combo case has no field there
 // indicating gateway is active on that mount (mountListEntry has no such
 // field). Tracked client-side, session-only: this GUI can only know about
@@ -2505,7 +2505,7 @@ export async function confirmGatewayView() {
       state.gatewaySecretValue || undefined,
     )
     state.gatewayLaunches = [
-      // A profile can only have one live combo gateway at a time -- drop any
+      // A profile can only have one live combo gateway at a time, so drop any
       // earlier combo record for this profile first, rather than leaving a
       // stale one (from a mount that died outside this app) sitting before
       // the fresh one, where gatewayInfoForInstance's .find() would keep
@@ -2526,7 +2526,7 @@ export async function confirmGatewayView() {
     await refresh(false)
     // An Iceberg-typed volume silently skips the gateway server-side
     // (auto-starts its own REST/S3 lake mode instead, no descriptor ever
-    // written) and this launch still exits 0 -- an empty endpoints list is
+    // written) and this launch still exits 0, so an empty endpoints list is
     // the only signal available to tell the difference from a real, working
     // gateway with a not-yet-discovered descriptor.
     if (result.endpoints.length === 0) {
@@ -2548,10 +2548,10 @@ export async function confirmGatewayView() {
 // Rust side has a normalized_target/targets_equal helper specifically
 // because comparing a profile's stored mount path against a running
 // instance's reported path with bare `===` is unreliable (trailing slashes,
-// case, etc.) -- reusing profileId (already on both sides) avoids needing to
+// case, etc.), so reusing profileId (already on both sides) avoids needing to
 // replicate that normalization in TS. A profile can only have one
 // combo-gateway mount at a time, but it can ALSO have Deleted/Version
-// satellite rows open concurrently for the same profileId -- excluding rows
+// satellite rows open concurrently for the same profileId, so excluding rows
 // with a viewModeBadge (always set for satellite views, never for the
 // primary mount) keeps those from matching a gateway that has nothing to do
 // with them.
@@ -2562,7 +2562,7 @@ export function gatewayInfoForInstance(instance: MountInstance) {
 
 // stop_gateway_blocking's two "the pid isn't real" errors ("was not
 // discovered by this app's own gateway launch" / "no running mountos process
-// at PID") mean this record's backing gateway is already gone -- e.g. a
+// at PID") mean this record's backing gateway is already gone, e.g. a
 // stale record surviving an external remount this app's poll never observed
 // as an intermediate "gone" state. Only those two confirm that; a generic
 // kill failure ("failed to stop gateway process") doesn't, and must not drop
@@ -2898,7 +2898,7 @@ export async function confirmStopGatewayPrompt() {
 
 async function runStopGatewayOnly(instance: MountInstance) {
   if (instance.pid == null) {
-    notify('No process id known for this gateway -- cannot stop it', 'error')
+    notify('No process id known for this gateway, cannot stop it', 'error')
     return
   }
   state.busy = true
@@ -3119,7 +3119,7 @@ export function setLicensesKind(kind: 'rust' | 'js') {
 
 // Jumps to Settings and scrolls the matching section into view. tick() waits
 // for the view swap to actually render before the id exists in the DOM.
-// block: 'nearest' rather than 'start' -- pinning a near-the-bottom section
+// block: 'nearest' rather than 'start', since pinning a near-the-bottom section
 // to the viewport top can overscroll past the page's real content, leaving a
 // blank gap below it since there's nothing left to fill the revealed space.
 export async function goToSettingsSection(id: string) {
@@ -3220,7 +3220,7 @@ export async function changeDefaultCacheSize(cacheSize: string) {
 }
 
 // Auto is the absence of an override (undefined defaultCacheSize), not a
-// separate persisted flag -- turning it back on just clears the field.
+// separate persisted flag, since turning it back on just clears the field.
 // Turning it off seeds AGGRESSIVE_CACHE_SIZE rather than leaving the field
 // blank, so the UI never shows "Auto off" next to an empty value.
 export async function toggleDefaultCacheSizeAuto(auto: boolean) {

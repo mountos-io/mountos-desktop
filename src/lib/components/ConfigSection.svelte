@@ -24,8 +24,8 @@
 </script>
 
 <div class="grid gap-2.5">
-  <!-- Only ever set on a recursive (nested-object) call, never the root --
-       the border+top-padding is what makes a nested category read as a new
+  <!-- Only ever set on a recursive (nested-object) call, never the root,
+       since the border+top-padding is what makes a nested category read as a new
        section instead of just another row trailing the parent's own list. -->
   {#if title}
     <p class="mono-label border-t border-border/40 pt-2.5">
