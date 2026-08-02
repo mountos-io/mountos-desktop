@@ -325,17 +325,21 @@
     color: var(--bracket-hover-dark);
   }
 
-  /* Technical grid pattern background -- a subtle texture, not a real grid:
-     --grid-line has no opacity of its own (its other uses, as an actual
-     border, want full strength), so it's dampened here specifically. Plain
-     `repeat`, no `background-clip`/`origin` (tried and confirmed to have no
-     visible effect in this app's webview, likely a layer/rendering
-     interaction, not worth chasing further). Breathing room between the
-     grid and its content lives one level in: the element carrying
-     `tech-grid` stays a plain background/border box, and an inner
-     container wraps the actual content with its own padding (see each call
-     site) -- the grid pattern is still visible behind that padding, but
-     the content itself sits clear of the edges. */
+  /* Technical grid pattern background, a subtle texture rather than a real
+     grid. --grid-line has no opacity of its own, since its other uses as an
+     actual border want full strength, so it's dampened here specifically.
+     Plain `repeat`, no `background-clip`/`origin` (tried and confirmed to
+     have no visible effect in this app's webview, so not worth chasing
+     further).
+
+     A bordered panel that wants a visible gap between its border and the
+     pattern should not put this class on the bordered box itself: instead
+     add a separate absolutely-positioned child carrying `tech-grid absolute
+     inset-N pointer-events-none`, with the actual content in its own
+     sibling marked `relative` so it paints on top (same technique already
+     used for the InstancesView header backdrop). The inset value on that
+     overlay is the border-to-pattern gap; padding on the content sibling is
+     a separate, independent gap between the content and the pattern. */
   .tech-grid {
     background-image:
       linear-gradient(oklch(from var(--grid-line) l c h / 0.2) 1px, transparent 1px),

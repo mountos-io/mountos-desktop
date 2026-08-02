@@ -347,8 +347,9 @@
       </CommandPreview>
     </form>
   {:else}
-    <div class="surface tech-grid">
-      <div class="grid justify-items-center gap-3 px-7 py-10 text-center">
+    <div class="surface relative">
+      <div class="tech-grid absolute inset-6 pointer-events-none" aria-hidden="true"></div>
+      <div class="relative grid justify-items-center gap-3 px-7 py-10 text-center">
         <FilePlus size={28} aria-hidden="true" />
         <strong>No profile selected</strong>
         <p>Save a profile to mount a mountOS volume in one click, with credentials in the OS vault and the exact CLI command shown before every action.</p>

@@ -542,8 +542,9 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
        "empty" shell would. A 280px sidebar showing only its own "no jobs"
        echo of this same panel is dead weight anyway, not a real second
        source of information. -->
-  <section class="surface tech-grid flex-1 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
-    <div class="grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
+  <section class="surface relative flex-1 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
+    <div class="tech-grid absolute inset-6 pointer-events-none" aria-hidden="true"></div>
+    <div class="relative grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
       {#if appState.downloadsBusy}
         <Download size={28} aria-hidden="true" class="animate-pulse" />
         <p class="text-muted-foreground">Loading download jobs...</p>
@@ -741,8 +742,9 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         </div>
       </div>
     {:else}
-      <div class="surface tech-grid">
-        <div class="grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
+      <div class="surface relative">
+        <div class="tech-grid absolute inset-6 pointer-events-none" aria-hidden="true"></div>
+        <div class="relative grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
           <Download size={28} aria-hidden="true" />
           <strong>No job selected</strong>
           <p>Pick a job on the left to see its progress and details.</p>
