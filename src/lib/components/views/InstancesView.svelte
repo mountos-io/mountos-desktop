@@ -70,7 +70,7 @@
 
   // Same fallback shape as volumeKindFor: instance.temporaryFork is a
   // best-effort live read off .mountOS/.config (read_instance_config_extras
-  // silently falls back to undefined on any read failure -- unmounted
+  // silently falls back to undefined on any read failure (unmounted
   // mid-poll, .config not written yet, unexpected shape), so relying on it
   // alone means the badge can silently vanish for a mount that IS a
   // temporary fork, right when a user most needs the warning (its data is
@@ -81,14 +81,14 @@
   }
 
   // "Open folder" moved to a direct action button, so it's no longer the one
-  // unconditional item keeping this menu non-empty -- without this check the
+  // unconditional item keeping this menu non-empty. Without this check the
   // dropdown trigger would open onto nothing for an instance with no other
   // applicable item (not openable, no deleted/version view, no gateway).
   function hasMoreActions(instance: MountInstance): boolean {
     return canOpen(instance) || canOpenViewsFor(instance) || canUploadFrom(instance) || Boolean(gatewayInfoForInstance(instance)?.pid)
   }
 
-  // `unmount --all` only ever acts on real kernel mounts -- a standalone
+  // `unmount --all` only ever acts on real kernel mounts. A standalone
   // gateway-only row has no unmount concept at all (see Stop gateway
   // instead), so its presence alone must not enable this button.
   function hasAnyMount(): boolean {
@@ -121,7 +121,7 @@
 <section class="surface m-[22px] mt-4 p-4">
   <h3 class="mb-6">Running instances</h3>
   {#if appState.loaded && computed.filteredInstances.length === 0}
-    <div class="tech-grid grid justify-items-center gap-2 p-7 text-center">
+    <div class="tech-grid grid justify-items-center gap-3 px-7 py-10 text-center">
       <Unplug size={28} aria-hidden="true" />
       <strong>No instances</strong>
       <p>Mount a saved profile, or mount from the CLI. Active mounts appear here after refresh.</p>
@@ -217,7 +217,7 @@
                        read as live when it isn't. An absolute time stays correct
                        regardless of how long it sits unrefreshed. -->
                   {#if formatMountedSince(instance.mountTime)}
-                    <Badge variant="secondary" title="Auto-refresh is off -- hit Refresh to update" tabindex={0}>Since {formatMountedSince(instance.mountTime)}</Badge>
+                    <Badge variant="secondary" title="Auto-refresh is off, hit Refresh to update" tabindex={0}>Since {formatMountedSince(instance.mountTime)}</Badge>
                   {/if}
                 {:else if formatUptime(instance.mountTime)}
                   <Badge variant="secondary" title={`Mounted at ${formatMountedSince(instance.mountTime)}`} tabindex={0}>Up {formatUptime(instance.mountTime)}</Badge>
@@ -236,9 +236,9 @@
               <!-- A "gateway" row has only endpoints; a "mount" row that also
                    runs a --gateway-attached embedded gateway (same process,
                    folded onto this entry server-side by pid) lists them below
-                   the mount path -- badged per protocol so a reader doesn't
+                   the mount path, badged per protocol so a reader doesn't
                    have to guess which URL is s3 vs. hdfs. S3's bucket name IS
-                   the fork ("auto" also works) -- HDFS has no such concept
+                   the fork ("auto" also works). HDFS has no such concept
                    (always resolves to the bound fork), hence the hint on s3
                    only. -->
               {#if instance.gatewayEndpoints?.length}
@@ -359,7 +359,7 @@
                       {/if}
                       <!-- .lost+found is a real directory inside the volume's
                            own namespace, so it doesn't exist under a
-                           satellite Deleted/Version/Snapshot view -- same
+                           satellite Deleted/Version/Snapshot view, same
                            gate as Save-as-profile/Clone-profile above. -->
                       {#if canOpen(instance) && !viewModeBadge(instance.viewMode)}
                         <DropdownMenu.Item
@@ -368,7 +368,7 @@
                           onSelect={() => runOpenLostFound(instance)}
                         >
                           <span class="flex items-center gap-2"><Ghost size={16} aria-hidden="true" /> Open zombie files</span>
-                          <span title="Files that lost their name or folder -- the .lost+found directory">
+                          <span title="Files that lost their name or folder (the .lost+found directory)">
                             <Lightbulb size={14} aria-hidden="true" class="text-muted-foreground" />
                           </span>
                         </DropdownMenu.Item>

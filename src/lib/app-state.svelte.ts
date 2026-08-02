@@ -2,6 +2,12 @@ import { tick } from 'svelte'
 import { showErrorToast, showInfoToast, showWarningToast } from './toast.svelte'
 import {
   buildDeletedArgv,
+  buildDownloadCancelArgv,
+  buildDownloadListArgv,
+  buildDownloadPruneArgv,
+  buildDownloadResumeArgv,
+  buildDownloadRetryFailedArgv,
+  buildDownloadStartArgv,
   buildForkCreateArgv,
   buildForkDeleteArgv,
   buildForkListArgv,
@@ -26,7 +32,7 @@ import {
   validateMountPathForBackend,
   validateUploadPositional,
 } from './cli'
-import type { UploadStartParams } from './cli'
+import type { DownloadStartParams, UploadStartParams } from './cli'
 import { viewModeBadge } from './health'
 import {
   browseCliBinary,
@@ -69,6 +75,16 @@ import {
   pruneUploads,
   resumeUpload,
   retryFailedUpload,
+  finishUpload,
+  listDownloads,
+  startDownload,
+  ensureDownloadBrowseMount,
+  resumeDownload,
+  cancelDownload,
+  retryFailedDownload,
+  finishDownload,
+  pruneDownloads,
+  openDownloadLog,
   saveProfile,
   saveSettings,
   setProfileSecret,
@@ -83,6 +99,7 @@ import type {
   Backend,
   DesktopSettings,
   DiagnosticsBundle,
+  DownloadJob,
   Fork,
   GatewayEndpointInfo,
   MountInstance,
@@ -93,7 +110,7 @@ import type {
   UploadJob,
 } from './types'
 
-export type View = 'instances' | 'profiles' | 'uploads' | 'settings'
+export type View = 'instances' | 'profiles' | 'uploads' | 'downloads' | 'settings'
 
 // The profile editor's right-hand pane: the plain editor form, or one of the
 // five full-width sub-views nested under the selected profile (Forks and the
@@ -101,7 +118,7 @@ export type View = 'instances' | 'profiles' | 'uploads' | 'settings'
 export type ProfileSubView = 'editor' | 'forks' | 'snapshot' | 'deleted' | 'version' | 'gateway'
 
 // The subset of an instance's own live .mountOS/.config (read via
-// getInstanceConfig) relevant to the external Deleted/Version dialogs --
+// getInstanceConfig) relevant to the external Deleted/Version dialogs,
 // enough to know whether a secret is needed and to render a real COMMAND
 // PREVIEW, without a MountProfile to read from.
 export interface ExternalMountConfig {
@@ -122,7 +139,7 @@ export const DEFAULT_POLL_SECONDS = 10
 export const HIDDEN_POLL_MS = 30_000
 export const POLL_CHOICES = [0, 2, 5, 10, 30, 60]
 
-// Starting point offered when a user turns off Auto disk-cache sizing --
+// Starting point offered when a user turns off Auto disk-cache sizing,
 // not a hidden default (Auto, i.e. no --disk-cache-size at all, leaving the
 // CLI's own free-disk-scaled [10G, 100G] clamp in charge, is the real
 // default and what ships unset).
@@ -161,7 +178,7 @@ const state = $state({
   systemState: { platform: 'macos', checkOk: false, issues: [], instances: [], cliPathAlternates: [], terminals: [] } as SystemState,
   selectedProfileId: null as string | null,
   // The volume kind as last known persisted (selectProfile/refresh/save),
-  // NOT the live-edited draft in `profiles` -- patchProfile mutates that
+  // NOT the live-edited draft in `profiles`, patchProfile mutates that
   // immediately on every keystroke/selection, before Save is ever pressed,
   // so using it directly would show the "locked" read-only state (and grey
   // out accessKeyId/discoveryUrl/volume) the instant a value is picked in
@@ -206,18 +223,18 @@ const state = $state({
   // is on. Reset every time the prompt opens or closes.
   unmountPromptForce: false,
 
-  // Stop-gateway confirm (standalone gateway-only rows -- see runStopGatewayOnly)
+  // Stop-gateway confirm (standalone gateway-only rows, see runStopGatewayOnly)
   stopGatewayPromptFor: null as MountInstance | null,
 
   // Fork management: its own navigable place (ForkBrowserView), reached from
-  // the profile editor via a "Forks" satellite button -- not embedded inline
+  // the profile editor via a "Forks" satellite button, not embedded inline
   // in the editor form. Always available; only --force on delete is gated
   // (settings.allowForkForceDelete).
   profileSubView: 'editor' as ProfileSubView,
   forks: [] as Fork[],
   // null = viewing the profile's own root ("main"); otherwise the fid of the
   // fork currently drilled into. Pure client-side navigation over `forks`,
-  // no CLI call -- see drillIntoFork.
+  // no CLI call, see drillIntoFork.
   forkDrillFid: null as number | null,
   forkListSecretValue: '',
   forkBusy: false,
@@ -233,7 +250,7 @@ const state = $state({
   forkCreateError: '',
 
   // Delete/restore target one specific fork (a row action), not a free-text
-  // or Select-picked name -- this dialog is also the delete confirmation
+  // or Select-picked name, this dialog is also the delete confirmation
   // fork delete previously had none of.
   forkDeletePromptFor: null as Fork | null,
   forkDeleteForce: false,
@@ -248,19 +265,19 @@ const state = $state({
   // default sub-view (master-detail: job list on the left, selected job's
   // detail on the right, same layout as ProfilesView); "New upload" and
   // "Resume" each open their own full-panel sub-view with a back button
-  // (not a modal -- a resume/create form has too many fields to cram into
+  // (not a modal, a resume/create form has too many fields to cram into
   // a dialog cleanly), mirroring Profiles' editor/forks/snapshot/... split.
   uploadSubView: 'list' as 'list' | 'create' | 'resume',
   uploads: [] as UploadJob[],
   uploadsBusy: false,
   uploadsError: '',
-  // Wall-clock ms of the last successful runUploadList() -- there's no
+  // Wall-clock ms of the last successful runUploadList(). There's no
   // auto-poll for this list (only the mount-on-first-view fetch plus a
   // refetch after every mutating action), so surfacing this tells the user
   // how stale the list might be rather than implying a live feed.
   uploadsLastFetchedAt: null as number | null,
   uploadSelectedJobId: null as string | null,
-  // Cleanly-completed jobs are historical noise once done -- nothing
+  // Cleanly-completed jobs are historical noise once done, nothing
   // pruned automatically accumulates them indefinitely (mountos-servers
   // upload prune is manual-only), so the left panel hides them by default
   // rather than growing unbounded. A completed job with failures still
@@ -270,8 +287,8 @@ const state = $state({
   // Create-job form: source is either a saved profile OR a live running
   // mount instance with no saved profile (mirrors requestExternalDeletedView's
   // "no profile, re-derive from the live mount's own config" pattern).
-  // Fork/discovery-url/access-key always come from whichever is picked --
-  // never a free-typed value -- so there is no separate form field for any
+  // Fork/discovery-url/access-key always come from whichever is picked
+  // (never a free-typed value), so there is no separate form field for any
   // of them.
   uploadSourceKind: 'profile' as 'profile' | 'instance',
   uploadSourceProfileId: null as string | null,
@@ -284,7 +301,7 @@ const state = $state({
 
   // Form fields. include/exclude are newline-separated textareas (split
   // into glob arrays at submit time) rather than a dynamic list of inputs
-  // -- simpler to bind, and --include/--exclude are themselves free-form
+  // (simpler to bind), and --include/--exclude are themselves free-form
   // globs a user is likely to paste several of at once. bwlimit/rescan-
   // interval/include/exclude/restart/follow-symlinks/create-source-dir all
   // live behind the collapsed "Advanced options" disclosure.
@@ -307,7 +324,7 @@ const state = $state({
   uploadStartError: '',
   uploadBrowseError: '',
   // Populated only after a --dry-run start (the report text itself, not a
-  // real job) -- cleared at the start of the NEXT runUploadStart call
+  // real job), cleared at the start of the NEXT runUploadStart call
   // (dry-run or not), so a stale report never lingers past the point the
   // form's inputs have actually changed and been resubmitted.
   uploadDryRunReport: '',
@@ -315,7 +332,7 @@ const state = $state({
   uploadResumePromptFor: null as UploadJob | null,
   // Resume works from these two fields alone (job.json already fixes the
   // job's volume/fork/paths server-side, see resumeUpload's own comment),
-  // not a saved profile -- a job may not have one at all (e.g. started via
+  // not a saved profile, a job may not have one at all (e.g. started via
   // CLI). Prefilled from the Profiles-page selection as a convenience
   // default when requestUploadResume opens, always editable.
   uploadResumeDiscoveryUrl: '',
@@ -327,18 +344,89 @@ const state = $state({
 
   // Prune is the one upload action that's a permanent, irreversible delete
   // of job records (unlike cancel/retry-failed, which only touch live state
-  // and stay resumable) -- same reason fork delete gets a confirm dialog.
+  // and stay resumable), same reason fork delete gets a confirm dialog.
   uploadPrunePromptOpen: false,
   uploadPruneKeep: '0',
   uploadPruneError: '',
 
+  // Downloads: the same top-level view/subview shape as Uploads (list is the
+  // default master-detail sub-view; "New download"/"Resume" are their own
+  // full-panel sub-views), reversed direction (pull FROM a mountOS volume TO
+  // local disk). See downloadSourceKind's own comment for why its two modes
+  // are NOT the same "profile vs live instance" tradeoff uploadSourceKind's
+  // identical-looking naming represents.
+  downloadSubView: 'list' as 'list' | 'create' | 'resume',
+  downloads: [] as DownloadJob[],
+  downloadsBusy: false,
+  downloadsError: '',
+  downloadsLastFetchedAt: null as number | null,
+  downloadSelectedJobId: null as string | null,
+  downloadShowCompleted: false,
+
+  // Create-job form. 'instance' means SOURCE is a local path read straight
+  // through an already-mounted live instance. No RPC, no connection, no
+  // credentials at all (mode A). 'profile' means SOURCE is a mountOS-relative
+  // path on a saved profile's fork, connecting fresh, optionally pinned to
+  // a historical AsOf snapshot rather than the fork's live state (mode B).
+  // Unlike uploadSourceKind, 'instance' here is NOT "a live instance I still
+  // need to authenticate a new connection to", see downloadNeedsSecret.
+  downloadSourceKind: 'instance' as 'instance' | 'profile',
+  downloadSourceProfileId: null as string | null,
+  downloadProfileQuery: '',
+  // Captured once (via getInstanceConfig) the moment an instance is picked,
+  // same one-shot pattern as uploadSourceInstance, reusing the identical
+  // UploadInstanceRef shape (a generic "live instance identity", not
+  // upload-specific in content).
+  downloadSourceInstance: null as UploadInstanceRef | null,
+
+  // Mode A: an absolute local path under the instance's own mount, chosen via
+  // browseDownloadSource. CLI reads it straight off local disk, no
+  // mountOS-relative translation. Mode B: a mountOS-relative path on the
+  // profile's fork (translated from a scratch-mount browse the same way
+  // uploadDest is). ifExists/depth are visible top-level fields (not behind
+  // Advanced), both meaningfully change default behavior, see cmd_download.
+  // go's own --if-exists/--depth doc comments.
+  downloadSource: '',
+  downloadDest: '',
+  downloadSourceError: '',
+  downloadDestError: '',
+  downloadIfExists: 'skip' as 'skip' | 'overwrite' | 'bounce',
+  downloadDepth: '1',
+  // Profile-mode only, see downloadAsOf's own derivation (mirrors
+  // forkCreateAsOfLocal's datetime-local pattern exactly).
+  downloadAsOfLocal: '',
+  downloadAdvancedOpen: false,
+  downloadDryRun: false,
+  downloadRestart: false,
+  downloadBwlimit: '',
+  downloadIncludeText: '',
+  downloadExcludeText: '',
+  downloadFollowSymlinks: false,
+  downloadCreateSourceDirectory: false,
+  downloadStartSecretValue: '',
+  downloadStartError: '',
+  downloadBrowseError: '',
+  downloadDryRunReport: '',
+
+  // download resume has no --once/--rescan-interval (every run is already
+  // single-pass), so this needs far fewer fields than uploadResume*.
+  downloadResumePromptFor: null as DownloadJob | null,
+  downloadResumeDiscoveryUrl: '',
+  downloadResumeAccessKeyId: '',
+  downloadResumeSecretValue: '',
+  downloadResumeError: '',
+
+  downloadPrunePromptOpen: false,
+  downloadPruneKeep: '0',
+  downloadPruneError: '',
+
   // Snapshot/Deleted/Version view-mounts: destination is always an explicit
-  // folder pick (browseFolder), never free-typed -- -m/--destination is
+  // folder pick (browseFolder), never free-typed. -m/--destination is
   // mandatory server-side for all three (no auto-derivation exists).
   // Profile-based, not instance-based: none of these CLI commands need an
   // existing running mount, they connect to discovery+dataserv independently.
   // Which profile: computed.selectedProfile (see profileSubView), not a
-  // separately-captured field -- patchProfile replaces objects in
+  // separately-captured field, patchProfile replaces objects in
   // state.profiles on every edit, so a second captured copy would drift.
   snapshotDestination: '',
   snapshotTimeMode: 'absolute' as 'absolute' | 'relative',
@@ -371,7 +459,7 @@ const state = $state({
   versionSecretValue: '',
   versionError: '',
 
-  // Gateway launch (S3/HDFS): same family as Snapshot/Deleted/Version --
+  // Gateway launch (S3/HDFS): same family as Snapshot/Deleted/Version,
   // profile-based, never persisted to the profile (launch params, not identity).
   gatewayS3: true,
   gatewayHdfs: false,
@@ -385,11 +473,11 @@ const state = $state({
   gatewayLaunches: [] as GatewayLaunchRecord[],
 
   // Deleted/Version for an instance with NO saved profile at all (mounted
-  // from the terminal, or any tool outside this app) -- profile is
+  // from the terminal, or any tool outside this app), profile is
   // deliberately optional, see openDeletedViewForInstance/
   // openVersionViewForInstance in tauri.ts. Kept as a modal (operates on a
   // MountInstance, not a MountProfile) rather than folded into
-  // DeletedView/VersionView -- same field shape as the profile-based
+  // DeletedView/VersionView, same field shape as the profile-based
   // deletedX/versionX fields above, duplicated on purpose rather than
   // forcing one component to serve two different underlying data shapes.
   externalDeletedPromptFor: null as MountInstance | null,
@@ -402,10 +490,10 @@ const state = $state({
   externalDeletedSecretValue: '',
   externalDeletedError: '',
   // Live-read off the instance's own .mountOS/.config when the dialog opens
-  // (see requestExternalDeletedView) -- there is no MountProfile to answer
+  // (see requestExternalDeletedView), there is no MountProfile to answer
   // "does this need a secret" or build a COMMAND PREVIEW the way
   // profile.secretRef/vaultStatus and buildDeletedArgv(profile, ...) do for
-  // the profile-based case. null means not yet fetched (or unreadable) --
+  // the profile-based case. null means not yet fetched (or unreadable);
   // computed.externalDeletedNeedsSecret treats that as "assume yes": hiding
   // the field on an unreadable config risks a launch that fails with
   // "secret required" and no field visible to fix it.
@@ -427,13 +515,18 @@ export const appState = state
 
 // datetime-local's native value ("2025-12-05T14:30") isn't one of
 // parseForkAsOf's accepted formats (RFC3339 with an offset, or the naive
-// space-separated "2006-01-02 15:04") -- unlike ParseSnapshotTime, it has no
+// space-separated "2006-01-02 15:04"), unlike ParseSnapshotTime, it has no
 // relative-offset support and no T-separated ISO variant, so the T must be
 // swapped for a space before use.
 const forkCreateAsOf = $derived(state.forkCreateAsOfLocal ? state.forkCreateAsOfLocal.replace('T', ' ') : '')
 
+// download's --as-of accepts the same flexible format as fork create's
+// --as-of (see buildDownloadStartArgv's own comment), same datetime-local
+// T-to-space swap as forkCreateAsOf, for the same reason.
+const downloadAsOf = $derived(state.downloadAsOfLocal ? state.downloadAsOfLocal.replace('T', ' ') : '')
+
 // snapshot --timestamp accepts both the datetime-local T-separated ISO form
-// and relative offsets ("2h", "3d") directly (ParseSnapshotTime) -- unlike
+// and relative offsets ("2h", "3d") directly (ParseSnapshotTime), unlike
 // fork create's --as-of, no space-swap is needed here.
 const snapshotTimestampValue = $derived(
   state.snapshotTimeMode === 'absolute'
@@ -464,11 +557,11 @@ const externalDeletedFromValue = $derived(
 )
 
 // Fills in just the fields buildDeletedArgv/buildVersionArgv actually read
-// (discoveryUrl/fork/volume/accessKeyId/cacheDir/extraArgs -- confirmed
+// (discoveryUrl/fork/volume/accessKeyId/cacheDir/extraArgs, confirmed
 // against cli.ts, neither reads backend) so the external dialogs' COMMAND
 // PREVIEW can reuse the exact same builders the profile-based views do,
 // rather than a second, drift-prone reimplementation of the same argv
-// logic. Never sent anywhere -- purely local, display-only; the real launch
+// logic. Never sent anywhere, purely local, display-only; the real launch
 // goes through open_deleted_view_for_instance/open_version_view_for_instance,
 // which re-derive their own profile server-side from the live mount itself.
 function previewProfileFromExternalConfig(instance: MountInstance, config: ExternalMountConfig | null): MountProfile {
@@ -521,7 +614,7 @@ const externalVersionCommandText = $derived.by(() => {
 
 const gatewayProtocols = $derived([...(state.gatewayS3 ? ['s3'] : []), ...(state.gatewayHdfs ? ['hdfs'] : [])])
 
-// The root/"main" fork is fid=0, self-parented (parentFid=0 too) -- excluding
+// The root/"main" fork is fid=0, self-parented (parentFid=0 too). Excluding
 // fid===parentFid keeps the root out of its own children list when viewing
 // the profile's own top level (forkDrillFid === null, so parentFid here is 0).
 const forkChildren = $derived.by(() => {
@@ -560,7 +653,7 @@ const filteredInstances = $derived(
 )
 
 // The selected profile always stays in the list even when it doesn't match
-// the search text -- filtering it out would silently swap what the editor
+// the search text. Filtering it out would silently swap what the editor
 // below is showing without any visible cue why it vanished from the list.
 const filteredProfiles = $derived.by(() => {
   const q = state.profileQuery.trim().toLowerCase()
@@ -568,7 +661,7 @@ const filteredProfiles = $derived.by(() => {
   return state.profiles.filter((profile) => profile.id === state.selectedProfileId || profile.name.toLowerCase().includes(q))
 })
 
-// Search-filtered for the upload create form's profile picker -- unlike
+// Search-filtered for the upload create form's profile picker. Unlike
 // filteredProfiles above, there's no "selected profile must stay visible"
 // exception needed here (uploadSourceProfileId is reset whenever the query
 // changes the visible set enough to matter, via selectUploadProfile).
@@ -581,7 +674,7 @@ const uploadFilteredProfiles = $derived.by(() => {
 const uploadSelectedProfile = $derived(state.profiles.find((profile) => profile.id === state.uploadSourceProfileId))
 
 // Mounted, active, and NOT a Snapshot/Deleted/Version view or a gateway-only
-// entry -- those are read-only historical/derived views, not a real
+// entry, those are read-only historical/derived views, not a real
 // browsable filesystem an upload could source from. viewModeBadge is the
 // same check InstancesView itself uses to badge those rows. Exported as a
 // standalone predicate (not just the derived list below) so InstancesView's
@@ -594,7 +687,7 @@ export function canUploadFrom(instance: MountInstance): boolean {
 
 const uploadEligibleInstances = $derived(state.systemState.instances.filter(canUploadFrom))
 
-// The fork badge shown next to the create form -- always derived from
+// The fork badge shown next to the create form, always derived from
 // whichever source is picked, never a form field.
 const uploadResolvedFork = $derived(
   state.uploadSourceKind === 'profile' ? (uploadSelectedProfile?.fork ?? '') : (state.uploadSourceInstance?.fork ?? ''),
@@ -602,7 +695,7 @@ const uploadResolvedFork = $derived(
 
 // A saved profile may have its secret cached in the vault already, so the
 // field is conditional there. A running-instance source is never a saved
-// profile -- there's no vault entry to check, ever -- so the secret field
+// profile (there's no vault entry to check, ever), so the secret field
 // always needs to be offered (this is also the "browse doesn't need a
 // secret, only upload does" case from the source spec).
 const uploadNeedsSecret = $derived(
@@ -611,7 +704,7 @@ const uploadNeedsSecret = $derived(
     : Boolean(state.uploadSourceInstance),
 )
 
-// A profile-shaped object purely for COMMAND PREVIEW / argv building --
+// A profile-shaped object purely for COMMAND PREVIEW / argv building,
 // never sent anywhere itself (the real start_upload call re-derives its own
 // profile server-side, see resolve_upload_source_profile), same trick
 // previewProfileFromExternalConfig below uses for Deleted/Version.
@@ -646,14 +739,14 @@ const uploadCommandText = $derived.by(() => {
   return `mountos ${buildUploadStartArgv(profile, state.uploadSource.trim(), state.uploadDest.trim(), uploadStartParams()).join(' ')}`
 })
 
-// Sidebar badge count -- lazily updated (whatever `uploads` last held from
+// Sidebar badge count, lazily updated (whatever `uploads` last held from
 // the most recent runUploadList call, not a dedicated poll loop), per the
 // design's deliberate choice not to add background CLI shell-outs for a
 // feature most sessions never touch.
 const uploadRunningCount = $derived(state.uploads.filter((job) => job.state === 'running').length)
 
 // Sidebar CLI-status tooltip: names the actual problem (or version, when
-// healthy) instead of a generic "see Settings for details" -- the most
+// healthy) instead of a generic "see Settings for details". The most
 // severe issue is the one worth surfacing without opening Settings at all.
 const cliStatusSummary = $derived.by(() => {
   if (state.systemState.checkOk) {
@@ -669,11 +762,11 @@ function isCleanlyCompletedUpload(job: UploadJob): boolean {
 }
 
 // A completed job with permanent failures still needs attention and stays
-// visible regardless of the toggle -- only a clean completion is hidden.
+// visible regardless of the toggle, only a clean completion is hidden.
 const uploadHiddenCompletedCount = $derived(state.uploads.filter(isCleanlyCompletedUpload).length)
 
 // Bounded independent of how many historical jobs `list --kind upload`
-// returns (nothing prunes them automatically -- see uploadShowCompleted's
+// returns (nothing prunes them automatically, see uploadShowCompleted's
 // own comment): the left panel never renders more than this many rows even
 // with "show completed" on, so a long-lived install's job history can't
 // turn the list into thousands of unvirtualized DOM nodes.
@@ -708,6 +801,98 @@ const uploadVisibleJobsTotal = $derived(
   state.uploadShowCompleted ? state.uploads.length : state.uploads.length - uploadHiddenCompletedCount,
 )
 const uploadVisibleJobsTruncated = $derived(uploadVisibleJobsTotal > UPLOAD_VISIBLE_JOB_CAP)
+
+// Search-filtered for the download create form's profile picker (profile
+// mode only, instance mode uses downloadEligibleInstances instead).
+const downloadFilteredProfiles = $derived.by(() => {
+  const q = state.downloadProfileQuery.trim().toLowerCase()
+  if (!q) return state.profiles
+  return state.profiles.filter((profile) => profile.name.toLowerCase().includes(q))
+})
+
+const downloadSelectedProfile = $derived(state.profiles.find((profile) => profile.id === state.downloadSourceProfileId))
+
+// Reused verbatim, not duplicated: "a real browsable filesystem this could
+// read a source from" is the identical criterion canUploadFrom already
+// checks (healthy, not orphaned, not gateway-only, not a Snapshot/Deleted/
+// Version view mount), there's no genuine reason download's eligibility
+// should differ.
+export function canDownloadFrom(instance: MountInstance): boolean {
+  return canUploadFrom(instance)
+}
+
+const downloadEligibleInstances = $derived(state.systemState.instances.filter(canDownloadFrom))
+
+// The fork badge shown next to the create form, always derived from
+// whichever source is picked, never a form field.
+const downloadResolvedFork = $derived(
+  state.downloadSourceKind === 'profile' ? (downloadSelectedProfile?.fork ?? '') : (state.downloadSourceInstance?.fork ?? ''),
+)
+
+// Deliberate asymmetry vs uploadNeedsSecret (NOT a copy of its
+// Boolean(state.uploadSourceInstance) instance-branch logic): an
+// instance-mode download SOURCE reads straight through the already-live
+// local mount with no RPC/connection at all (mode A, cmd_download.go's
+// detectDownloadSourceKind), upload's instance-sourced flow, by contrast,
+// still opens a FRESH connection to its (always-remote) destination, so it
+// unconditionally needs a secret. Only a profile-mode download source
+// (mode B, connect fresh) ever needs one here, gated the same way upload's
+// profile branch is: a cached vault secret makes the field unnecessary.
+const downloadNeedsSecret = $derived(
+  state.downloadSourceKind === 'profile'
+    ? Boolean(downloadSelectedProfile) && (downloadSelectedProfile!.secretRef === 'prompt' || !state.vaultStatus[downloadSelectedProfile!.id])
+    : false,
+)
+
+// Unlike uploadCommandText (which always needs a synthetic preview profile,
+// even for an instance source, because buildUploadStartArgv's profile
+// parameter is non-nullable), buildDownloadStartArgv takes `profile:
+// MountProfile | null` and only reads it for sourceKind 'profile'. An
+// instance-mode source needs no profile object here at all.
+const downloadCommandText = $derived.by(() => {
+  const source = state.downloadSource.trim()
+  const dest = state.downloadDest.trim()
+  if (!source || !dest) return ''
+  if (state.downloadSourceKind === 'profile' && !downloadSelectedProfile) return ''
+  const profile = state.downloadSourceKind === 'profile' ? (downloadSelectedProfile ?? null) : null
+  return `mountos ${buildDownloadStartArgv(profile, state.downloadSourceKind, source, dest, downloadStartParams()).join(' ')}`
+})
+
+// Sidebar badge count, same lazily-updated convention as uploadRunningCount
+// (whatever `downloads` last held from the most recent runDownloadList call).
+const downloadRunningCount = $derived(state.downloads.filter((job) => job.state === 'running').length)
+
+function isCleanlyCompletedDownload(job: DownloadJob): boolean {
+  return job.state === 'completed' && (job.counts.failed ?? 0) === 0
+}
+
+const downloadHiddenCompletedCount = $derived(state.downloads.filter(isCleanlyCompletedDownload).length)
+
+const DOWNLOAD_VISIBLE_JOB_CAP = 300
+
+export function downloadStateRank(job: DownloadJob): number {
+  if (job.state === 'running') return 0
+  if (job.state === 'halted' || job.state === 'resumable') return 1
+  return 2 // completed
+}
+
+export function sortDownloadJobs(jobs: DownloadJob[]): DownloadJob[] {
+  return [...jobs].sort((a, b) => {
+    const rankDiff = downloadStateRank(a) - downloadStateRank(b)
+    return rankDiff !== 0 ? rankDiff : (b.createdAt ?? 0) - (a.createdAt ?? 0)
+  })
+}
+
+const downloadVisibleJobs = $derived.by(() => {
+  const base = state.downloadShowCompleted ? state.downloads : state.downloads.filter((job) => !isCleanlyCompletedDownload(job))
+  const sorted = sortDownloadJobs(base)
+  return sorted.slice(0, DOWNLOAD_VISIBLE_JOB_CAP)
+})
+
+const downloadVisibleJobsTotal = $derived(
+  state.downloadShowCompleted ? state.downloads.length : state.downloads.length - downloadHiddenCompletedCount,
+)
+const downloadVisibleJobsTruncated = $derived(downloadVisibleJobsTotal > DOWNLOAD_VISIBLE_JOB_CAP)
 
 const backends = $derived<Backend[]>(
   state.systemState.platform === 'windows'
@@ -774,6 +959,18 @@ export const computed = {
   get uploadVisibleJobs() { return uploadVisibleJobs },
   get uploadVisibleJobsTotal() { return uploadVisibleJobsTotal },
   get uploadVisibleJobsTruncated() { return uploadVisibleJobsTruncated },
+  get downloadAsOf() { return downloadAsOf },
+  get downloadFilteredProfiles() { return downloadFilteredProfiles },
+  get downloadSelectedProfile() { return downloadSelectedProfile },
+  get downloadEligibleInstances() { return downloadEligibleInstances },
+  get downloadResolvedFork() { return downloadResolvedFork },
+  get downloadNeedsSecret() { return downloadNeedsSecret },
+  get downloadCommandText() { return downloadCommandText },
+  get downloadRunningCount() { return downloadRunningCount },
+  get downloadHiddenCompletedCount() { return downloadHiddenCompletedCount },
+  get downloadVisibleJobs() { return downloadVisibleJobs },
+  get downloadVisibleJobsTotal() { return downloadVisibleJobsTotal },
+  get downloadVisibleJobsTruncated() { return downloadVisibleJobsTruncated },
   get backends() { return backends },
   get mountPathError() { return mountPathError },
   get trimmedSecret() { return trimmedSecret },
@@ -826,7 +1023,7 @@ function detectLost(next: SystemState) {
 }
 
 // A combo gateway's mount disappearing (unmount, crash) takes the gateway
-// down with it -- there is no independent lifecycle to track once the mount
+// down with it, there is no independent lifecycle to track once the mount
 // is gone. Gateway-only records have no mountPath and are untouched here;
 // they only clear via Stop gateway. Shared by refresh() and the periodic
 // pollSystem(): pruning only on manual refresh left a phantom badge/Stop-
@@ -874,7 +1071,7 @@ export async function refresh(announce = true) {
 }
 
 // Fills in a not-yet-detected volumeKind the first time a live instance's own
-// config reveals it -- the same detection newProfileFromInstance does at
+// config reveals it, the same detection newProfileFromInstance does at
 // creation time, but for existing profiles that were saved before ever
 // mounting. Never touches a profile that already has volumeKind set:
 // require_stable_identity (src-tauri/src/lib.rs) would reject that save
@@ -927,7 +1124,7 @@ export function newProfile(preset: Partial<MountProfile> = {}) {
 }
 
 // Read back everything the mount records about itself rather than making the
-// user retype it. Only the secret cannot come from here (by design -- the
+// user retype it. Only the secret cannot come from here (by design, the
 // config stores the access key id, which is an identifier, never the secret).
 export async function saveAsProfile(instance: MountInstance) {
   const preset: Partial<MountProfile> = {
@@ -935,10 +1132,10 @@ export async function saveAsProfile(instance: MountInstance) {
     volume: instance.name ?? '',
     mountPath: instance.mountPath,
     // viewMode is a comma-joined flag string ("rw", "r", "r,del", ...) from
-    // Go's MountMode.String(), never the literal "ro" this used to compare
-    // against -- that check could never match anything the CLI actually
-    // emits, so every saved-as-profile mount silently defaulted to
-    // read/write regardless of the source mount's real mode.
+    // Go's MountMode.String(), never the literal "ro". Comparing against that
+    // literal can never match anything the CLI actually emits, which would
+    // silently default every saved-as-profile mount to read/write regardless
+    // of the source mount's real mode.
     readOnly: (instance.viewMode?.split(',') ?? []).includes('r'),
   }
   // Only adopt a backend the profile editor can actually offer on this
@@ -989,7 +1186,7 @@ export function duplicateProfile(profile: MountProfile) {
 }
 
 // A mount that already has a profile has nothing to "save", so the row offers
-// to clone that profile instead -- the useful move from here is starting a
+// to clone that profile instead. The useful move from here is starting a
 // variant (another fork, another mount path) from a config known to work.
 export function cloneProfileFor(instance: MountInstance) {
   const profile = state.profiles.find((candidate) => candidate.id === instance.profileId)
@@ -1002,7 +1199,7 @@ export function profileForInstance(instance: MountInstance): MountProfile | unde
   return state.profiles.find((candidate) => candidate.id === instance.profileId)
 }
 
-// The profile's primary data mount, if currently mounted -- excludes
+// The profile's primary data mount, if currently mounted, excludes
 // satellite view instances (deleted/version/snapshot), same filter as
 // canOpenViewsFor. Used to root the version-view file browser at a real,
 // live mount path.
@@ -1012,7 +1209,7 @@ export function primaryInstanceForProfile(profileId: string): MountInstance | un
 
 // Broader than primaryInstanceForProfile: any instance tied to this profile,
 // including a satellite Deleted/Version/Snapshot/Gateway view, blocks
-// deletion -- not just the primary data mount. Deleting a profile out from
+// deletion, not just the primary data mount. Deleting a profile out from
 // under a running instance would orphan it: the instance keeps its
 // profileId, but find_profile server-side (src-tauri/src/lib.rs) can no
 // longer resolve it.
@@ -1024,7 +1221,7 @@ export function hasRunningInstance(profileId: string): boolean {
 // matching profile (requestDeletedView/requestVersionView); a profile-less
 // one gets them re-derived server-side from its own live .mountOS/.config
 // (requestExternalDeletedView/requestExternalVersionView, backed by
-// open_deleted_view_for_instance/open_version_view_for_instance) -- profile
+// open_deleted_view_for_instance/open_version_view_for_instance), profile
 // is deliberately optional, not a requirement for these views. volumeKind
 // mirrors the profile editor's own gate (these views are only offered for
 // general volumes there); instance.volumeKind is the live read that works
@@ -1039,14 +1236,14 @@ export function canOpenViewsFor(instance: MountInstance): boolean {
   )
 }
 
-// Pure client-side navigation over the already-fetched fork list -- no CLI
+// Pure client-side navigation over the already-fetched fork list, no CLI
 // call. `fid: null` returns to the profile's own root ("main").
 export function drillIntoFork(fid: number | null) {
   state.forkDrillFid = fid
 }
 
 // Enters ForkBrowserView for the given profile, reached from the profile
-// editor's "Forks" satellite button. Always available -- no settings gate.
+// editor's "Forks" satellite button. Always available, no settings gate.
 export function enterForkBrowser(profile: MountProfile | undefined) {
   if (!profile) return
   state.profileSubView = 'forks'
@@ -1057,7 +1254,7 @@ export function enterForkBrowser(profile: MountProfile | undefined) {
 }
 
 // Shared "leave whatever sub-view is open" exit for all five (Forks and the
-// four former dialogs) -- one back button/breadcrumb-root action, not five.
+// four former dialogs), one back button/breadcrumb-root action, not five.
 export function exitProfileSubView() {
   state.profileSubView = 'editor'
   state.forkDrillFid = null
@@ -1071,8 +1268,8 @@ export async function runForkList() {
   try {
     const result = await forkList(selectedProfile.id, state.forkListSecretValue || undefined)
     // The user may have switched to a different profile (and had its own
-    // browser state reset by selectProfile) while this request was in flight
-    // -- a late response must never overwrite the wrong profile's view.
+    // browser state reset by selectProfile) while this request was in flight.
+    // A late response must never overwrite the wrong profile's view.
     if (state.selectedProfileId !== targetId) return
     state.forks = result
     state.forkListSecretValue = ''
@@ -1080,7 +1277,7 @@ export async function runForkList() {
     if (state.selectedProfileId === targetId) state.forkError = describeError(error)
   } finally {
     // Unconditional: forkBusy gates the buttons for whichever profile is now
-    // selected, not just targetId -- leaving it stuck true after a switch
+    // selected, not just targetId. Leaving it stuck true after a switch
     // would permanently disable the new profile's fork actions.
     state.forkBusy = false
   }
@@ -1088,7 +1285,7 @@ export async function runForkList() {
 
 // Create/delete/restore below follow the same request/confirm/cancel triple
 // as the Snapshot/Deleted/Version/Gateway dialogs (secret-conditional field,
-// same convention as mount) -- "same logic in place" per the profile editor's
+// same convention as mount), "same logic in place" per the profile editor's
 // other satellite actions.
 
 export function requestForkCreate(profile: MountProfile | undefined) {
@@ -1203,7 +1400,7 @@ export async function runUploadList() {
   try {
     // `list --kind upload` itself returns directory-name/hex-hash order,
     // arbitrary with respect to recency (see UploadJob.createdAt's own doc
-    // comment) -- sort newest-first here so a just-started job lands at the
+    // comment). Sort newest-first here so a just-started job lands at the
     // top of the list and becomes the default selection instead of an
     // unrelated older job.
     const jobs = await listUploads()
@@ -1217,7 +1414,7 @@ export async function runUploadList() {
   }
 }
 
-// Clears every create-form field back to defaults -- called both when
+// Clears every create-form field back to defaults, called both when
 // entering the create sub-view fresh and whenever the source (profile or
 // instance) changes, so a value typed against the PREVIOUS source (a
 // destination path, a fork-specific include glob) can never be silently
@@ -1266,7 +1463,7 @@ export function selectUploadProfile(profileId: string) {
 }
 
 // Captures the instance's live config once (getInstanceConfig) rather than
-// re-reading it on every subsequent Browse/Start -- resolve_upload_source_
+// re-reading it on every subsequent Browse/Start. resolve_upload_source_
 // profile (Rust) falls back to exactly this cached value if the instance is
 // no longer mounted by the time it's actually used.
 export async function selectUploadInstance(instance: MountInstance) {
@@ -1291,7 +1488,7 @@ export async function selectUploadInstance(instance: MountInstance) {
   }
 }
 
-// Entry point from the Instances view's own per-row action menu -- jumps
+// Entry point from the Instances view's own per-row action menu, jumps
 // straight into the create form with this instance already selected as the
 // source, instead of requiring New upload -> Running instance -> find it
 // again in the combobox.
@@ -1325,7 +1522,7 @@ export function uploadStartParams(): UploadStartParams {
 }
 
 // Every glob line entered (include and exclude) must be individually valid,
-// not just non-empty -- reported against the field it came from so the
+// not just non-empty, reported against the field it came from so the
 // error is actionable.
 function uploadGlobError(): string {
   for (const [label, text] of [['Include', state.uploadIncludeText], ['Exclude', state.uploadExcludeText]] as const) {
@@ -1370,7 +1567,7 @@ export async function runUploadStart() {
   }
 }
 
-// Destination Browse has no "list a remote directory" RPC to call -- it
+// Destination Browse has no "list a remote directory" RPC to call. It
 // mounts the source's volume read-only at a throwaway scratch path
 // (ensureUploadBrowseMount) and hands that local path to the native folder
 // picker, then translates the picked local path back into a mountOS-
@@ -1390,7 +1587,7 @@ export async function browseUploadDestination() {
     const normalized = chosen.replace(/\/+$/, '')
     const root = mountPath.replace(/\/+$/, '')
     if (normalized !== root && !normalized.startsWith(`${root}/`)) {
-      // The native picker isn't sandboxed to the scratch mount -- a pick
+      // The native picker isn't sandboxed to the scratch mount. A pick
       // outside it (root re-navigated away from) is a local filesystem
       // path, not a mountOS-relative one, and must never be accepted as
       // the destination as-is.
@@ -1410,7 +1607,7 @@ export async function browseUploadDestination() {
 export function requestUploadResume(job: UploadJob) {
   state.uploadResumePromptFor = job
   state.uploadSubView = 'resume'
-  // Best-effort convenience default, not a requirement -- the Uploads list
+  // Best-effort convenience default, not a requirement. The Uploads list
   // is cross-profile, so the job being resumed may have nothing to do with
   // whatever's selected on the Profiles page (or there may be no profiles
   // at all). Both fields stay editable regardless.
@@ -1492,6 +1689,24 @@ export async function runUploadRetryFailed(job: UploadJob) {
   }
 }
 
+// Marks an already-drained resumable job (0 pending, 0 uploading) completed
+// without reconnecting, see cmd_upload_subcommands.go's `upload finish`
+// doc comment. Only ever offered when isFinishable already confirms the job
+// qualifies, but the CLI re-checks anyway and refuses otherwise.
+export async function runUploadFinish(job: UploadJob) {
+  state.uploadsBusy = true
+  state.uploadsError = ''
+  try {
+    await finishUpload(job.jobId)
+    notify(`${job.jobId} marked completed`)
+    await runUploadList()
+  } catch (error) {
+    state.uploadsError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
 export async function openUploadJobLog(job: UploadJob) {
   if (!job.logPath) return
   try {
@@ -1537,11 +1752,376 @@ export async function confirmUploadPrune() {
   }
 }
 
+export async function runDownloadList() {
+  state.downloadsBusy = true
+  state.downloadsError = ''
+  try {
+    // Same "list --kind X returns directory-name/hex-hash order" caveat as
+    // runUploadList. Sort newest-first so a just-started job lands at the
+    // top and becomes the default selection.
+    const jobs = await listDownloads()
+    jobs.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+    state.downloads = jobs
+    state.downloadsLastFetchedAt = Date.now()
+  } catch (error) {
+    state.downloadsError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+// Clears every create-form field back to defaults, called both when
+// entering the create sub-view fresh and whenever the source changes, same
+// reasoning as resetUploadForm.
+export function resetDownloadForm() {
+  state.downloadSource = ''
+  state.downloadDest = ''
+  state.downloadSourceError = ''
+  state.downloadDestError = ''
+  state.downloadIfExists = 'skip'
+  state.downloadDepth = '1'
+  state.downloadAsOfLocal = ''
+  state.downloadAdvancedOpen = false
+  state.downloadDryRun = false
+  state.downloadRestart = false
+  state.downloadBwlimit = ''
+  state.downloadIncludeText = ''
+  state.downloadExcludeText = ''
+  state.downloadFollowSymlinks = false
+  state.downloadCreateSourceDirectory = false
+  state.downloadStartSecretValue = ''
+  state.downloadStartError = ''
+  state.downloadBrowseError = ''
+  state.downloadDryRunReport = ''
+}
+
+// Defaults to 'instance' (no credentials, simplest first click) rather than
+// uploadSourceKind's 'profile' default, there is no equivalent "usually
+// has a saved profile ready" bias here, and an already-mounted instance is
+// the lower-friction starting point when one exists.
+export function enterDownloadCreate() {
+  state.downloadSubView = 'create'
+  state.downloadSourceKind = 'instance'
+  state.downloadSourceProfileId = null
+  state.downloadProfileQuery = ''
+  state.downloadSourceInstance = null
+  resetDownloadForm()
+}
+
+export function exitDownloadCreate() {
+  state.downloadSubView = 'list'
+}
+
+export function selectDownloadProfile(profileId: string) {
+  if (state.downloadSourceKind === 'profile' && state.downloadSourceProfileId === profileId) return
+  state.downloadSourceKind = 'profile'
+  state.downloadSourceProfileId = profileId
+  state.downloadSourceInstance = null
+  resetDownloadForm()
+}
+
+// Captures the instance's live config once (getInstanceConfig), same
+// one-shot pattern as selectUploadInstance, purely for display (fork
+// badge, browse root) here, since start_download's Instance branch never
+// reads discoveryUrl/fork/volume/accessKeyId at all (mountPath is the only
+// thing that matters for mode A).
+export async function selectDownloadInstance(instance: MountInstance) {
+  state.downloadSourceKind = 'instance'
+  state.downloadSourceProfileId = null
+  resetDownloadForm()
+  const backend = instance.backend ?? 'auto'
+  state.downloadSourceInstance = { mountPath: instance.mountPath, backend, discoveryUrl: '', fork: '', volume: '', accessKeyId: '' }
+  try {
+    const config = JSON.parse(await getInstanceConfig(instance.mountPath))
+    if (state.downloadSourceInstance?.mountPath !== instance.mountPath) return
+    state.downloadSourceInstance = {
+      mountPath: instance.mountPath,
+      backend,
+      discoveryUrl: typeof config.discoveryUrl === 'string' ? config.discoveryUrl : '',
+      fork: typeof config.forkName === 'string' ? config.forkName : '',
+      volume: typeof config.volumeName === 'string' ? config.volumeName : '',
+      accessKeyId: typeof config.accessId === 'string' ? config.accessId : '',
+    }
+  } catch (error) {
+    state.downloadStartError = describeError(error)
+  }
+}
+
+// Entry point from the Instances view's own per-row action menu, mirrors
+// requestUploadFromInstance.
+export function requestDownloadFromInstance(instance: MountInstance) {
+  state.view = 'downloads'
+  state.downloadSubView = 'create'
+  void selectDownloadInstance(instance)
+}
+
+export function downloadStartParams(): DownloadStartParams {
+  const bwlimit = Number.parseInt(state.downloadBwlimit, 10)
+  const depth = Number.parseInt(state.downloadDepth, 10)
+  return {
+    ifExists: state.downloadIfExists,
+    depth: Number.isFinite(depth) && depth >= 0 ? depth : 1,
+    asOf: state.downloadSourceKind === 'profile' ? downloadAsOf.trim() || undefined : undefined,
+    dryRun: state.downloadDryRun,
+    restart: state.downloadRestart,
+    bwlimitMbps: Number.isFinite(bwlimit) && bwlimit > 0 ? bwlimit : undefined,
+    includeGlobs: splitGlobLines(state.downloadIncludeText),
+    excludeGlobs: splitGlobLines(state.downloadExcludeText),
+    followSymlinks: state.downloadFollowSymlinks,
+    createSourceDirectory: state.downloadCreateSourceDirectory,
+  }
+}
+
+// Every glob line entered (include and exclude) must be individually valid,
+// mirrors uploadGlobError.
+function downloadGlobError(): string {
+  for (const [label, text] of [['Include', state.downloadIncludeText], ['Exclude', state.downloadExcludeText]] as const) {
+    for (const line of splitGlobLines(text)) {
+      const error = validateGlobPattern(line)
+      if (error) return `${label} glob "${line}": ${error}`
+    }
+  }
+  return ''
+}
+
+export async function runDownloadStart() {
+  const profileId = state.downloadSourceKind === 'profile' ? (state.downloadSourceProfileId ?? undefined) : undefined
+  if (state.downloadSourceKind === 'profile' && !profileId) return
+  const source = state.downloadSource.trim()
+  const dest = state.downloadDest.trim()
+  state.downloadSourceError = source ? (validateUploadPositional(source, 'Source path') ?? '') : 'Source path is required'
+  state.downloadDestError = dest ? (validateUploadPositional(dest, 'Destination folder') ?? '') : 'Destination folder is required'
+  if (state.downloadSourceError || state.downloadDestError) return
+  const globError = downloadGlobError()
+  if (globError) {
+    state.downloadStartError = globError
+    return
+  }
+  state.downloadsBusy = true
+  state.downloadStartError = ''
+  state.downloadDryRunReport = ''
+  try {
+    const result = await startDownload(state.downloadSourceKind, profileId, source, dest, downloadStartParams(), state.downloadStartSecretValue || undefined)
+    if (state.downloadDryRun) {
+      state.downloadDryRunReport = result
+    } else {
+      notify(`Download started: ${source} -> ${dest}`)
+      state.downloadSubView = 'list'
+      await runDownloadList()
+    }
+  } catch (error) {
+    state.downloadStartError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+// Mode A: browses directly at the already-live instance's own mount path,
+// no scratch mount involved, mirrors the pickVersionFile-rooted-at-mountPath
+// pattern used elsewhere for a live instance. The chosen absolute local path
+// is used as-is for `downloadSource`, unlike a mountOS destination, mode
+// A's SOURCE positional wants a literal local path, not a mountOS-relative
+// one (see buildDownloadStartArgv's sourceKind doc comment).
+async function browseDownloadSourceFromInstance() {
+  const instance = state.downloadSourceInstance
+  if (!instance) return
+  const chosen = await browseFolder('Choose a folder to download from', instance.mountPath)
+  if (chosen) {
+    state.downloadSource = chosen
+    state.downloadSourceError = ''
+  }
+}
+
+// Mode B has no "list a remote directory" RPC either, same as
+// browseUploadDestination, it mounts the source's volume read-only at a
+// throwaway scratch path (ensureDownloadBrowseMount) and hands that local
+// path to the native folder picker, then translates the picked local path
+// back into a mountOS-relative source. AsOf-aware: passing a non-empty AsOf
+// roots the scratch mount at that historical snapshot instead of the fork's
+// live state, so Browse always reflects exactly what the download will read.
+async function browseDownloadSourceFromProfile() {
+  const profileId = state.downloadSourceProfileId
+  if (!profileId) return
+  state.downloadsBusy = true
+  state.downloadBrowseError = ''
+  try {
+    const mountPath = await ensureDownloadBrowseMount(profileId, downloadAsOf.trim() || undefined, state.downloadStartSecretValue || undefined)
+    const chosen = await browseFolder('Choose a folder to download from', mountPath)
+    if (!chosen) return
+    const normalized = chosen.replace(/\/+$/, '')
+    const root = mountPath.replace(/\/+$/, '')
+    if (normalized !== root && !normalized.startsWith(`${root}/`)) {
+      state.downloadSourceError = 'Choose a folder inside the browsed volume'
+      return
+    }
+    const relative = normalized === root ? '' : normalized.slice(root.length)
+    state.downloadSource = relative || '/'
+    state.downloadSourceError = ''
+  } catch (error) {
+    state.downloadBrowseError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+export async function browseDownloadSource() {
+  if (state.downloadSourceKind === 'instance') {
+    await browseDownloadSourceFromInstance()
+  } else {
+    await browseDownloadSourceFromProfile()
+  }
+}
+
+// Destination is always a plain local folder, mirrors browseUploadSource's
+// simple shape, not browseUploadDestination's scratch-mount complexity
+// (there's no remote destination to browse into for a download).
+export async function browseDownloadDestination() {
+  const chosen = await browseFolder('Choose a destination folder')
+  if (chosen) state.downloadDest = chosen
+}
+
+export function requestDownloadResume(job: DownloadJob) {
+  state.downloadResumePromptFor = job
+  state.downloadSubView = 'resume'
+  state.downloadResumeDiscoveryUrl = selectedProfile?.discoveryUrl ?? ''
+  state.downloadResumeAccessKeyId = selectedProfile?.accessKeyId ?? ''
+  state.downloadResumeSecretValue = ''
+  state.downloadResumeError = ''
+}
+
+export function cancelDownloadResume() {
+  state.downloadResumePromptFor = null
+  state.downloadResumeSecretValue = ''
+  state.downloadSubView = 'list'
+}
+
+export async function confirmDownloadResume() {
+  const job = state.downloadResumePromptFor
+  if (!job) return
+  const discoveryUrl = state.downloadResumeDiscoveryUrl.trim()
+  const accessKeyId = state.downloadResumeAccessKeyId.trim()
+  // Unlike confirmUploadResume (every upload job needs dest credentials
+  // regardless of source mode), a mode-A download job resumes with BOTH left
+  // blank (no credentials at all), so only reject a PARTIAL fill, not an
+  // empty one.
+  if ((discoveryUrl || accessKeyId) && (!discoveryUrl || !accessKeyId)) {
+    state.downloadResumeError = !discoveryUrl ? 'Discovery URL is required' : 'Access key ID is required'
+    return
+  }
+  state.downloadsBusy = true
+  state.downloadResumeError = ''
+  try {
+    await resumeDownload(discoveryUrl, accessKeyId, job.jobId, state.downloadResumeSecretValue || undefined)
+    state.downloadResumePromptFor = null
+    state.downloadResumeSecretValue = ''
+    state.downloadSubView = 'list'
+    notify(`Download job ${job.jobId} resumed`)
+    await runDownloadList()
+  } catch (error) {
+    state.downloadResumeError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+// Cancel/retry-failed are non-destructive (the job stays resumable), same
+// reasoning as the upload equivalents, run directly from a row button.
+
+export async function runDownloadCancel(job: DownloadJob) {
+  state.downloadsBusy = true
+  state.downloadsError = ''
+  try {
+    await cancelDownload(job.jobId)
+    notify(`Download job ${job.jobId} cancelled`)
+    await runDownloadList()
+  } catch (error) {
+    state.downloadsError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+export async function runDownloadRetryFailed(job: DownloadJob) {
+  state.downloadsBusy = true
+  state.downloadsError = ''
+  try {
+    await retryFailedDownload(job.jobId)
+    notify(`Retrying failed paths for ${job.jobId}`)
+    await runDownloadList()
+  } catch (error) {
+    state.downloadsError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+// Marks an already-drained resumable job (0 pending, 0 downloading)
+// completed without reconnecting, mirrors runUploadFinish, see its own
+// comment for the full reasoning.
+export async function runDownloadFinish(job: DownloadJob) {
+  state.downloadsBusy = true
+  state.downloadsError = ''
+  try {
+    await finishDownload(job.jobId)
+    notify(`${job.jobId} marked completed`)
+    await runDownloadList()
+  } catch (error) {
+    state.downloadsError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
+export async function openDownloadJobLog(job: DownloadJob) {
+  if (!job.logPath) return
+  try {
+    await openDownloadLog(job.logPath)
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Could not open the log file', 'error')
+  }
+}
+
+export async function copyDownloadJobLogPath(job: DownloadJob) {
+  if (!job.logPath) return
+  try {
+    await navigator.clipboard.writeText(job.logPath)
+    notify('Log path copied')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Failed to copy log path', 'error')
+  }
+}
+
+export function requestDownloadPrune() {
+  state.downloadPrunePromptOpen = true
+  state.downloadPruneKeep = '0'
+  state.downloadPruneError = ''
+}
+
+export function cancelDownloadPrune() {
+  state.downloadPrunePromptOpen = false
+}
+
+export async function confirmDownloadPrune() {
+  const keep = Number.parseInt(state.downloadPruneKeep, 10)
+  state.downloadsBusy = true
+  state.downloadPruneError = ''
+  try {
+    await pruneDownloads(Number.isFinite(keep) && keep > 0 ? keep : 0)
+    state.downloadPrunePromptOpen = false
+    notify('Completed/halted download jobs pruned')
+    await runDownloadList()
+  } catch (error) {
+    state.downloadPruneError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
 // Snapshot/Deleted/Version/Gateway are all profile-based, not instance-based:
 // none of these mountos commands need an existing running mount, they
 // connect to discovery+dataserv independently using the profile's own
 // credentials. Reached from the profile editor (any profile, mounted or
-// not), or -- for Deleted/Version only, per owner decision -- as a
+// not), or (for Deleted/Version only, per owner decision) as a
 // row-action shortcut on a live instance via profileForInstance. Either way
 // this navigates to the Profiles view and selects the profile first, so the
 // same inline sub-view opens regardless of where it was triggered from.
@@ -2710,11 +3290,25 @@ export async function uninstallMcp() {
 }
 
 export function viewTitle(nextView: View) {
-  return nextView === 'instances' ? 'Instances' : nextView === 'profiles' ? 'Profiles' : nextView === 'uploads' ? 'Uploads' : 'Settings'
+  return nextView === 'instances'
+    ? 'Instances'
+    : nextView === 'profiles'
+      ? 'Profiles'
+      : nextView === 'uploads'
+        ? 'Uploads'
+        : nextView === 'downloads'
+          ? 'Downloads'
+          : 'Settings'
 }
 
 export {
   buildDeletedArgv,
+  buildDownloadCancelArgv,
+  buildDownloadListArgv,
+  buildDownloadPruneArgv,
+  buildDownloadResumeArgv,
+  buildDownloadRetryFailedArgv,
+  buildDownloadStartArgv,
   buildForkCreateArgv,
   buildForkDeleteArgv,
   buildForkListArgv,

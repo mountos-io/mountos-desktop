@@ -14,7 +14,7 @@
   }: Props = $props();
 
   // border-input sits close in lightness to the surrounding surface by
-  // design (a quiet resting state) -- fine once a placeholder or value gives
+  // design (a quiet resting state), fine once a placeholder or value gives
   // the field a visible edge to read, but an empty field with neither has
   // nothing else marking its bounds. border-border (the same token panels
   // and dividers use) is only swapped in for that one case.

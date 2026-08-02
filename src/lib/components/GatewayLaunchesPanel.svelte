@@ -9,7 +9,7 @@
 </script>
 
 <!-- Gateway-only launches have no FUSE mount, so they never appear in
-     `mountos list --json` and get no row in the instances table -- this is
+     `mountos list --json` and get no row in the instances table. This is
      their only visible surface in the app. -->
 {#if gatewayOnlyLaunches.length}
   <section class="surface m-[22px] p-4">

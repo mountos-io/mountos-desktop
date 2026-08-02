@@ -38,7 +38,7 @@ export function viewModeBadge(viewMode?: string): string | null {
 /**
  * Backend column stand-in for a gateway-only instance: the API it actually
  * exposes (s3, hdfs, or both), not the FUSE transport concept "backend"
- * means for a real mount -- a gateway has no FUSE transport at all.
+ * means for a real mount, a gateway has no FUSE transport at all.
  */
 export function gatewayProtocolsLabel(endpoints?: GatewayEndpointInfo[]): string {
   if (!endpoints || endpoints.length === 0) return 'gateway'
@@ -92,10 +92,10 @@ function pastelBadgeStyle(tone: string): string {
 
 // Intl.NumberFormat's unit style, not hand-rolled pluralization: correct
 // pluralization/wording is a locale problem (English "add an s" rules don't
-// generalize), and the platform already solves it -- same reasoning as
+// generalize), and the platform already solves it, same reasoning as
 // formatMountedSince using toLocaleString() for the absolute side. narrow
 // display (not long) since this is the row badge text itself, where space is
-// tight -- the title tooltip already carries the full "Mounted at ..." form.
+// tight, the title tooltip already carries the full "Mounted at ..." form.
 function formatUnit(quantity: number, unit: 'day' | 'hour' | 'minute'): string {
   return new Intl.NumberFormat(undefined, { style: 'unit', unit, unitDisplay: 'narrow' }).format(quantity)
 }
@@ -103,11 +103,11 @@ function formatUnit(quantity: number, unit: 'day' | 'hour' | 'minute'): string {
 /**
  * "Up 18m" style compact duration since `mountTime`, or undefined when it's
  * missing/unparseable (older CLI, config not written yet). Recomputed on
- * every poll tick rather than ticking live on its own timer -- meant for
+ * every poll tick rather than ticking live on its own timer, meant for
  * when auto-refresh is actually on, so the row keeps recomputing this on a
  * real cadence. With polling off nothing re-renders this row again until a
  * manual refresh, so a relative duration would silently freeze and read as
- * live when it isn't -- use formatMountedSince instead in that case.
+ * live when it isn't, use formatMountedSince instead in that case.
  */
 export function formatUptime(mountTime?: string): string | undefined {
   if (!mountTime) return undefined
@@ -125,10 +125,10 @@ export function formatUptime(mountTime?: string): string | undefined {
 
 /**
  * Absolute local time for `mountTime`, in whatever date/time format the
- * user's own OS locale already uses (no custom format options) -- it should
+ * user's own OS locale already uses (no custom format options), it should
  * read the way every other timestamp on their machine already does, not
  * some format this app invented. Unlike formatUptime, this never goes stale
- * between refreshes -- an absolute instant in time is just as correct read
+ * between refreshes. An absolute instant in time is just as correct read
  * a minute or a day after the last poll, which is exactly what you want
  * once auto-refresh is off and nothing is going to recompute a relative
  * duration for you.

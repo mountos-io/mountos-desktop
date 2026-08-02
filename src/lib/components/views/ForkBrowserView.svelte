@@ -21,7 +21,7 @@
   const profile = $derived(computed.selectedProfile!)
   const backTarget = $derived(computed.forkBreadcrumbTrail.length > 1 ? computed.forkBreadcrumbTrail[computed.forkBreadcrumbTrail.length - 2].fid : null)
 
-  // Only auto-fetch when no secret prompt is needed -- a profile requiring
+  // Only auto-fetch when no secret prompt is needed. A profile requiring
   // one would otherwise fire this the instant the view opens, before the
   // user has typed anything, and fail with "secret required" on an empty
   // field. When a secret is needed, the user types it and presses Refresh.
@@ -74,11 +74,11 @@
     {#if appState.forkBusy && appState.forks.length === 0}
       <p class="text-muted-foreground text-sm">Loading forks...</p>
     {:else if needsSecret && appState.forks.length === 0}
-      <div class="tech-grid p-7 text-center">
+      <div class="tech-grid px-7 py-10 text-center">
         <p>Enter the secret access key above, then Refresh to load forks.</p>
       </div>
     {:else if computed.forkChildren.length === 0}
-      <div class="tech-grid p-7 text-center">
+      <div class="tech-grid px-7 py-10 text-center">
         <p>{computed.currentFork ? 'No child forks.' : 'No forks yet.'}</p>
       </div>
     {:else}

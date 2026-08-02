@@ -372,6 +372,67 @@ struct UploadStartParams {
     create_source_directory: bool,
 }
 
+// Mirrors mountos-servers' mountListEntry's download-only fields (`mountos
+// list --kind download --json`) -- verified identical Go struct/field names
+// to UploadJob above, only the counts keys differ in meaning (pending |
+// downloading | done | failed | skipped | missing, plus a synthetic
+// "retrying" key for entries currently in backoff -- self-clearing, distinct
+// from "failed" which needs `download retry-failed`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadJob {
+    job_id: String,
+    name: String,
+    source_path: Option<String>,
+    dest_path: Option<String>,
+    fork_name: Option<String>,
+    // running | halted | completed | resumable
+    state: String,
+    counts: std::collections::HashMap<String, i64>,
+    halt_reason: Option<String>,
+    pid: Option<u32>,
+    volume_id: Option<u32>,
+    created_at: Option<i64>,
+    completed_at: Option<i64>,
+    log_path: Option<String>,
+    total_bytes: Option<i64>,
+    total_files: Option<i64>,
+}
+
+// The GUI's own SOURCE-mode concept (mirrors upload's 'profile'/'instance'
+// naming in src/lib/cli.ts) -- the Go CLI auto-detects mounted-vs-remote
+// from the raw SOURCE path itself (detectDownloadSourceKind, cmd_download.go),
+// but the GUI needs to know the mode up front to decide the form fields AND
+// how build_download_start_argv shapes the command: Instance means SOURCE is
+// a local filesystem path read straight through an already-live mount (mode
+// A: no RPC, no connection, no credentials at all); Profile means SOURCE is
+// a mountOS-relative path string on a saved profile's fork, connected fresh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum DownloadSourceKind {
+    Instance,
+    Profile,
+}
+
+// Frontend-supplied flags for the `mountos download <source> <dest>` run
+// form. No once/overwrite/rescan_interval (download has neither --once nor
+// --overwrite -- see cmd_download.go's own doc comment) -- if_exists/depth/
+// as_of are new instead.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadStartParams {
+    if_exists: String,
+    depth: i32,
+    as_of: Option<String>,
+    dry_run: bool,
+    restart: bool,
+    bwlimit_mbps: Option<u32>,
+    include_globs: Vec<String>,
+    exclude_globs: Vec<String>,
+    follow_symlinks: bool,
+    create_source_directory: bool,
+}
+
 #[derive(Debug, Serialize)]
 struct UnmountResult {
     state: String,
@@ -652,6 +713,35 @@ fn resolve_upload_source_profile(
     ))
 }
 
+// Download's SOURCE resolution mirrors resolve_upload_source_profile's
+// profile-vs-instance shape, but the two modes genuinely differ in what they
+// need here (unlike upload, where both dest modes resolve full credentials):
+// DownloadSourceKind::Profile needs a real saved MountProfile (discoveryUrl/
+// fork/accessKeyId) looked up by id -- no live-instance fallback the way
+// upload's dest has, a download source picked from a saved profile is always
+// "connect fresh" (mode B). DownloadSourceKind::Instance needs nothing from
+// this at all -- SOURCE is a raw local path the caller already resolved,
+// read straight through the live mount with no RPC/credentials (mirrors
+// mountos-servers' detectDownloadSourceKind mode A) -- so this returns None
+// rather than re-deriving a profile nothing will read.
+fn resolve_download_source_profile(
+    app: &AppHandle,
+    source_kind: DownloadSourceKind,
+    profile_id: Option<&str>,
+) -> Result<Option<MountProfile>, DesktopError> {
+    match source_kind {
+        DownloadSourceKind::Instance => Ok(None),
+        DownloadSourceKind::Profile => {
+            let profile_id = profile_id.filter(|id| !id.is_empty()).ok_or_else(|| {
+                DesktopError::Message(
+                    "a profile is required for a remote download source".to_string(),
+                )
+            })?;
+            Ok(Some(find_profile(app, profile_id)?))
+        }
+    }
+}
+
 // Destination-path Browse needs a real local folder tree to hand the native
 // file picker (browseFolder), but a mountOS destination path lives on the
 // REMOTE volume -- there is no existing "list a remote directory" RPC/CLI to
@@ -829,6 +919,127 @@ async fn ensure_upload_browse_mount(
 ) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || {
         ensure_upload_browse_mount_blocking(app, profile_id, instance, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("browse mount task failed: {error}")))?
+}
+
+// Download's source-picker Browse for DownloadSourceKind::Profile, mirroring
+// ensure_upload_browse_mount_blocking's scratch-mount-pool/sweeper machinery
+// verbatim, with one addition: an optional AsOf launches a read-only
+// `snapshot` view (build_snapshot_argv) instead of a plain `mount`
+// (build_mount_argv) fork mount, so Browse can root the native folder picker
+// at the exact historical tree the download will actually read from. No
+// `instance` parameter -- unlike upload's dest browse (which can fall back to
+// a live instance with no saved profile, see resolve_upload_source_profile),
+// resolve_download_source_profile's Profile branch only ever resolves a real
+// saved MountProfile by id; DownloadSourceKind::Instance (mode A) never calls
+// this at all, it browses directly at the already-live instance's own
+// mount_path instead (see browseDownloadSource in app-state.svelte.ts).
+//
+// Keyed into the SAME shared browse_mounts() map as upload's browse-mounts:
+// a live/no-AsOf browse (key == profile.id) intentionally can collide with
+// and reuse an upload dest browse-mount of the same profile -- both are just
+// a read-only mount of that profile's fork at its current state, so sharing
+// one avoids a redundant mount. An AsOf browse gets its own distinct key
+// (profile.id + hash of the trimmed AsOf string) so it never collides with
+// the live-state entry or with a different AsOf value.
+fn ensure_download_browse_mount_blocking(
+    app: AppHandle,
+    profile_id: String,
+    as_of: Option<String>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let mut profile = find_profile(&app, &profile_id)?;
+    validate_backend_for_platform(&profile.backend)?;
+    resolve_auto_backend(&mut profile)?;
+
+    let as_of = as_of
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let key = match &as_of {
+        Some(timestamp) => format!("{}@{}", profile.id, short_hash(timestamp)),
+        None => profile.id.clone(),
+    };
+    {
+        let mounts = browse_mounts().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = mounts.get(&key) {
+            let local_path = entry.local_path.clone();
+            drop(mounts);
+            if list_contains_target(&local_path.to_string_lossy())? {
+                if let Some(entry) = browse_mounts()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get_mut(&key)
+                {
+                    entry.last_used = Instant::now();
+                }
+                return Ok(local_path.to_string_lossy().into_owned());
+            }
+            // Reaped or otherwise gone since we last checked -- fall through
+            // and mount a fresh one.
+        }
+    }
+
+    // Same FSKit jail as ensure_upload_browse_mount_blocking -- FSKIT_MOUNT_PREFIX
+    // is the only writable/mountable root FSKit will accept.
+    let local_path = if matches!(profile.backend, Backend::Fskit) {
+        PathBuf::from(FSKIT_MOUNT_PREFIX).join(format!("download-browse-{}", short_hash(&key)))
+    } else {
+        runtime_dir(&app)?
+            .join("download-browse")
+            .join(short_hash(&key))
+    };
+    fs::create_dir_all(&local_path)?;
+    profile.read_only = true;
+    profile.mount_path = local_path.to_string_lossy().into_owned();
+    validate_mount_path_for_backend(&profile.backend, &profile.mount_path)?;
+    reject_managed_extra_args(&profile)?;
+    if !list_contains_target(&profile.mount_path)? {
+        let mount_secret = resolve_satellite_secret(&profile, secret)?;
+        let args = match &as_of {
+            Some(timestamp) => build_snapshot_argv(&profile, &profile.mount_path, timestamp),
+            None => build_mount_argv(&profile),
+        };
+        let suffix = short_hash(&key);
+        let stderr_path = runtime_dir(&app)?.join(format!("download-browse-{suffix}-stderr.log"));
+        let stdout_path = runtime_dir(&app)?.join(format!("download-browse-{suffix}-stdout.log"));
+        let target = profile.mount_path.clone();
+        spawn_daemonizing_and_wait(
+            &mountos_path()?,
+            &args,
+            mount_secret.as_deref(),
+            &stdout_path,
+            &stderr_path,
+            &target,
+        )?;
+    }
+    browse_mounts()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(
+            key,
+            BrowseMountEntry {
+                local_path: local_path.clone(),
+                last_used: Instant::now(),
+            },
+        );
+    spawn_browse_mount_sweeper(app);
+    Ok(local_path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn ensure_download_browse_mount(
+    app: AppHandle,
+    profile_id: String,
+    as_of: Option<String>,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_download_browse_mount_blocking(app, profile_id, as_of, secret)
     })
     .await
     .map_err(|error| DesktopError::Message(format!("browse mount task failed: {error}")))?
@@ -1452,8 +1663,165 @@ fn build_upload_retry_failed_argv(job_id: &str) -> Vec<String> {
     ]
 }
 
+fn build_upload_finish_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "upload".to_string(),
+        "finish".to_string(),
+        job_id.to_string(),
+    ]
+}
+
 fn build_upload_prune_argv(keep: u32) -> Vec<String> {
     let mut argv = vec!["upload".to_string(), "prune".to_string()];
+    if keep > 0 {
+        argv.extend(["--keep".to_string(), keep.to_string()]);
+    }
+    argv
+}
+
+// `download <source> <dest>`'s flag surface, confirmed against
+// cmd_download.go: --fork/--if-exists/--depth/--as-of/--dry-run/--restart/
+// --bwlimit/--include/--exclude/--follow-symlinks/--create-source-directory.
+// No --once/--overwrite/--rescan-interval (download never daemon-watches
+// forever and --overwrite is superseded by --if-exists=overwrite).
+// `profile` is None for DownloadSourceKind::Instance (mode A: SOURCE is a
+// local path read straight through an already-live mount, no connection/
+// credentials at all) -- discoveryUrl/fork/as-of/-a/-s are only ever emitted
+// for DownloadSourceKind::Profile. Same flags-first-then-"--" ordering as
+// build_upload_start_argv, for the same reason (see that function's comment).
+fn build_download_start_argv(
+    profile: Option<&MountProfile>,
+    source_kind: DownloadSourceKind,
+    source: &str,
+    dest: &str,
+    params: &DownloadStartParams,
+) -> Vec<String> {
+    let mut argv = vec!["download".to_string()];
+    if source_kind == DownloadSourceKind::Profile {
+        if let Some(profile) = profile {
+            if !profile.discovery_url.is_empty() {
+                argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
+            }
+            if !profile.fork.is_empty() {
+                argv.extend(["--fork".to_string(), profile.fork.clone()]);
+            }
+        }
+        if let Some(as_of) = params
+            .as_of
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            argv.push(format!("--as-of={as_of}"));
+        }
+    }
+    // Value flags with a server-side default are only emitted when they
+    // diverge from it.
+    if params.if_exists != "skip" {
+        argv.extend(["--if-exists".to_string(), params.if_exists.clone()]);
+    }
+    if params.depth != 1 {
+        argv.extend(["--depth".to_string(), params.depth.to_string()]);
+    }
+    if params.dry_run {
+        argv.push("--dry-run".to_string());
+    }
+    if params.restart {
+        argv.push("--restart".to_string());
+    }
+    if let Some(bwlimit) = params.bwlimit_mbps.filter(|v| *v > 0) {
+        argv.extend(["--bwlimit".to_string(), bwlimit.to_string()]);
+    }
+    for pattern in params
+        .include_globs
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
+        argv.extend(["--include".to_string(), pattern.to_string()]);
+    }
+    for pattern in params
+        .exclude_globs
+        .iter()
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+    {
+        argv.extend(["--exclude".to_string(), pattern.to_string()]);
+    }
+    if params.follow_symlinks {
+        argv.push("--follow-symlinks".to_string());
+    }
+    if params.create_source_directory {
+        argv.push("--create-source-directory".to_string());
+    }
+    if source_kind == DownloadSourceKind::Profile {
+        if let Some(profile) = profile {
+            push_satellite_credentials(&mut argv, profile);
+        }
+    }
+    argv.extend(["--".to_string(), source.to_string(), dest.to_string()]);
+    argv
+}
+
+// `download resume <job-id>` registers no distinctive flags of its own
+// (unlike `upload resume`'s --once/--rescan-interval -- download has
+// neither, every run is already single-pass), but a remote-mode job still
+// needs --discovery-url/-a/-s (root-inherited global flags) to reconnect.
+// Same profile-emptiness-gated pattern as build_upload_resume_argv: a
+// mounted-source job's profile (blank discovery_url/access_key_id) naturally
+// emits neither.
+fn build_download_resume_argv(profile: &MountProfile, job_id: &str) -> Vec<String> {
+    let mut argv = vec![
+        "download".to_string(),
+        "resume".to_string(),
+        job_id.to_string(),
+    ];
+    if !profile.discovery_url.is_empty() {
+        argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
+    }
+    push_satellite_credentials(&mut argv, profile);
+    argv
+}
+
+// list/cancel/retry-failed/prune are all purely local (job dir + control
+// socket, confirmed against cmd_list_download.go/cmd_download_subcommands.go
+// -- none of the four touch resolveUploadCredentials), so these take no
+// MountProfile at all.
+fn build_download_list_argv() -> Vec<String> {
+    vec![
+        "list".to_string(),
+        "--kind".to_string(),
+        "download".to_string(),
+        "--json".to_string(),
+    ]
+}
+
+fn build_download_cancel_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "download".to_string(),
+        "cancel".to_string(),
+        job_id.to_string(),
+    ]
+}
+
+fn build_download_retry_failed_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "download".to_string(),
+        "retry-failed".to_string(),
+        job_id.to_string(),
+    ]
+}
+
+fn build_download_finish_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "download".to_string(),
+        "finish".to_string(),
+        job_id.to_string(),
+    ]
+}
+
+fn build_download_prune_argv(keep: u32) -> Vec<String> {
+    let mut argv = vec!["download".to_string(), "prune".to_string()];
     if keep > 0 {
         argv.extend(["--keep".to_string(), keep.to_string()]);
     }
@@ -2107,14 +2475,15 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
         .unwrap_or_default();
     entries
         .into_iter()
-        // "upload" entries (mountos-servers' `mountos list --json` mixes
-        // mount + gateway + upload kinds unconditionally, `--kind` is a
-        // CLI-side filter only) have no mountPath/backend at all and would
-        // otherwise render as broken mount rows here -- every existing kind
-        // check in this codebase is the binary `kind !== "gateway"`, which
-        // treats anything else as a mount. Uploads get their own
-        // list_uploads command instead.
-        .filter(|entry| entry.get("kind").and_then(Value::as_str) != Some("upload"))
+        // "upload"/"download" entries (mountos-servers' `mountos list --json`
+        // mixes mount + gateway + upload + download kinds unconditionally,
+        // `--kind` is a CLI-side filter only) have no mountPath/backend at
+        // all and would otherwise render as broken mount rows here -- every
+        // existing kind check in this codebase is the binary
+        // `kind !== "gateway"`, which treats anything else as a mount.
+        // Uploads/downloads get their own list_uploads/list_downloads
+        // commands instead.
+        .filter(|entry| !matches!(entry.get("kind").and_then(Value::as_str), Some("upload") | Some("download")))
         .map(|entry| {
             let mount_path = entry
                 .get("mountPath")
@@ -3447,6 +3816,22 @@ fn retry_failed_upload_blocking(job_id: String) -> Result<String, DesktopError> 
     upload_command_blocking(build_upload_retry_failed_argv(job_id), FORK_COMMAND_TIMEOUT)
 }
 
+fn finish_upload_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    upload_command_blocking(build_upload_finish_argv(job_id), FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn finish_upload(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || finish_upload_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("finish upload task failed: {error}")))?
+}
+
 #[tauri::command]
 async fn retry_failed_upload(job_id: String) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || retry_failed_upload_blocking(job_id))
@@ -3465,6 +3850,329 @@ async fn prune_uploads(keep: u32) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || prune_uploads_blocking(keep))
         .await
         .map_err(|error| DesktopError::Message(format!("prune uploads task failed: {error}")))?
+}
+
+// entry.get("kind") == "download" here comes from `mountos list --json`
+// mixing mount + gateway + upload + download kinds unconditionally (--kind
+// is a CLI-side filter only) -- filtered defensively even though this call
+// already passes --kind download, same reasoning as parse_uploads_value.
+fn parse_downloads_value(value: &Value) -> Vec<DownloadJob> {
+    value
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("download"))
+        .filter_map(|entry| {
+            let job_id = entry.get("jobId").and_then(Value::as_str)?.to_string();
+            let counts = entry
+                .get("counts")
+                .and_then(Value::as_object)
+                .map(|counts| {
+                    counts
+                        .iter()
+                        .filter_map(|(status, n)| n.as_i64().map(|n| (status.clone(), n)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(DownloadJob {
+                job_id,
+                name: entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                source_path: entry
+                    .get("sourcePath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                dest_path: entry
+                    .get("destPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                fork_name: entry
+                    .get("forkName")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                state: entry
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("resumable")
+                    .to_string(),
+                counts,
+                halt_reason: entry
+                    .get("haltReason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                pid: entry
+                    .get("pid")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok()),
+                volume_id: entry
+                    .get("volumeId")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok()),
+                created_at: entry.get("createdAt").and_then(Value::as_i64),
+                completed_at: entry.get("completedAt").and_then(Value::as_i64),
+                log_path: entry
+                    .get("logPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                total_bytes: entry.get("totalBytes").and_then(Value::as_i64),
+                total_files: entry.get("totalFiles").and_then(Value::as_i64),
+            })
+        })
+        .collect()
+}
+
+fn list_downloads_blocking() -> Result<Vec<DownloadJob>, DesktopError> {
+    let argv = build_download_list_argv();
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let output = command_output(&args)?;
+    if !output.status.success() {
+        return Err(DesktopError::Message(format!(
+            "mountos list --kind download failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let value = serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
+        DesktopError::Message(format!(
+            "mountos list --kind download returned unparseable output: {error}"
+        ))
+    })?;
+    Ok(parse_downloads_value(&value))
+}
+
+#[tauri::command]
+async fn list_downloads() -> Result<Vec<DownloadJob>, DesktopError> {
+    tauri::async_runtime::spawn_blocking(list_downloads_blocking)
+        .await
+        .map_err(|error| DesktopError::Message(format!("list downloads task failed: {error}")))?
+}
+
+// Unlike upload_command_blocking (list/cancel/retry-failed/prune-only, never
+// needs a secret), download's dry-run branch genuinely connects for a
+// remote source (see start_download_blocking's own comment) and needs the
+// resolved secret piped through, so this takes one explicitly rather than
+// hardcoding None.
+fn download_command_blocking(
+    argv: Vec<String>,
+    secret: Option<String>,
+    timeout: Duration,
+) -> Result<String, DesktopError> {
+    let output = run_cli_with_secret(&argv, secret.as_deref(), timeout)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(DesktopError::Message(if stderr.is_empty() {
+            format!("mountos {} exited with {}", argv.join(" "), output.status)
+        } else {
+            stderr
+        }));
+    }
+    Ok(if stdout.is_empty() { stderr } else { stdout })
+}
+
+fn start_download_blocking(
+    app: AppHandle,
+    source_kind: DownloadSourceKind,
+    profile_id: Option<String>,
+    source: String,
+    dest: String,
+    params: DownloadStartParams,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let profile = resolve_download_source_profile(&app, source_kind, profile_id.as_deref())?;
+    let source = source.trim();
+    let dest = dest.trim();
+    if source.is_empty() {
+        return Err(DesktopError::Message("source path is required".to_string()));
+    }
+    if dest.is_empty() {
+        return Err(DesktopError::Message(
+            "destination path is required".to_string(),
+        ));
+    }
+    validate_upload_positional(source, "source")?;
+    validate_upload_positional(dest, "destination")?;
+    let argv = build_download_start_argv(profile.as_ref(), source_kind, source, dest, &params);
+
+    // Mode A (Instance) never resolves a secret -- profile is None, so this
+    // short-circuits explicitly rather than depending on resolve_satellite_
+    // secret's own empty-access-key-id branch.
+    let resolved_secret = match &profile {
+        Some(profile) => resolve_satellite_secret(profile, secret)?,
+        None => None,
+    };
+
+    if params.dry_run {
+        // Unlike upload's dry-run (never connects -- upload's SOURCE is
+        // always local disk, confirmed by cmd_upload.go's own "no
+        // connection, no writes" flag help text), a mode-B download's
+        // dry-run genuinely connects to discover the remote source
+        // (runDownloadDryRun calls resolveUploadCredentials for a
+        // non-mounted source, cmd_download.go) -- the resolved secret must
+        // actually be piped here, not dropped the way upload_command_
+        // blocking's None does.
+        return download_command_blocking(argv, resolved_secret, DRY_RUN_TIMEOUT);
+    }
+
+    let suffix = short_hash(&format!("{source}->{dest}"));
+    let profile_key = profile.as_ref().map_or("instance", |p| p.id.as_str());
+    let stderr_path =
+        runtime_dir(&app)?.join(format!("download-{profile_key}-{suffix}-stderr.log"));
+    let stdout_path =
+        runtime_dir(&app)?.join(format!("download-{profile_key}-{suffix}-stdout.log"));
+    // Download always daemonizes on a successful start (shouldDaemonizeDownload,
+    // cmd_download.go: `!foreground`, unconditionally -- there is no --once
+    // exception the way upload has) -- exit 0 IS the daemonize confirmation,
+    // never a "job settled" signal the way upload's --once path is, so
+    // LAUNCH_TIMEOUT (a plain daemonize wait) applies unconditionally.
+    spawn_daemonizing_upload_and_wait(
+        &mountos_path()?,
+        &argv,
+        resolved_secret.as_deref(),
+        &stdout_path,
+        &stderr_path,
+        LAUNCH_TIMEOUT,
+    )?;
+    Ok("download job started".to_string())
+}
+
+#[tauri::command]
+async fn start_download(
+    app: AppHandle,
+    source_kind: DownloadSourceKind,
+    profile_id: Option<String>,
+    source: String,
+    dest: String,
+    params: DownloadStartParams,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        start_download_blocking(app, source_kind, profile_id, source, dest, params, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("start download task failed: {error}")))?
+}
+
+// Unlike resume_upload_blocking (every upload job needs dest credentials,
+// since upload's dest is always the remote mountOS volume regardless of
+// source mode), a download job can be genuinely mode-A (mounted source) --
+// discovery_url/access_key_id are both empty for one of those, and this must
+// not demand them the way resume_upload_blocking unconditionally does.
+fn resume_download_blocking(
+    app: AppHandle,
+    discovery_url: String,
+    access_key_id: String,
+    job_id: String,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let discovery_url = discovery_url.trim().to_string();
+    let access_key_id = access_key_id.trim().to_string();
+    let job_id = job_id.trim().to_string();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(&job_id)?;
+    let resolved_secret = if access_key_id.is_empty() {
+        None
+    } else {
+        resolve_secret_for_access_key(&app, &access_key_id, secret)?
+    };
+    let profile = resume_profile(discovery_url, access_key_id);
+    let argv = build_download_resume_argv(&profile, &job_id);
+    let stderr_path = runtime_dir(&app)?.join(format!("download-resume-{job_id}-stderr.log"));
+    let stdout_path = runtime_dir(&app)?.join(format!("download-resume-{job_id}-stdout.log"));
+    spawn_daemonizing_upload_and_wait(
+        &mountos_path()?,
+        &argv,
+        resolved_secret.as_deref(),
+        &stdout_path,
+        &stderr_path,
+        LAUNCH_TIMEOUT,
+    )?;
+    Ok("download job resumed".to_string())
+}
+
+#[tauri::command]
+async fn resume_download(
+    app: AppHandle,
+    discovery_url: String,
+    access_key_id: String,
+    job_id: String,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resume_download_blocking(app, discovery_url, access_key_id, job_id, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("resume download task failed: {error}")))?
+}
+
+fn cancel_download_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    download_command_blocking(build_download_cancel_argv(job_id), None, FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn cancel_download(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || cancel_download_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("cancel download task failed: {error}")))?
+}
+
+fn retry_failed_download_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    download_command_blocking(
+        build_download_retry_failed_argv(job_id),
+        None,
+        FORK_COMMAND_TIMEOUT,
+    )
+}
+
+#[tauri::command]
+async fn retry_failed_download(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || retry_failed_download_blocking(job_id))
+        .await
+        .map_err(|error| {
+            DesktopError::Message(format!("retry-failed download task failed: {error}"))
+        })?
+}
+
+fn finish_download_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    download_command_blocking(build_download_finish_argv(job_id), None, FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn finish_download(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || finish_download_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("finish download task failed: {error}")))?
+}
+
+fn prune_downloads_blocking(keep: u32) -> Result<String, DesktopError> {
+    download_command_blocking(build_download_prune_argv(keep), None, FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn prune_downloads(keep: u32) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || prune_downloads_blocking(keep))
+        .await
+        .map_err(|error| DesktopError::Message(format!("prune downloads task failed: {error}")))?
 }
 
 // Shared guard for the three satellite view-mount commands: the destination
@@ -5157,6 +5865,27 @@ fn open_upload_log(path: String) -> Result<(), DesktopError> {
     Ok(())
 }
 
+// Opens a download job's file-logger output. The download daemon reuses the
+// same internal/logger.getDefaultLogDir machinery as upload (~/.mountOS/logs),
+// so this is open_upload_log's exact path-jail pattern, verbatim.
+#[tauri::command]
+fn open_download_log(path: String) -> Result<(), DesktopError> {
+    let home =
+        std::env::var("HOME").map_err(|_| DesktopError::Message("HOME is not set".to_string()))?;
+    let dir = PathBuf::from(home)
+        .join(".mountOS")
+        .join("logs")
+        .canonicalize()?;
+    let target = PathBuf::from(&path).canonicalize()?;
+    if !target.starts_with(&dir) {
+        return Err(DesktopError::Message(
+            "refusing to open a path outside the mountOS logs directory".to_string(),
+        ));
+    }
+    open::that_detached(target)?;
+    Ok(())
+}
+
 // The Dock icon (and Cmd+Tab entry) tracks the main window's own visibility
 // rather than being permanently off: hidden behind the tray only while the
 // window is actually hidden, so it doesn't strand an actively-open window
@@ -5424,7 +6153,16 @@ pub fn run() {
             resume_upload,
             cancel_upload,
             retry_failed_upload,
+            finish_upload,
             prune_uploads,
+            list_downloads,
+            start_download,
+            ensure_download_browse_mount,
+            resume_download,
+            cancel_download,
+            retry_failed_download,
+            finish_download,
+            prune_downloads,
             open_snapshot_view,
             open_deleted_view,
             open_version_view,
@@ -5442,6 +6180,7 @@ pub fn run() {
             create_diagnostics_bundle,
             open_diagnostics_bundle,
             open_upload_log,
+            open_download_log,
             mcp_status,
             mcp_install,
             mcp_uninstall,
@@ -5455,11 +6194,13 @@ pub fn run() {
         .expect("error while building mountOS Desktop")
         .run(|app_handle, event| {
             // Best-effort cleanup on quit: a read-only browse scratch mount
-            // (ensure_upload_browse_mount_blocking) only gets reaped by the
-            // in-process idle sweeper, which dies with this process and has
-            // no persisted registry -- without this, quitting mid-idle-
-            // window (not just closing the window, which only hides it)
-            // leaves it orphaned until the user notices it manually in
+            // (ensure_upload_browse_mount_blocking, ensure_download_browse_
+            // mount_blocking -- both share the same browse_mounts() registry)
+            // only gets reaped by the in-process idle sweeper, which dies
+            // with this process and has no persisted registry -- without
+            // this, quitting mid-idle-window (not just closing the window,
+            // which only hides it) leaves it orphaned until the user
+            // notices it manually in
             // Instances. RunEvent::Exit fires once, right before the
             // process actually terminates.
             if let tauri::RunEvent::Exit = event {
@@ -6439,6 +7180,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_instances_value_excludes_upload_and_download_job_rows() {
+        let value: Value = serde_json::from_str(
+            r#"[
+                {"kind": "mount", "name": "Team", "mountPath": "/Volumes/MountOS/Team"},
+                {"kind": "upload", "name": "upload-abc123", "jobId": "abc123"},
+                {"kind": "download", "name": "download-def456", "jobId": "def456"}
+            ]"#,
+        )
+        .unwrap();
+        let instances = parse_instances_value(&value);
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].mount_path, "/Volumes/MountOS/Team");
+    }
+
+    #[test]
     fn parse_uploads_value_skips_non_upload_kinds_and_fills_defaults() {
         let value: Value = serde_json::from_str(
             r#"[
@@ -6534,6 +7290,282 @@ mod tests {
         )
         .unwrap();
         let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].total_files, None);
+        assert_eq!(jobs[0].total_bytes, None);
+    }
+
+    fn download_params() -> DownloadStartParams {
+        DownloadStartParams {
+            if_exists: "skip".to_string(),
+            depth: 1,
+            as_of: None,
+            dry_run: false,
+            restart: false,
+            bwlimit_mbps: None,
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            follow_symlinks: false,
+            create_source_directory: false,
+        }
+    }
+
+    #[test]
+    fn build_download_start_argv_emits_source_and_dest_as_bare_positionals_after_dashdash() {
+        let argv = build_download_start_argv(
+            Some(&profile()),
+            DownloadSourceKind::Profile,
+            "photos",
+            "/local/backups/photos",
+            &download_params(),
+        );
+        assert_eq!(argv[0], "download");
+        let dashdash = argv
+            .iter()
+            .position(|a| a == "--")
+            .expect("must contain a literal \"--\" separator");
+        assert_eq!(
+            &argv[dashdash + 1..],
+            &["photos", "/local/backups/photos"]
+        );
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--discovery-url", "https://hub.example.com"]));
+        assert!(argv.windows(2).any(|a| a == ["--fork", "main"]));
+        assert!(argv.contains(&"-a".to_string()));
+        assert!(argv.contains(&"-s".to_string()));
+        // Defaults: if-exists/depth match the server default and are
+        // omitted; every optional flag the form left off is absent too.
+        assert!(!argv.contains(&"--if-exists".to_string()));
+        assert!(!argv.contains(&"--depth".to_string()));
+        assert!(!argv.contains(&"--as-of".to_string()));
+        assert!(!argv.contains(&"--dry-run".to_string()));
+        assert!(!argv.contains(&"--restart".to_string()));
+        assert!(!argv.contains(&"--follow-symlinks".to_string()));
+        assert!(!argv.contains(&"--create-source-directory".to_string()));
+    }
+
+    #[test]
+    fn build_download_start_argv_instance_mode_emits_no_connection_flags_at_all() {
+        // Mode A: no --discovery-url/--fork/--as-of/-a/-s, even when a
+        // populated profile is passed by mistake -- source_kind gates this,
+        // not profile emptiness, so a stray Some(profile) must still be
+        // fully ignored for connection flags.
+        let mut params = download_params();
+        params.as_of = Some("1d".to_string());
+        let argv = build_download_start_argv(
+            Some(&profile()),
+            DownloadSourceKind::Instance,
+            "/Volumes/myvol/photos",
+            "/local/backups/photos",
+            &params,
+        );
+        assert!(!argv.contains(&"--discovery-url".to_string()));
+        assert!(!argv.contains(&"--fork".to_string()));
+        assert!(!argv.contains(&"--as-of".to_string()));
+        assert!(!argv.iter().any(|a| a.starts_with("--as-of=")));
+        assert!(!argv.contains(&"-a".to_string()));
+        assert!(!argv.contains(&"-s".to_string()));
+        let dashdash = argv.iter().position(|a| a == "--").expect("has --");
+        assert_eq!(
+            &argv[dashdash + 1..],
+            &["/Volumes/myvol/photos", "/local/backups/photos"]
+        );
+    }
+
+    #[test]
+    fn build_download_start_argv_emits_every_flag_when_set() {
+        let mut params = download_params();
+        params.if_exists = "overwrite".to_string();
+        params.depth = 0;
+        params.as_of = Some(" 1d ".to_string());
+        params.dry_run = true;
+        params.restart = true;
+        params.bwlimit_mbps = Some(50);
+        params.include_globs = vec!["*.jpg".to_string(), "  ".to_string()];
+        params.exclude_globs = vec!["*.tmp".to_string()];
+        params.follow_symlinks = true;
+        params.create_source_directory = true;
+
+        let argv = build_download_start_argv(
+            Some(&profile()),
+            DownloadSourceKind::Profile,
+            "photos",
+            "/dst",
+            &params,
+        );
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--if-exists", "overwrite"]));
+        assert!(argv.windows(2).any(|a| a == ["--depth", "0"]));
+        assert!(argv.contains(&"--as-of=1d".to_string()));
+        assert!(argv.contains(&"--dry-run".to_string()));
+        assert!(argv.contains(&"--restart".to_string()));
+        assert!(argv.windows(2).any(|a| a == ["--bwlimit", "50"]));
+        assert!(argv.windows(2).any(|a| a == ["--include", "*.jpg"]));
+        assert_eq!(argv.iter().filter(|a| *a == "--include").count(), 1);
+        assert!(argv.windows(2).any(|a| a == ["--exclude", "*.tmp"]));
+        assert!(argv.contains(&"--follow-symlinks".to_string()));
+        assert!(argv.contains(&"--create-source-directory".to_string()));
+    }
+
+    #[test]
+    fn build_download_start_argv_omits_bwlimit_when_zero() {
+        let mut params = download_params();
+        params.bwlimit_mbps = Some(0);
+        let argv = build_download_start_argv(
+            Some(&profile()),
+            DownloadSourceKind::Profile,
+            "photos",
+            "/dst",
+            &params,
+        );
+        assert!(!argv.contains(&"--bwlimit".to_string()));
+    }
+
+    #[test]
+    fn build_download_resume_argv_has_a_smaller_flag_surface_than_start() {
+        let argv = build_download_resume_argv(&profile(), "abcdef1234567890");
+        assert_eq!(argv[0], "download");
+        assert_eq!(argv[1], "resume");
+        assert_eq!(argv[2], "abcdef1234567890");
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--discovery-url", "https://hub.example.com"]));
+        assert!(argv.contains(&"-a".to_string()));
+        assert!(argv.contains(&"-s".to_string()));
+        // download resume has no --once/--rescan-interval/--dry-run at all.
+        assert!(!argv.contains(&"--once".to_string()));
+        assert!(!argv.contains(&"--rescan-interval".to_string()));
+        assert!(!argv.contains(&"--dry-run".to_string()));
+    }
+
+    #[test]
+    fn build_download_resume_argv_mounted_source_carries_no_credentials() {
+        // A mode-A (mounted source) resume's synthetic profile has blank
+        // discoveryUrl/accessKeyId -- resume_download_blocking builds one
+        // via resume_profile("".to_string(), "".to_string()) for that case.
+        let mounted = resume_profile(String::new(), String::new());
+        let argv = build_download_resume_argv(&mounted, "abcdef1234567890");
+        assert_eq!(argv, vec!["download", "resume", "abcdef1234567890"]);
+    }
+
+    #[test]
+    fn download_local_only_argv_builders_carry_no_credentials_or_discovery_url() {
+        assert_eq!(
+            build_download_list_argv(),
+            vec!["list", "--kind", "download", "--json"]
+        );
+        assert_eq!(
+            build_download_cancel_argv("job123"),
+            vec!["download", "cancel", "job123"]
+        );
+        assert_eq!(
+            build_download_retry_failed_argv("job123"),
+            vec!["download", "retry-failed", "job123"]
+        );
+        assert_eq!(build_download_prune_argv(0), vec!["download", "prune"]);
+        assert_eq!(
+            build_download_prune_argv(5),
+            vec!["download", "prune", "--keep", "5"]
+        );
+    }
+
+    #[test]
+    fn parse_downloads_value_skips_non_download_kinds_and_fills_defaults() {
+        let value: Value = serde_json::from_str(
+            r#"[
+                {"kind": "upload", "name": "upload-abc", "jobId": "upl"},
+                {"kind": "download", "name": "download-abc123", "jobId": "abc123",
+                 "sourcePath": "/remote/photos", "destPath": "/local/photos",
+                 "state": "running", "counts": {"done": 3, "retrying": 1}, "volumeId": 42}
+            ]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].job_id, "abc123");
+        assert_eq!(jobs[0].source_path.as_deref(), Some("/remote/photos"));
+        assert_eq!(jobs[0].dest_path.as_deref(), Some("/local/photos"));
+        assert_eq!(jobs[0].state, "running");
+        assert_eq!(jobs[0].counts.get("done"), Some(&3));
+        assert_eq!(jobs[0].counts.get("retrying"), Some(&1));
+        assert_eq!(jobs[0].volume_id, Some(42));
+    }
+
+    #[test]
+    fn parse_downloads_value_drops_an_entry_with_no_job_id() {
+        let value: Value =
+            serde_json::from_str(r#"[{"kind": "download", "name": "broken"}]"#).unwrap();
+        assert!(parse_downloads_value(&value).is_empty());
+    }
+
+    #[test]
+    fn parse_downloads_value_carries_created_and_completed_at() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc",
+                 "state": "completed", "createdAt": 1000, "completedAt": 2000}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].created_at, Some(1000));
+        assert_eq!(jobs[0].completed_at, Some(2000));
+    }
+
+    #[test]
+    fn parse_downloads_value_defaults_created_and_completed_at_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs[0].created_at, None);
+        assert_eq!(jobs[0].completed_at, None);
+    }
+
+    #[test]
+    fn parse_downloads_value_carries_log_path() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc",
+                 "state": "completed", "logPath": "/Users/x/.mountOS/logs/mountos-mfuse-123.log"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(
+            jobs[0].log_path.as_deref(),
+            Some("/Users/x/.mountOS/logs/mountos-mfuse-123.log")
+        );
+    }
+
+    #[test]
+    fn parse_downloads_value_defaults_log_path_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs[0].log_path, None);
+    }
+
+    #[test]
+    fn parse_downloads_value_carries_totals() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc",
+                 "state": "completed", "totalFiles": 3, "totalBytes": 6144}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs[0].total_files, Some(3));
+        assert_eq!(jobs[0].total_bytes, Some(6144));
+    }
+
+    #[test]
+    fn parse_downloads_value_defaults_totals_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
         assert_eq!(jobs[0].total_files, None);
         assert_eq!(jobs[0].total_bytes, None);
     }

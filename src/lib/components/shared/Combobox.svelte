@@ -7,7 +7,7 @@
   import Check from '@lucide/svelte/icons/check'
 
   // Mirrors mountos-admin-client's src/lib/components/shared/Combobox.svelte
-  // field-for-field -- kept in sync deliberately (same searchable-dropdown
+  // field-for-field, kept in sync deliberately (same searchable-dropdown
   // need, same bits-ui Command/Popover primitives available in both apps),
   // update both together.
   let {

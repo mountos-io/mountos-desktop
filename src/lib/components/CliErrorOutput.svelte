@@ -18,7 +18,7 @@
 </script>
 
 <!-- Unlike Callout (a short one-line prose warning), this holds the CLI's
-     raw stdout+stderr transcript: unknown length, unknown shape -- we don't
+     raw stdout+stderr transcript: unknown length, unknown shape. We don't
      guess which line matters, so it's a scrollable monospace box that folds
      long lines instead of a single-line banner that would overflow or hide
      the actual reason inside a truncated guess. -->

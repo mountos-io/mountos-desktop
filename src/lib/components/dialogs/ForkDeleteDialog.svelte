@@ -22,7 +22,7 @@
         </Dialog.Header>
         <div class="grid gap-4 py-4">
           <p>Deletes fork "{appState.forkDeletePromptFor.name}", recoverable within its grace period.</p>
-          <Callout>Acts on the shared volume, not just this profile -- every other mount of the volume sees this fork disappear too.</Callout>
+          <Callout>Acts on the shared volume, not just this profile. Every other mount of the volume sees this fork disappear too.</Callout>
           {#if appState.settings.allowForkForceDelete}
             <Checkbox bind:checked={appState.forkDeleteForce} label="Also delete subtree (--force)" />
           {/if}

@@ -12,7 +12,7 @@
   }
 
   // Tailwind's scanner needs each full class name as a literal substring
-  // somewhere in this file -- a template-interpolated `border-{type}/45`
+  // somewhere in this file. A template-interpolated `border-{type}/45`
   // would only ever emit the class actually reached at runtime, not one
   // Tailwind can see ahead of time, so the rest silently never generate.
   const toneClasses: Record<ToastItem['type'], string> = {
@@ -25,8 +25,8 @@
   const exitDuration = $derived(prefersReducedMotion() ? 0 : 150)
 
   // Owns the actual auto-dismiss timer per toast so it can pause while the
-  // toast is hovered or keyboard-focused (WCAG 2.2.1 Timing Adjustable) --
-  // sonner paused on hover by default and this hand-rolled replacement must
+  // toast is hovered or keyboard-focused (WCAG 2.2.1 Timing Adjustable).
+  // Sonner paused on hover by default and this hand-rolled replacement must
   // not quietly drop that. `duration: Infinity` (error toasts) never starts
   // a timer, matching the "stays until dismissed" contract in toast.svelte.ts.
   function autoDismiss(node: HTMLElement, { id, duration }: { id: number; duration: number }) {
@@ -64,7 +64,7 @@
   }
 </script>
 
-<!-- z-[100]: above bits-ui's Dialog (z-50) -- a toast fired from inside a
+<!-- z-[100]: above bits-ui's Dialog (z-50). A toast fired from inside a
      dialog (e.g. "Profile saved" while a satellite dialog is still open)
      must stay visible, not sit behind the modal backdrop. -->
 <div class="pointer-events-none fixed right-4 top-4 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2" aria-live="polite" role="region" aria-label="Notifications">

@@ -327,7 +327,13 @@
 
   /* Technical grid pattern background -- a subtle texture, not a real grid:
      --grid-line has no opacity of its own (its other uses, as an actual
-     border, want full strength), so it's dampened here specifically. */
+     border, want full strength), so it's dampened here specifically. Plain
+     `repeat`, no `background-clip`/`origin` tricks. Breathing room between
+     the grid and its content (icon/title/text/buttons) belongs on the
+     element itself as real padding (see each call site) -- padding shifts
+     the content inward from the box edge; margin does not, since margin is
+     external to the element's own box and has no effect when it's applied
+     to the very element carrying this background. */
   .tech-grid {
     background-image:
       linear-gradient(oklch(from var(--grid-line) l c h / 0.2) 1px, transparent 1px),

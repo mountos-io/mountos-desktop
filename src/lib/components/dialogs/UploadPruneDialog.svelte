@@ -21,7 +21,7 @@
       </Dialog.Header>
       <div class="grid gap-4 py-4">
         <p>Permanently removes completed/halted job records (never a currently running job).</p>
-        <Callout>This deletes the job's local record (job.json, scan.db, pid) -- not recoverable, unlike cancel.</Callout>
+        <Callout>This deletes the job's local record (job.json, scan.db, pid), not recoverable, unlike cancel.</Callout>
         <div class="grid gap-1.5 max-w-[10rem]">
           <Label for="upload-prune-keep">Keep N most recent</Label>
           <Input id="upload-prune-keep" type="number" min="0" bind:value={appState.uploadPruneKeep} />

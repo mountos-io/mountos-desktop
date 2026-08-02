@@ -11,20 +11,20 @@ export function prefersReducedMotion(): boolean {
 }
 
 // Only "macos"/"windows" ever ship (see tauri.conf.json's bundle.targets:
-// app/dmg/nsis, no linux target) -- Rust-sourced (SystemState.platform), not
+// app/dmg/nsis, no linux target), Rust-sourced (SystemState.platform), not
 // navigator sniffing, since this app already has an authoritative answer.
 export function isMacPlatform(platform: string): boolean {
   return platform !== 'windows'
 }
 
 // event.metaKey is the Cmd key on macOS but the Windows/Super key elsewhere,
-// which OS-level shortcuts already claim -- Windows/Linux users need ctrlKey
+// which OS-level shortcuts already claim, Windows/Linux users need ctrlKey
 // for an app shortcut to actually reach them.
 export function modKeyPressed(event: KeyboardEvent, platform: string): boolean {
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey
 }
 
-// Binary units (KiB/MiB/...), not decimal (KB/MB/...) -- matches the rest of
+// Binary units (KiB/MiB/...), not decimal (KB/MB/...), matches the rest of
 // mountOS's byte-size vocabulary (block size, buffer budgets, disk cache).
 const BYTE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const;
 

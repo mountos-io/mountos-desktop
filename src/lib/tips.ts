@@ -2,8 +2,8 @@ export interface Tip {
   title: string
   body: string
   command?: string
-  // DOM id of a Settings section to jump to instead of showing a CLI command
-  // -- for tips that are actually app features, not shell invocations.
+  // DOM id of a Settings section to jump to instead of showing a CLI command,
+  // for tips that are actually app features, not shell invocations.
   settingsSection?: string
 }
 

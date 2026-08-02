@@ -71,12 +71,12 @@ describe('parseBlocks', () => {
 
   it('handles a realistic mixed doc: heading para, then a bullet list, then a closing para', () => {
     const text =
-      '**Drift signals:**\n\nSome intro line.\n\n• Uptime < Age -- restarted\n• Age frozen -- heartbeats lost\n\nClosing note.'
+      '**Drift signals:**\n\nSome intro line.\n\n• Uptime < Age, restarted\n• Age frozen, heartbeats lost\n\nClosing note.'
     const blocks = parseBlocks(text)
     expect(blocks.map((b) => b.kind)).toEqual(['para', 'para', 'list', 'para'])
     expect(blocks[2]).toEqual({
       kind: 'list',
-      items: [[{ kind: 'text', value: 'Uptime < Age -- restarted' }], [{ kind: 'text', value: 'Age frozen -- heartbeats lost' }]],
+      items: [[{ kind: 'text', value: 'Uptime < Age, restarted' }], [{ kind: 'text', value: 'Age frozen, heartbeats lost' }]],
     })
   })
 

@@ -3,7 +3,7 @@
 // Solarized, Tokyo Night, plus a default pair), so users of either app
 // recognize the same palette by name. `applySkin`/`clearSkin` are trimmed to
 // only the CSS custom properties this app's app.css actually defines/maps
-// (@theme inline) -- no --sidebar-*, --chart-*, --scrollbar-track,
+// (@theme inline), no --sidebar-*, --chart-*, --scrollbar-track,
 // --warning-foreground, or --success-foreground here, unlike admin-client.
 export type SkinMode = 'light' | 'dark'
 
@@ -31,14 +31,14 @@ const WHITE = 'oklch(1 0 0)'
 
 export const themePresets: ThemePreset[] = [
   {
-    // This app's own default palette (app.css :root) -- picking it is an
+    // This app's own default palette (app.css :root), picking it is an
     // identity operation, not a real skin swap.
-    // Verbatim from admin-client's themes.ts -- its "mountOS Light/Dark"
+    // Verbatim from admin-client's themes.ts, its "mountOS Light/Dark"
     // presets are NOT the same as its own app.css base tokens (confirmed by
     // direct comparison: base .dark background is L 0.07, this preset is L
     // 0.239), so matching admin-client requires copying these preset values
     // exactly rather than substituting this app's own base tokens as an
-    // "identity" skin -- that substitution was the bug (gui rendered
+    // "identity" skin, that substitution was the bug (gui rendered
     // noticeably darker than admin-client's actual default).
     name: 'mountOS Light',
     family: '',

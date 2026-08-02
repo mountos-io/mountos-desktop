@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Command, HardDrive, MonitorDot, PanelLeft, Plus, RefreshCw, Settings, Upload } from '@lucide/svelte'
+  import { Command, Download, HardDrive, MonitorDot, PanelLeft, Plus, RefreshCw, Settings, Upload } from '@lucide/svelte'
   import Toaster from '$lib/components/Toaster.svelte'
   import { Button } from '$lib/components/ui/button'
   import * as Breadcrumb from '$lib/components/ui/breadcrumb'
@@ -8,6 +8,7 @@
   import InstancesView from '$lib/components/views/InstancesView.svelte'
   import ProfilesView from '$lib/components/views/ProfilesView.svelte'
   import UploadsView from '$lib/components/views/UploadsView.svelte'
+  import DownloadsView from '$lib/components/views/DownloadsView.svelte'
   import SettingsView from '$lib/components/views/SettingsView.svelte'
   import SecretPromptDialog from '$lib/components/dialogs/SecretPromptDialog.svelte'
   import DeleteProfileDialog from '$lib/components/dialogs/DeleteProfileDialog.svelte'
@@ -19,6 +20,7 @@
   import ForkDeleteDialog from '$lib/components/dialogs/ForkDeleteDialog.svelte'
   import ForkRestoreDialog from '$lib/components/dialogs/ForkRestoreDialog.svelte'
   import UploadPruneDialog from '$lib/components/dialogs/UploadPruneDialog.svelte'
+  import DownloadPruneDialog from '$lib/components/dialogs/DownloadPruneDialog.svelte'
   import TipsDialog from '$lib/components/dialogs/TipsDialog.svelte'
   import ThirdPartyLicensesDialog from '$lib/components/dialogs/ThirdPartyLicensesDialog.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
@@ -27,6 +29,7 @@
     computed,
     DEFAULT_POLL_SECONDS,
     drillIntoFork,
+    exitDownloadCreate,
     exitProfileSubView,
     exitUploadCreate,
     HIDDEN_POLL_MS,
@@ -34,6 +37,7 @@
     newProfile,
     pollSystem,
     refresh,
+    runDownloadList,
     runUploadList,
     toggleSidebar,
     viewTitle,
@@ -44,6 +48,7 @@
     { id: 'instances', label: 'Instances', icon: MonitorDot },
     { id: 'profiles', label: 'Profiles', icon: HardDrive },
     { id: 'uploads', label: 'Uploads', icon: Upload },
+    { id: 'downloads', label: 'Downloads', icon: Download },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]
 
@@ -57,7 +62,7 @@
       commandPaletteOpen = true
       return
     }
-    // Unlike Cmd+K, guarded against firing while typing -- a bare "," is a
+    // Unlike Cmd+K, guarded against firing while typing, since a bare "," is a
     // real character in plenty of fields (extra args, discovery URLs).
     const target = event.target as HTMLElement
     const inInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
@@ -89,7 +94,7 @@
   const subViewLabels = { forks: 'Forks', snapshot: 'Snapshot view', deleted: 'Deleted files', version: 'File versions', gateway: 'Gateway' } as const
 
   const breadcrumbs = $derived.by((): Crumb[] => {
-    const rootAction = appState.view === 'uploads' ? exitUploadCreate : exitProfileSubView
+    const rootAction = appState.view === 'uploads' ? exitUploadCreate : appState.view === 'downloads' ? exitDownloadCreate : exitProfileSubView
     const crumbs: Array<Crumb & { onclick?: () => void }> = [{ label: viewTitle(appState.view), onclick: rootAction }]
     if (appState.view === 'profiles' && computed.selectedProfile) {
       crumbs.push({ label: computed.selectedProfile.name, onclick: exitProfileSubView })
@@ -103,6 +108,8 @@
       }
     } else if (appState.view === 'uploads' && appState.uploadSubView === 'create') {
       crumbs.push({ label: 'New upload', onclick: exitUploadCreate })
+    } else if (appState.view === 'downloads' && appState.downloadSubView === 'create') {
+      crumbs.push({ label: 'New download', onclick: exitDownloadCreate })
     }
     // Every crumb but the last is clickable; the last is the current page.
     return crumbs.map((crumb, index) => (index === crumbs.length - 1 ? { label: crumb.label } : crumb))
@@ -118,15 +125,17 @@
   $effect(() => {
     void loadSettings()
     void refresh(false)
-    // One-shot, not a poll loop: gives the sidebar's running-upload badge a
+    // One-shot, not a poll loop: gives the sidebar's running-job badges a
     // real count from launch, without adding a background CLI shell-out
-    // most sessions (that never touch Uploads) would pay for nothing.
+    // most sessions (that never touch Uploads/Downloads) would pay for
+    // nothing.
     void runUploadList()
+    void runDownloadList()
   })
 
   $effect(() => {
     // Read inside the effect so changing the setting reschedules immediately
-    // rather than waiting for a restart. 0 means "Off" -- no timer at all,
+    // rather than waiting for a restart. 0 means "Off", no timer at all,
     // the Refresh button covers manual updates.
     const pollSeconds = appState.settings.pollSeconds ?? DEFAULT_POLL_SECONDS
     if (pollSeconds === 0) return
@@ -199,6 +208,14 @@
             <item.icon size={18} aria-hidden="true" />
             {#if item.id === 'uploads' && computed.uploadRunningCount > 0}
               {@const runningLabel = `${computed.uploadRunningCount} upload job${computed.uploadRunningCount === 1 ? '' : 's'} running`}
+              <span class="absolute -right-1.5 -top-1.5 flex h-2.5 w-2.5" title={runningLabel} aria-hidden="true">
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+                <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary"></span>
+              </span>
+              <span class="sr-only">{runningLabel}</span>
+            {/if}
+            {#if item.id === 'downloads' && computed.downloadRunningCount > 0}
+              {@const runningLabel = `${computed.downloadRunningCount} download job${computed.downloadRunningCount === 1 ? '' : 's'} running`}
               <span class="absolute -right-1.5 -top-1.5 flex h-2.5 w-2.5" title={runningLabel} aria-hidden="true">
                 <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
                 <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary"></span>
@@ -287,6 +304,8 @@
           <ProfilesView />
         {:else if appState.view === 'uploads'}
           <UploadsView />
+        {:else if appState.view === 'downloads'}
+          <DownloadsView />
         {:else}
           <SettingsView />
         {/if}
@@ -305,5 +324,6 @@
 <ForkDeleteDialog />
 <ForkRestoreDialog />
 <UploadPruneDialog />
+<DownloadPruneDialog />
 <TipsDialog />
 <ThirdPartyLicensesDialog />

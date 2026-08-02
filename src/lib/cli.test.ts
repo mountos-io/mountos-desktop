@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildDeletedArgv,
+  buildDownloadCancelArgv,
+  buildDownloadListArgv,
+  buildDownloadPruneArgv,
+  buildDownloadResumeArgv,
+  buildDownloadRetryFailedArgv,
+  buildDownloadStartArgv,
   buildForkCreateArgv,
   buildForkDeleteArgv,
   buildForkListArgv,
@@ -24,7 +30,7 @@ import {
   validateMountPathForBackend,
   validateUploadPositional,
 } from './cli'
-import type { UploadStartParams } from './cli'
+import type { DownloadStartParams, UploadStartParams } from './cli'
 import type { MountProfile } from './types'
 
 const profile: MountProfile = {
@@ -318,8 +324,8 @@ describe('cli helpers', () => {
   it('builds upload start argv with source/dest as bare positionals after "--" and no flags by default', () => {
     const argv = buildUploadStartArgv(profile, '/local/photos', '/remote/photos', uploadParams())
     expect(argv[0]).toEqual('upload')
-    // Flags first, then a literal "--", then exactly the two positionals --
-    // this is what makes an arbitrary (even flag-shaped) source/dest value
+    // Flags first, then a literal "--", then exactly the two positionals.
+    // This is what makes an arbitrary (even flag-shaped) source/dest value
     // safe: pflag stops scanning for flags at "--".
     const dashdash = argv.indexOf('--')
     expect(dashdash).toBeGreaterThan(-1)
@@ -398,5 +404,123 @@ describe('cli helpers', () => {
     expect(buildUploadRetryFailedArgv('job123')).toEqual(['upload', 'retry-failed', 'job123'])
     expect(buildUploadPruneArgv(0)).toEqual(['upload', 'prune'])
     expect(buildUploadPruneArgv(5)).toEqual(['upload', 'prune', '--keep', '5'])
+  })
+
+  const downloadParams = (): DownloadStartParams => ({
+    ifExists: 'skip',
+    depth: 1,
+    dryRun: false,
+    restart: false,
+    includeGlobs: [],
+    excludeGlobs: [],
+    followSymlinks: false,
+    createSourceDirectory: false,
+  })
+
+  it('builds download start argv (profile mode) with source/dest as bare positionals after "--" and no flags by default', () => {
+    const argv = buildDownloadStartArgv(profile, 'profile', 'photos', '/local/backups/photos', downloadParams())
+    expect(argv[0]).toEqual('download')
+    const dashdash = argv.indexOf('--')
+    expect(dashdash).toBeGreaterThan(-1)
+    expect(argv.slice(dashdash + 1)).toEqual(['photos', '/local/backups/photos'])
+    expect(argv).toEqual(expect.arrayContaining(['--discovery-url', 'https://hub.example.com']))
+    expect(argv).toEqual(expect.arrayContaining(['--fork', 'main']))
+    expect(argv).toContain('-a')
+    expect(argv).toContain('-s')
+    // Defaults matching the server's own default are omitted entirely.
+    expect(argv).not.toContain('--if-exists')
+    expect(argv).not.toContain('--depth')
+    expect(argv).not.toContain('--as-of')
+    expect(argv).not.toContain('--dry-run')
+    expect(argv).not.toContain('--restart')
+  })
+
+  it('builds download start argv (instance mode) with no connection flags at all', () => {
+    // Mode A: no --discovery-url/--fork/--as-of/-a/-s, even when a
+    // populated profile is passed by mistake, sourceKind gates this, not
+    // profile emptiness.
+    const argv = buildDownloadStartArgv(
+      profile,
+      'instance',
+      '/Volumes/myvol/photos',
+      '/local/backups/photos',
+      { ...downloadParams(), asOf: '1d' },
+    )
+    expect(argv).not.toContain('--discovery-url')
+    expect(argv).not.toContain('--fork')
+    expect(argv.some((arg) => arg.startsWith('--as-of'))).toBe(false)
+    expect(argv).not.toContain('-a')
+    expect(argv).not.toContain('-s')
+    const dashdash = argv.indexOf('--')
+    expect(argv.slice(dashdash + 1)).toEqual(['/Volumes/myvol/photos', '/local/backups/photos'])
+  })
+
+  it('throws when profile mode is requested without a profile', () => {
+    expect(() => buildDownloadStartArgv(null, 'profile', 'photos', '/dst', downloadParams())).toThrow()
+  })
+
+  it('builds download start argv with every flag set', () => {
+    const params: DownloadStartParams = {
+      ifExists: 'overwrite',
+      depth: 0,
+      asOf: ' 1d ',
+      dryRun: true,
+      restart: true,
+      bwlimitMbps: 50,
+      includeGlobs: ['*.jpg', '  '],
+      excludeGlobs: ['*.tmp'],
+      followSymlinks: true,
+      createSourceDirectory: true,
+    }
+    const argv = buildDownloadStartArgv(profile, 'profile', 'photos', '/dst', params)
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        '--if-exists', 'overwrite',
+        '--depth', '0',
+        '--as-of=1d',
+        '--dry-run',
+        '--restart',
+        '--bwlimit', '50',
+        '--include', '*.jpg',
+        '--exclude', '*.tmp',
+        '--follow-symlinks',
+        '--create-source-directory',
+      ]),
+    )
+    expect(argv.filter((arg) => arg === '--include')).toHaveLength(1)
+    expect(argv.slice(-2)).toEqual(['photos', '/dst'])
+  })
+
+  it('omits --bwlimit when zero', () => {
+    const argv = buildDownloadStartArgv(profile, 'profile', 'photos', '/dst', { ...downloadParams(), bwlimitMbps: 0 })
+    expect(argv).not.toContain('--bwlimit')
+  })
+
+  it('gives download resume a smaller flag surface than start, with no once/rescan-interval at all', () => {
+    const argv = buildDownloadResumeArgv(profile, 'abcdef1234567890')
+    expect(argv.slice(0, 3)).toEqual(['download', 'resume', 'abcdef1234567890'])
+    expect(argv).toEqual(expect.arrayContaining(['--discovery-url', 'https://hub.example.com']))
+    expect(argv).toContain('-a')
+    expect(argv).toContain('-s')
+    expect(argv).not.toContain('--once')
+    expect(argv).not.toContain('--rescan-interval')
+    expect(argv).not.toContain('--dry-run')
+  })
+
+  it('carries no credentials for a mounted-source download resume', () => {
+    const mountedProfile: MountProfile = { ...profile, discoveryUrl: '', accessKeyId: '' }
+    expect(buildDownloadResumeArgv(mountedProfile, 'abcdef1234567890')).toEqual([
+      'download',
+      'resume',
+      'abcdef1234567890',
+    ])
+  })
+
+  it('carries no credentials or discovery-url for the local-only download commands', () => {
+    expect(buildDownloadListArgv()).toEqual(['list', '--kind', 'download', '--json'])
+    expect(buildDownloadCancelArgv('job123')).toEqual(['download', 'cancel', 'job123'])
+    expect(buildDownloadRetryFailedArgv('job123')).toEqual(['download', 'retry-failed', 'job123'])
+    expect(buildDownloadPruneArgv(0)).toEqual(['download', 'prune'])
+    expect(buildDownloadPruneArgv(5)).toEqual(['download', 'prune', '--keep', '5'])
   })
 })

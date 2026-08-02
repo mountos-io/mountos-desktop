@@ -183,7 +183,7 @@ export function buildMountArgv(profile: MountProfile): string[] {
 // Short and non-linguistic: "(deleted)"/"(snapshot)"/"(version)" reads fine
 // once, but a bare parenthesized suffix breaks a shell (unquoted "(" opens a
 // subshell) if this argv is ever copied out of the preview and pasted
-// directly -- mirrors Rust's satellite_volname/satellite_suffix exactly.
+// directly, mirrors Rust's satellite_volname/satellite_suffix exactly.
 function satelliteSuffix(): string {
   return String(Math.floor(Math.random() * 10000)).padStart(4, '0')
 }
@@ -208,7 +208,7 @@ function pushSatelliteCredentials(argv: string[], profile: MountProfile): void {
 
 // The server resolves disk-cache-dir and applies extraArgs unconditionally
 // before branching on mount vs. deleted/version/snapshot vs. gateway-only,
-// so this is shared by buildMountArgv and every satellite/gateway builder --
+// so this is shared by buildMountArgv and every satellite/gateway builder,
 // otherwise the command preview would show a profile's cache dir and extra
 // flags for a regular mount but silently omit them for these other launches.
 function pushCacheAndExtraArgs(argv: string[], profile: MountProfile): void {
@@ -243,7 +243,7 @@ export function buildDeletedArgv(
   if (idleTimeout?.trim()) argv.push(`--idle-timeout=${idleTimeout.trim()}`)
   pushSatelliteCredentials(argv, profile)
   pushCacheAndExtraArgs(argv, profile)
-  // No backend flag: verified against cmd_deleted.go -- deleted/version accept
+  // No backend flag: verified against cmd_deleted.go, deleted/version accept
   // any backend flag as a root-persistent flag but need none of them to run,
   // and forcing the primary mount's backend here would wrongly drag along
   // e.g. FSKit's rigid /Volumes/MountOS/<name> mount-point convention onto an
@@ -251,7 +251,7 @@ export function buildDeletedArgv(
   return argv
 }
 
-// selector picks the target: a browsed local path (preferred -- lets the CLI
+// selector picks the target: a browsed local path (preferred, lets the CLI
 // resolve inode/parent/name itself and enables multi-key discovery) or a
 // hand-typed inode (advanced/power-user fallback, plain by-inode lookup only).
 export function buildVersionArgv(
@@ -274,7 +274,7 @@ export function buildVersionArgv(
   if (idleTimeout?.trim()) argv.push(`--idle-timeout=${idleTimeout.trim()}`)
   pushSatelliteCredentials(argv, profile)
   pushCacheAndExtraArgs(argv, profile)
-  // No backend flag -- same reasoning as buildDeletedArgv above.
+  // No backend flag, same reasoning as buildDeletedArgv above.
   return argv
 }
 
@@ -322,7 +322,7 @@ export interface GatewayLaunchParams {
 }
 
 // gateway-only uses the standalone `gateway` subcommand (no -m, no backend
-// flag, no --volname -- confirmed against cmd_gateway.go/cmd_mount.go, -m is
+// flag, no --volname, confirmed against cmd_gateway.go/cmd_mount.go, -m is
 // optional whenever --gateway-only is set, there is no FUSE mount at all).
 // The mount+gateway combo instead reuses the full regular `buildMountArgv`
 // output with gateway flags appended, matching the CLI's real combo
@@ -363,8 +363,8 @@ export interface UploadStartParams {
 }
 
 // Mirrors src-tauri/src/lib.rs's validate_upload_positional. Not itself the
-// security boundary -- buildUploadStartArgv's own "--" separator is what
-// actually makes an arbitrary value safe in argv -- but a value starting
+// security boundary. buildUploadStartArgv's own "--" separator is what
+// actually makes an arbitrary value safe in argv, but a value starting
 // with '-' is rejected outright here so the user sees a clear inline error
 // instead of a cryptic CLI failure (or, without the "--" fix, a genuinely
 // misparsed flag).
@@ -375,7 +375,7 @@ export function validateUploadPositional(value: string, field: string): string |
 }
 
 // --include/--exclude glob patterns are always sent as a flag's VALUE
-// (`--include <pattern>`), never scanned for flag-ness themselves -- pflag
+// (`--include <pattern>`), never scanned for flag-ness themselves. pflag
 // consumes the token immediately following a value-taking flag
 // unconditionally, so a leading '-' or '*' here is not an argv-injection
 // risk the way a bare positional is. This is sanity validation only: reject
@@ -384,7 +384,7 @@ export function validateUploadPositional(value: string, field: string): string |
 export function validateGlobPattern(pattern: string): string | null {
   const trimmed = pattern.trim()
   if (!trimmed) return 'pattern must not be empty'
-  // eslint-disable-next-line no-control-regex -- deliberately matching control bytes to reject them
+  // eslint-disable-next-line no-control-regex (deliberately matching control bytes to reject them)
   if (/[\0-\x1f]/.test(trimmed)) return 'pattern must not contain control characters'
   return null
 }
@@ -394,7 +394,7 @@ export function validateGlobPattern(pattern: string): string | null {
 // --once/--overwrite/--dry-run/--rescan-interval/--restart/--bwlimit/
 // --include/--exclude/--follow-symlinks/--create-source-directory, all only
 // on the top-level `upload <source> <dest>`. Included even for a dry run
-// (harmless -- runUploadDryRun never reads --fork/credentials at all).
+// (harmless, runUploadDryRun never reads --fork/credentials at all).
 // Mirrors src-tauri/src/lib.rs's build_upload_start_argv, including the
 // flags-first-then-"--"-then-positionals ordering: pflag scans the whole
 // token stream for anything starting with '-' regardless of position, so a
@@ -441,7 +441,7 @@ export function buildUploadResumeArgv(profile: MountProfile, jobId: string, once
 }
 
 // list/cancel/retry-failed/prune are all purely local (job dir + control
-// socket -- none of the four touch resolveUploadCredentials server-side), so
+// socket, none of the four touch resolveUploadCredentials server-side), so
 // unlike every builder above these take no MountProfile at all: no
 // --discovery-url, no --fork, no satellite credentials.
 export function buildUploadListArgv(): string[] {
@@ -456,8 +456,138 @@ export function buildUploadRetryFailedArgv(jobId: string): string[] {
   return ['upload', 'retry-failed', jobId]
 }
 
+// Mirrors cmd_upload_subcommands.go's `upload finish <job-id>`, offline,
+// no connection/credentials, only valid when scan.db already shows 0
+// pending/uploading rows (a daemon-mode job that drained but was cancelled,
+// or otherwise never reached a terminal transition on its own).
+export function buildUploadFinishArgv(jobId: string): string[] {
+  return ['upload', 'finish', jobId]
+}
+
 export function buildUploadPruneArgv(keep: number): string[] {
   const argv = ['upload', 'prune']
+  if (keep > 0) argv.push('--keep', String(keep))
+  return argv
+}
+
+export interface DownloadStartParams {
+  ifExists: 'skip' | 'overwrite' | 'bounce'
+  depth: number
+  // Remote-mode only. Flexible format ("2025-12-05 14:30", "1d", "-5d",
+  // "2h30m"), the same one `snapshot --timestamp`/`fork create --as-of`
+  // accept, see buildForkCreateArgv's own `--as-of=` fused-form convention,
+  // mirrored below.
+  asOf?: string
+  dryRun: boolean
+  restart: boolean
+  bwlimitMbps?: number
+  includeGlobs: string[]
+  excludeGlobs: string[]
+  followSymlinks: boolean
+  createSourceDirectory: boolean
+}
+
+// `download <SOURCE> <DEST_PATH>`'s flag surface, confirmed against
+// cmd_download.go: --fork/--if-exists/--depth/--as-of/--dry-run/--restart/
+// --bwlimit/--include/--exclude/--follow-symlinks/--create-source-directory.
+// No --once/--rescan-interval (unlike upload, a download job never
+// daemon-watches forever, every run is single-pass) and no --overwrite
+// (superseded by --if-exists=overwrite, never both spellings).
+//
+// sourceKind is the GUI's OWN mode concept (mirrors uploadSourceKind's
+// 'profile'/'instance' naming), the Go CLI auto-detects mounted-vs-remote
+// from the raw SOURCE path itself (detectDownloadSourceKind), but the GUI
+// needs to know the mode up front to decide the form fields AND how to build
+// SOURCE: 'instance' means SOURCE is a local filesystem path read straight
+// through an already-live mount, so this emits NO --discovery-url/--fork/
+// --as-of/-a/-s at all (mode A: "No RPC, no connection, no creds"); 'profile'
+// means SOURCE is a mountOS-relative path string on a saved profile's fork,
+// so this emits all of those from `profile`/`params.asOf`.
+//
+// Mirrors src-tauri/src/lib.rs's build_download_start_argv, including the
+// flags-first-then-"--"-then-positionals ordering (see buildUploadStartArgv's
+// own comment for why "--" is the actual safety boundary for an arbitrary
+// source/dest value, not this function's up-front validation).
+export function buildDownloadStartArgv(
+  profile: MountProfile | null,
+  sourceKind: 'instance' | 'profile',
+  source: string,
+  dest: string,
+  params: DownloadStartParams,
+): string[] {
+  const argv = ['download']
+  if (sourceKind === 'profile') {
+    if (!profile) throw new Error('a profile is required for a remote download source')
+    if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
+    // Fork is always derived from the resolved profile, never a free-typed
+    // value, mirrors buildUploadStartArgv's own --fork sourcing. Omitted
+    // when empty, same as every other profile-derived flag here: the CLI's
+    // own "main" default then applies.
+    if (profile.fork) argv.push('--fork', profile.fork)
+    if (params.asOf?.trim()) argv.push(`--as-of=${params.asOf.trim()}`)
+  }
+  // Value flags with a server-side default are only emitted when they
+  // diverge from it, same convention as buildVersionArgv's versionFormat.
+  if (params.ifExists !== 'skip') argv.push('--if-exists', params.ifExists)
+  if (params.depth !== 1) argv.push('--depth', String(params.depth))
+  if (params.dryRun) argv.push('--dry-run')
+  if (params.restart) argv.push('--restart')
+  if (params.bwlimitMbps && params.bwlimitMbps > 0) argv.push('--bwlimit', String(params.bwlimitMbps))
+  for (const pattern of params.includeGlobs) {
+    if (pattern.trim()) argv.push('--include', pattern.trim())
+  }
+  for (const pattern of params.excludeGlobs) {
+    if (pattern.trim()) argv.push('--exclude', pattern.trim())
+  }
+  if (params.followSymlinks) argv.push('--follow-symlinks')
+  if (params.createSourceDirectory) argv.push('--create-source-directory')
+  if (sourceKind === 'profile' && profile) pushSatelliteCredentials(argv, profile)
+  argv.push('--', source, dest)
+  return argv
+}
+
+// `download resume <job-id>` registers no distinctive flags of its own on
+// the resume subcommand (unlike `upload resume`'s --once/--rescan-interval,
+// download has neither, every run is already single-pass), but a
+// remote-mode job still needs --discovery-url/-a/-s (root-inherited global
+// flags) to reconnect. Mirrors buildUploadResumeArgv's exact credential-flag
+// pattern minus once/rescanInterval: profile-emptiness-gated, so passing a
+// profile with blank discoveryUrl/accessKeyId (a mounted-source job, which
+// needs no credentials to resume) naturally emits neither flag.
+export function buildDownloadResumeArgv(profile: MountProfile, jobId: string): string[] {
+  const argv = ['download', 'resume', jobId]
+  if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
+  pushSatelliteCredentials(argv, profile)
+  return argv
+}
+
+// list/cancel/retry-failed/prune are all purely local (job dir + control
+// socket, confirmed against cmd_list_download.go/cmd_download_subcommands.go,
+// none of the four touch resolveUploadCredentials), so unlike
+// buildDownloadStartArgv/buildDownloadResumeArgv these take no MountProfile
+// at all: no --discovery-url, no --fork, no satellite credentials.
+export function buildDownloadListArgv(): string[] {
+  return ['list', '--kind', 'download', '--json']
+}
+
+export function buildDownloadCancelArgv(jobId: string): string[] {
+  return ['download', 'cancel', jobId]
+}
+
+export function buildDownloadRetryFailedArgv(jobId: string): string[] {
+  return ['download', 'retry-failed', jobId]
+}
+
+// Mirrors cmd_download_subcommands.go's `download finish <job-id>`, offline,
+// no connection/credentials, only valid when scan.db already shows 0
+// pending/downloading rows (a job that was cancelled or otherwise never
+// reached a terminal transition on its own despite having nothing left).
+export function buildDownloadFinishArgv(jobId: string): string[] {
+  return ['download', 'finish', jobId]
+}
+
+export function buildDownloadPruneArgv(keep: number): string[] {
+  const argv = ['download', 'prune']
   if (keep > 0) argv.push('--keep', String(keep))
   return argv
 }

@@ -6,7 +6,7 @@
     variants: {
       // primary/success/warning's resting bg-*/N tint computed under 4.5:1 in
       // light mode (verified: 4.20/3.98/text stays passing only because
-      // warning's own hue has more headroom -- but primary and success both
+      // warning's own hue has more headroom, but primary and success both
       // measurably fail AA against their own tint). destructive already
       // avoided this (bg-transparent at rest, tinted only on :hover); the fix
       // here is bringing the other three in line with that instead of a

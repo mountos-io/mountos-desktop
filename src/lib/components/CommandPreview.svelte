@@ -32,7 +32,7 @@
       {/if}
     </div>
   {:else if text}
-    <!-- No label to share a header row with -- float the button instead of
+    <!-- No label to share a header row with, so float the button instead of
          giving it a row of its own (that row would otherwise be empty
          except for the button). -->
     <Button

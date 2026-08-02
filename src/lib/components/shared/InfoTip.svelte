@@ -5,7 +5,7 @@
   export type Block = { kind: 'list'; items: InlineSegment[][] } | { kind: 'para'; lines: InlineSegment[][] }
 
   // Inline markdown: **bold** and `code` spans, in whichever order they
-  // appear. Kept minimal (no links/italics) -- this is tooltip copy, not a
+  // appear. Kept minimal (no links/italics). This is tooltip copy, not a
   // document. Exported (alongside parseBlocks) so the parser is unit-
   // testable without mounting the component.
   export function parseInline(line: string): InlineSegment[] {
@@ -22,9 +22,9 @@
     return out
   }
 
-  // Blank-line-separated blocks (paragraphs), each either a bullet list --
-  // every non-empty line starts with the existing "• " convention already
-  // used across every InfoTip call site -- or a plain paragraph, whose own
+  // Blank-line-separated blocks (paragraphs), each either a bullet list,
+  // where every non-empty line starts with the existing "• " convention already
+  // used across every InfoTip call site, or a plain paragraph, whose own
   // single newlines become soft line breaks (not a new paragraph).
   export function parseBlocks(text: string): Block[] {
     const blocks: Block[] = []

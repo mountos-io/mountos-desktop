@@ -1,13 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { join, tempDir } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { GatewayLaunchParams, UploadStartParams } from './cli'
+import type { DownloadStartParams, GatewayLaunchParams, UploadStartParams } from './cli'
 import type {
   DesktopSettings,
   DiagnosticsBundle,
+  DownloadJob,
   ExportedProfile,
   Fork,
   GatewayLaunchResult,
+  MountInstance,
   MountProfile,
   MountResult,
   SecretStatus,
@@ -76,7 +78,25 @@ export async function getSystemState(): Promise<SystemState> {
       terminals: [],
     }
   }
-  return invoke<SystemState>('get_system_state')
+  const state = await invoke<SystemState>('get_system_state')
+  return { ...state, instances: dedupeInstancesByKey(state.instances) }
+}
+
+// A momentary backend-side race (an old descriptor not yet cleaned up
+// alongside a fresh one for the same mount/gateway) can surface two
+// instances sharing the same `key`. Every `#each` keyed on it downstream
+// (InstancesView's table, upload/download source pickers) would otherwise
+// throw `each_key_duplicate` and blank the whole list. Keeping the first
+// occurrence is enough: the list is re-fetched on every poll, so a stale
+// duplicate self-corrects within one refresh cycle regardless of which copy
+// was kept.
+function dedupeInstancesByKey(instances: MountInstance[]): MountInstance[] {
+  const seen = new Set<string>()
+  return instances.filter((instance) => {
+    if (seen.has(instance.key)) return false
+    seen.add(instance.key)
+    return true
+  })
 }
 
 export async function listProfiles(): Promise<MountProfile[]> {
@@ -162,7 +182,7 @@ export async function listUploads(): Promise<UploadJob[]> {
   return invoke<UploadJob[]>('list_uploads')
 }
 
-// Exactly one of profileId/instance is expected -- mirrors src-tauri/src/
+// Exactly one of profileId/instance is expected, mirrors src-tauri/src/
 // lib.rs's resolve_upload_source_profile.
 export async function startUpload(
   profileId: string | undefined,
@@ -179,7 +199,7 @@ export async function startUpload(
 // Ensures a read-only scratch mount of the upload source's volume exists
 // (mounting it if needed, reusing an already-mounted one otherwise) and
 // returns its local filesystem path, so the destination-path Browse button
-// can hand that path to the native folder picker -- there is no "list a
+// can hand that path to the native folder picker. There is no "list a
 // remote directory" RPC to call instead. The mount is left up for a while
 // in case of a repeat browse, then reaped after being idle (see
 // ensure_upload_browse_mount_blocking's own doc comment).
@@ -193,7 +213,7 @@ export async function ensureUploadBrowseMount(
 }
 
 // Resume works from discoveryUrl/accessKeyId alone (independent of any
-// saved profile -- a job resumes purely by id, job.json already fixes its
+// saved profile, a job resumes purely by id, job.json already fixes its
 // volume/fork/paths server-side), so it's not scoped to a profileId. If
 // a saved profile shares the given accessKeyId, the backend reuses its
 // cached vault secret; otherwise `secret` is required.
@@ -219,9 +239,97 @@ export async function retryFailedUpload(jobId: string): Promise<string> {
   return invoke<string>('retry_failed_upload', { jobId })
 }
 
+// Marks an already-drained resumable job completed without reconnecting,
+// see cmd_upload_subcommands.go's `upload finish` doc comment for why this
+// exists (a daemon-mode job that settled but was cancelled, or otherwise
+// never reached a terminal transition on its own).
+export async function finishUpload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('finish_upload', { jobId })
+}
+
 export async function pruneUploads(keep: number): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('prune_uploads', { keep })
+}
+
+export async function listDownloads(): Promise<DownloadJob[]> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<DownloadJob[]>('list_downloads')
+}
+
+// sourceKind picks which of download's two SOURCE resolution paths the Rust
+// side takes, mirrors src-tauri/src/lib.rs's resolve_download_source_profile.
+// 'instance' needs no profileId at all (SOURCE is a local filesystem path
+// read straight through an already-live mount, no credentials/connection);
+// 'profile' resolves profileId into a saved MountProfile and connects fresh
+// (SOURCE is a mountOS-relative path string on that profile's fork).
+export async function startDownload(
+  sourceKind: 'instance' | 'profile',
+  profileId: string | undefined,
+  source: string,
+  dest: string,
+  params: DownloadStartParams,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('start_download', { sourceKind, profileId, source, dest, params, secret })
+}
+
+// Download's source-picker Browse for a 'profile'-mode source only (mode A
+// browses directly at the live instance's own mountPath instead, no scratch
+// mount involved). Mirrors ensureUploadBrowseMount's scratch-mount-pool
+// pattern (mounting it, or reusing an already-mounted one, and returning
+// its local filesystem path), but always needs a real profileId (download's
+// remote source has no live-instance fallback the way upload's dest does),
+// and accepts an optional AsOf: when set, the Rust side opens a read-only
+// `snapshot` view at that timestamp instead of a plain fork `mount`, so
+// Browse roots the native picker at the exact historical tree the download
+// will read from.
+export async function ensureDownloadBrowseMount(
+  profileId: string,
+  asOf?: string,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('ensure_download_browse_mount', { profileId, asOf, secret })
+}
+
+// Resume works from discoveryUrl/accessKeyId alone, same as resumeUpload,
+// but unlike upload (every job needs dest credentials regardless of source
+// mode), a mounted-source (mode A) download job resumes with BOTH left as
+// empty strings (no credentials needed at all); pass empty strings for that
+// case rather than omitting the call.
+export async function resumeDownload(
+  discoveryUrl: string,
+  accessKeyId: string,
+  jobId: string,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('resume_download', { discoveryUrl, accessKeyId, jobId, secret })
+}
+
+export async function cancelDownload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('cancel_download', { jobId })
+}
+
+export async function retryFailedDownload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('retry_failed_download', { jobId })
+}
+
+// Marks an already-drained resumable job completed without reconnecting,
+// mirrors finishUpload, see its own comment for the full reasoning.
+export async function finishDownload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('finish_download', { jobId })
+}
+
+export async function pruneDownloads(keep: number): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('prune_downloads', { keep })
 }
 
 export async function openSnapshotView(
@@ -268,7 +376,7 @@ export async function openVersionView(
 }
 
 // For an instance with no saved profile (mounted from the terminal, or any
-// tool outside this app) -- the Rust side re-derives credentials from the
+// tool outside this app), the Rust side re-derives credentials from the
 // live mount's own .mountOS/.config rather than trusting anything passed
 // here about identity. `backend` is the instance's own already-known,
 // non-sensitive backend string (from `mountos list --json`), not a secret.
@@ -357,6 +465,11 @@ export async function openUploadLog(path: string): Promise<void> {
   await invoke('open_upload_log', { path })
 }
 
+export async function openDownloadLog(path: string): Promise<void> {
+  if (!hasDesktopBridge()) return
+  await invoke('open_download_log', { path })
+}
+
 export async function getInstanceConfig(target: string): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('get_instance_config', { target })
@@ -430,7 +543,7 @@ export async function browseFolder(title: string, defaultPath?: string): Promise
 }
 
 // Picks a single file under a mounted volume's live mount path. mountOS
-// volumes are real OS mounts, so the picked absolute path is enough -- the
+// volumes are real OS mounts, so the picked absolute path is enough, the
 // CLI resolves inode/parent/name itself via stat(2), no control-socket round
 // trip needed here.
 export async function browseVersionFile(title: string, mountPath: string): Promise<string | null> {
@@ -451,8 +564,8 @@ function randomDigits(length: number): string {
 }
 
 // Destination folders for the read-only satellite views (deleted-files,
-// version) don't need to exist beforehand -- the mountos CLI creates its own
-// mount point -- so this only has to produce a plausible, collision-unlikely
+// version) don't need to exist beforehand (the mountos CLI creates its own
+// mount point), so this only has to produce a plausible, collision-unlikely
 // path, not touch the filesystem.
 export async function defaultViewDestination(profileName: string, kind: string): Promise<string> {
   const base = await tempDir()

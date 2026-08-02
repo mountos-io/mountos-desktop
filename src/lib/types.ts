@@ -38,7 +38,7 @@ export interface MountProfile {
   // the first time this profile mounts successfully (or at creation time via
   // Save-as-profile off an already-running external mount). Undefined until
   // detected. Once set, the backend locks accessKeyId/discoveryUrl/volume
-  // against further edits (fork/backend stay editable) -- see
+  // against further edits (fork/backend stay editable), see
   // require_stable_identity in src-tauri/src/lib.rs.
   volumeKind?: 'general' | 'iceberg'
 }
@@ -73,8 +73,8 @@ export interface UploadJob {
   // credentials, so this is informational only (lets the UI show/warn
   // which volume a job belongs to), not itself the enforcement point.
   volumeId?: number
-  // job.json's own UnixNano timestamps, unrelated to any filesystem mtime
-  // -- lets the list be sorted meaningfully (list --kind upload otherwise
+  // job.json's own UnixNano timestamps, unrelated to any filesystem mtime.
+  // Lets the list be sorted meaningfully (list --kind upload otherwise
   // returns directory-name/hex-hash order, arbitrary with respect to
   // recency).
   createdAt?: number
@@ -83,7 +83,7 @@ export interface UploadJob {
   // present when that file still exists on disk (see uploadjob.JobSpec's
   // LogPath doc comment server-side).
   logPath?: string
-  // A live aggregate as of the server's last scan pass, not a fixed total --
+  // A live aggregate as of the server's last scan pass, not a fixed total,
   // a daemon-mode job (state running/resumable) can keep discovering more on
   // every rescan, so treat this as provisional unless state is
   // completed/halted.
@@ -91,8 +91,35 @@ export interface UploadJob {
   totalBytes?: number
 }
 
+// One row from `mountos list --kind download --json`, as returned by the
+// list_downloads Tauri command (src-tauri/src/lib.rs's DownloadJob). Same
+// shape as UploadJob field-for-field (verified identical Go mountListEntry
+// struct, same field names), so its field comments above apply here
+// unchanged; only the counts keys differ in meaning (pending | downloading |
+// done | failed | skipped | missing, plus a synthetic "retrying" key for
+// entries currently in backoff, self-clearing, distinct from "failed"
+// which needs `download retry-failed`).
+export interface DownloadJob {
+  jobId: string
+  name: string
+  sourcePath?: string
+  destPath?: string
+  forkName?: string
+  // running | halted | completed | resumable
+  state: string
+  counts: Record<string, number>
+  haltReason?: string
+  pid?: number
+  volumeId?: number
+  createdAt?: number
+  completedAt?: number
+  logPath?: string
+  totalFiles?: number
+  totalBytes?: number
+}
+
 // An upload source that's a live running mount instance rather than a
-// saved profile -- discoveryUrl/fork/volume/accessKeyId are captured once
+// saved profile, discoveryUrl/fork/volume/accessKeyId are captured once
 // (via getInstanceConfig) the moment the instance is picked, and reused
 // verbatim by the Rust side if the instance is no longer mounted by the
 // time Browse/Start actually runs (see src-tauri/src/lib.rs's
@@ -121,14 +148,14 @@ export interface MountInstance {
   uncPath?: string
   versionInode?: string
   orphaned?: boolean
-  /** "mount" (implied when absent, for an older CLI) or "gateway" -- a gateway-only instance has no mountPath/backend/fsName, only gatewayEndpoints. */
+  /** "mount" (implied when absent, for an older CLI) or "gateway", a gateway-only instance has no mountPath/backend/fsName, only gatewayEndpoints. */
   kind?: 'mount' | 'gateway'
   gatewayEndpoints?: GatewayEndpointInfo[]
-  /** Only meaningful for a "gateway" entry -- lets Stop gateway target the right process. */
+  /** Only meaningful for a "gateway" entry, lets Stop gateway target the right process. */
   pid?: number
   /** ISO timestamp from this instance's own .mountOS/.config, read fresh on every poll. */
   mountTime?: string
-  /** "general"/"iceberg" from this instance's own .mountOS/.config -- unlike MountProfile.volumeKind, works for external mounts too. */
+  /** "general"/"iceberg" from this instance's own .mountOS/.config, unlike MountProfile.volumeKind, works for external mounts too. */
   volumeKind?: string
   /** From this instance's own .mountOS/.config; not in `mountos list --json` at all. */
   temporaryFork?: boolean

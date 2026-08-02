@@ -76,7 +76,7 @@ function applyFontSize(fontSize: FontSize) {
 }
 
 // Grayscale and brightness are blunt document-wide filters, not OKLCH
-// adjustments to the active skin -- they're meant to layer on top of
+// adjustments to the active skin, they're meant to layer on top of
 // whichever skin is picked, not reinterpret its colors.
 function applyFilters() {
   if (typeof document === 'undefined') return
@@ -95,12 +95,12 @@ function resolveTheme(theme: Theme): 'light' | 'dark' {
 
 // Sets color-scheme inline (not just the .dark class) so native form controls
 // match the chosen theme even when a browser extension injects its own.
-// Also pushes the resolved mode to the native window (setTheme) -- without
+// Also pushes the resolved mode to the native window (setTheme). Without
 // this, macOS keeps the titlebar/traffic-lights on the OS-level appearance,
 // which can go native-dark against light webview content (or vice versa).
 // Passing null (not a resolved mode) for 'system' is required, not cosmetic:
-// on macOS, Window.setTheme forwards to `[NSApp setAppearance:]` -- app-wide,
-// not per-window -- so a concrete value pins prefers-color-scheme for every
+// on macOS, Window.setTheme forwards to `[NSApp setAppearance:]` (app-wide,
+// not per-window), so a concrete value pins prefers-color-scheme for every
 // webview in the process, permanently, until something un-pins it. Only null
 // clears that override and lets the OS appearance (and this webview's own
 // matchMedia read below) actually follow the system again.
@@ -118,7 +118,7 @@ function applyTheme(theme: Theme) {
 }
 
 // Reconciles the picked skin against the CURRENT resolved mode (state.
-// resolvedMode is always kept in sync with state.theme before this runs --
+// resolvedMode is always kept in sync with state.theme before this runs,
 // see setTheme/initThemeSync). A skin's `family` pairs a light/dark variant
 // (e.g. Dracula <-> Alucard) so flipping mode re-derives the matching member
 // instead of showing a light skin's colors under a dark toggle. No family
@@ -160,7 +160,7 @@ function applySkinPreset() {
 
 // Reactive across every component in THIS webview (module-level $state is a
 // singleton). Each of App.svelte/TrayPopover.svelte is its own separate Tauri
-// window/webview though, so this does NOT sync between them on its own --
+// window/webview though, so this does NOT sync between them on its own,
 // initThemeSync()'s 'storage' listener still does that part, same as before.
 const state = $state({
   theme: loadTheme(),

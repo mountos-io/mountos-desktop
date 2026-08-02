@@ -33,9 +33,9 @@
           />
           <!-- Only once they have typed: the length rule is not news on an empty
                field, but a disabled Mount with no stated reason is. Always
-               rendered (block + min-h reserves its line -- min-height is a
+               rendered (block + min-h reserves its line, min-height is a
                no-op on the default inline display) rather than conditionally
-               mounted -- toggling this in and out of the DOM on the first
+               mounted. Toggling this in and out of the DOM on the first
                keystroke was resizing the whole dialog under the user's cursor.
                aria-describedby links it to the input unconditionally (harmless
                empty otherwise) so aria-invalid has a stated reason attached,

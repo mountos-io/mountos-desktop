@@ -111,7 +111,7 @@
           <strong class="min-w-0 truncate">{profile.name}</strong>
         </button>
       {:else}
-        <div class="tech-grid p-7 text-center">
+        <div class="tech-grid px-7 py-10 text-center">
           <p>{appState.profiles.length === 0 ? 'No saved profiles yet.' : `No profiles match "${appState.profileQuery}".`}</p>
         </div>
       {/each}
@@ -194,7 +194,7 @@
             <!-- Read-only once actually saved: require_stable_identity
                  (src-tauri/src/lib.rs) then rejects changing it server-side.
                  Checked against the last-loaded/saved snapshot, not the live
-                 draft -- picking a value in the Select below is not yet
+                 draft. Picking a value in the Select below is not yet
                  saved, and must not switch to this locked state before Save
                  is pressed. -->
             <Label id="profile-volume-kind-label">Volume kind</Label>
@@ -347,7 +347,7 @@
       </CommandPreview>
     </form>
   {:else}
-    <div class="surface tech-grid grid justify-items-center gap-2 p-7 text-center">
+    <div class="surface tech-grid grid justify-items-center gap-3 px-7 py-10 text-center">
       <FilePlus size={28} aria-hidden="true" />
       <strong>No profile selected</strong>
       <p>Save a profile to mount a mountOS volume in one click, with credentials in the OS vault and the exact CLI command shown before every action.</p>

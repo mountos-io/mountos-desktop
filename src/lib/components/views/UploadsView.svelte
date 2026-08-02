@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     ArrowRight,
+    Check,
     ChevronLeft,
     Clock,
     Copy,
@@ -42,6 +43,7 @@
     requestUploadPrune,
     requestUploadResume,
     runUploadCancel,
+    runUploadFinish,
     runUploadList,
     runUploadRetryFailed,
     runUploadStart,
@@ -51,7 +53,7 @@
   import type { MountInstance, MountProfile, UploadJob } from '$lib/types'
   import { formatBytes } from '$lib/utils'
 
-  // Fetch exactly once per mount, not gated on uploads.length === 0 -- unlike
+  // Fetch exactly once per mount, not gated on uploads.length === 0. Unlike
   // forks (every profile always has at least "main", so that gate never
   // stays true after a real fetch), a genuinely empty job list is the normal
   // first-run state here, and re-gating on length would refetch forever.
@@ -63,7 +65,7 @@
     }
   })
 
-  // Ticks so "Updated Xs ago" stays live without a real refetch -- there's
+  // Ticks so "Updated Xs ago" stays live without a real refetch. There's
   // no auto-poll for the uploads list (see uploadsLastFetchedAt's own doc
   // comment), so this is purely a staleness indicator, not a feed.
   let now = $state(Date.now())
@@ -92,7 +94,7 @@
 
   // The server's own state classification has no "completed with failures"
   // concept (a settle-and-exit with permanent failures still stamps
-  // CompletedAt and clears HaltReason -- see mountos-servers cmd_upload.go,
+  // CompletedAt and clears HaltReason, see mountos-servers cmd_upload.go,
   // exit code 3 is the only place that distinction is visible), so a job
   // that permanently dropped files would otherwise render an identical
   // calm "completed" badge to a fully clean one. Derived client-side from
@@ -102,14 +104,24 @@
   }
 
   // A daemon-mode job (started/resumed without --once) never transitions to
-  // "completed" on its own, no matter how empty its queue is -- it just
+  // "completed" on its own, no matter how empty its queue is. It just
   // idles and rescans on --rescan-interval forever (mountos-servers
   // upload_daemon.go: only --once, or a settled source-profile job, ever
   // exits on a settled pass). Without this, "running" looks identical
-  // whether it's actively transferring data or has nothing left to do --
+  // whether it's actively transferring data or has nothing left to do,
   // the state most likely to be mistaken for "stuck".
   function isIdleRunning(job: UploadJob): boolean {
     return job.state === 'running' && !(job.counts.pending || job.counts.uploading)
+  }
+
+  // A resumable job that never reached a terminal transition (cancelled, or
+  // otherwise interrupted) despite having drained everything (0 pending, 0
+  // uploading) has no way to become "completed" short of reconnecting and
+  // running resume just to confirm what's already true locally. This is the
+  // gate for offering "Mark complete" (runUploadFinish), which does the
+  // same thing offline.
+  function isUploadFinishable(job: UploadJob): boolean {
+    return job.state === 'resumable' && !(job.counts.pending || job.counts.uploading)
   }
 
   const selectedJob = $derived(appState.uploads.find((job) => job.jobId === appState.uploadSelectedJobId) ?? null)
@@ -117,7 +129,7 @@
   $effect(() => {
     // The selected job can vanish from the list after a refresh (pruned, or
     // simply not returned this pass), or drop out of view because it just
-    // completed cleanly and "show completed" is off -- fall back to the
+    // completed cleanly and "show completed" is off. Fall back to the
     // first VISIBLE row (not just any row) rather than keeping a selection
     // with nothing highlighted to show for it.
     if (appState.uploadSelectedJobId && !computed.uploadVisibleJobs.some((job) => job.jobId === appState.uploadSelectedJobId)) {
@@ -132,7 +144,7 @@
   }
 
   // One combined picker instead of a profile/instance toggle plus two
-  // separate comboboxes -- values are prefixed to disambiguate on
+  // separate comboboxes. Values are prefixed to disambiguate on
   // selection, since a profile id and a mount path share no namespace.
   const uploadSourceOptions = $derived([
     ...computed.uploadFilteredProfiles.map((p) => ({ value: `profile:${p.id}`, label: `Profile — ${p.name}` })),
@@ -163,8 +175,8 @@
 
   const resumeJob = $derived(appState.uploadResumePromptFor)
 
-  // Resume works from discoveryUrl/accessKeyId alone -- see resumeUpload's
-  // own comment -- not a saved profile, so this synthetic object exists
+  // Resume works from discoveryUrl/accessKeyId alone (see resumeUpload's
+  // own comment), not a saved profile, so this synthetic object exists
   // purely to feed the shared argv builder/command preview the same way
   // start/browse's own synthetic profiles do for their no-profile sources.
   const resumeProfile = $derived({
@@ -227,7 +239,7 @@
           bind:value={() => uploadSourceValue, (value) => selectUploadSource(value)}
         />
         {#if computed.uploadFilteredProfiles.length === 0 && computed.uploadEligibleInstances.length === 0}
-          <p class="text-muted-foreground text-sm">No saved profiles or running instances found -- add a profile, or mount a volume first.</p>
+          <p class="text-muted-foreground text-sm">No saved profiles or running instances found. Add a profile, or mount a volume first.</p>
         {/if}
       </div>
 
@@ -430,7 +442,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         <Checkbox bind:checked={appState.uploadResumeOnce} label="Settle and exit (--once)" />
         <InfoTip text="Once every pending file is uploaded, exits the job with a real completed status (`--once`).
 
-**Leave this unchecked** and the job goes back to running as a background daemon: it rescans the source on an interval forever, watching for new/changed files, and never marks itself completed on its own -- even once there's nothing left to do. That's the `running` + nothing pending state you'd otherwise see.
+**Leave this unchecked** and the job goes back to running as a background daemon. It rescans the source on an interval forever, watching for new/changed files, and never marks itself completed on its own, even once there's nothing left to do. That's the `running` + nothing pending state you'd otherwise see.
 
 Check this when you just want the current backlog cleared and the job to finish for real." />
       </div>
@@ -462,6 +474,32 @@ Check this when you just want the current backlog cleared and the job to finish 
       </div>
     </form>
   </section>
+{:else if appState.uploads.length === 0}
+  <!-- Covers BOTH "still loading, don't know the count yet" and "confirmed
+       empty" in the SAME outer panel shape (full-width, full-height);
+       only the inner content swaps (a placeholder vs. the real empty
+       state), so resolving the fetch never jumps the layout around the way
+       switching between a 2-column "loading" shell and a single-panel
+       "empty" shell would. A 280px sidebar showing only its own "no jobs"
+       echo of this same panel is dead weight anyway, not a real second
+       source of information. -->
+  <section class="surface tech-grid flex-1 grid content-center justify-items-center gap-3 m-[22px] px-7 py-10 text-center outline-hidden" tabindex="-1" use:focusOnMount>
+    {#if appState.uploadsBusy}
+      <Upload size={28} aria-hidden="true" class="animate-pulse" />
+      <p class="text-muted-foreground">Loading upload jobs...</p>
+    {:else}
+      <Upload size={28} aria-hidden="true" />
+      <strong>No active uploads</strong>
+      {#if appState.uploadsError}
+        <p class="text-destructive text-sm" role="alert">{appState.uploadsError}</p>
+      {/if}
+      <p>Push a local folder or file list into a mountOS volume, with the exact CLI command shown before every action.</p>
+      <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
+        <Plus size={16} aria-hidden="true" />
+        New upload
+      </Button>
+    {/if}
+  </section>
 {:else}
   <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
     <div class="surface p-4">
@@ -491,15 +529,9 @@ Check this when you just want the current backlog cleared and the job to finish 
         />
       {/if}
       <div class="grid gap-1.5">
-        {#if appState.uploadsBusy && appState.uploads.length === 0}
-          <p class="text-muted-foreground text-sm">Loading upload jobs...</p>
-        {:else if appState.uploads.length === 0}
-          <div class="tech-grid p-5 text-center">
-            <p>No active uploads.</p>
-          </div>
-        {:else if computed.uploadVisibleJobs.length === 0}
-          <div class="tech-grid p-5 text-center">
-            <p>All {appState.uploads.length} job{appState.uploads.length === 1 ? '' : 's'} completed.</p>
+        {#if computed.uploadVisibleJobs.length === 0}
+          <div class="tech-grid px-5 py-6 text-center">
+            <p>{appState.uploads.length === 1 ? 'The only job has completed.' : `All ${appState.uploads.length} jobs have completed.`}</p>
           </div>
         {:else}
           {#each computed.uploadVisibleJobs as job (job.jobId)}
@@ -519,7 +551,7 @@ Check this when you just want the current backlog cleared and the job to finish 
           {/each}
           {#if computed.uploadVisibleJobsTruncated}
             <p class="text-muted-foreground text-sm p-2">
-              Showing the first {computed.uploadVisibleJobs.length} of {computed.uploadVisibleJobsTotal} jobs -- prune old jobs to see the rest.
+              Showing the first {computed.uploadVisibleJobs.length} of {computed.uploadVisibleJobsTotal} jobs, prune old jobs to see the rest.
             </p>
           {/if}
         {/if}
@@ -531,7 +563,7 @@ Check this when you just want the current backlog cleared and the job to finish 
       {@const resumable = job.state === 'halted' || job.state === 'resumable'}
       <!-- content-start: this panel is a grid cell stretched to the full
            section height (grid-rows-1 on the parent section above), and
-           CSS grid's default align-content is stretch -- without this, the
+           CSS grid's default align-content is stretch. Without this, the
            header/detail/progress rows spread apart to fill that height
            instead of staying compact at the top. -->
       <div class="surface corner-brackets p-4 grid content-start gap-4">
@@ -545,6 +577,11 @@ Check this when you just want the current backlog cleared and the job to finish 
                 <OctagonX size={16} aria-hidden="true" /> Cancel
               </Button>
             {:else if resumable}
+              {#if isUploadFinishable(job)}
+                <Button type="button" variant="outline" title="Nothing is pending or uploading, this just needs the terminal state confirmed. No reconnect needed." onclick={() => runUploadFinish(job)} disabled={appState.uploadsBusy}>
+                  <Check size={16} aria-hidden="true" /> Mark complete
+                </Button>
+              {/if}
               <Button type="button" onclick={() => requestUploadResume(job)} disabled={appState.uploadsBusy}>
                 <RotateCcw size={16} aria-hidden="true" /> Resume
               </Button>
@@ -584,7 +621,10 @@ Check this when you just want the current backlog cleared and the job to finish 
               <p class="tabular-nums">
                 {job.totalFiles} file{job.totalFiles === 1 ? '' : 's'}, {formatBytes(job.totalBytes ?? 0)}
                 {#if job.state !== 'completed' && job.state !== 'halted'}
-                  <span class="text-muted-foreground text-xs" title="A daemon-mode job keeps discovering more on every rescan -- this isn't final until the job settles.">(as of last scan)</span>
+                  <span class="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                    (as of last scan)
+                    <InfoTip text="A daemon-mode job keeps discovering more on every rescan, so the file count and byte total shown here aren't final. They'll stop changing once the job settles." />
+                  </span>
                 {/if}
               </p>
             {:else}
@@ -650,16 +690,16 @@ Check this when you just want the current backlog cleared and the job to finish 
         </div>
       </div>
     {:else}
-      <!-- No "New upload" button here -- the left panel already has the
+      <!-- No "New upload" button here, the left panel already has the
            primary one directly above this same empty state, so a second
            identical CTA on screen at once was pure duplication. content-center:
            same grid-cell-stretched-to-full-height issue as the job detail
-           panel above -- without it, icon/heading/paragraph spread apart to
+           panel above. Without it, icon/heading/paragraph spread apart to
            fill the panel instead of sitting together as one centered cluster. -->
-      <div class="surface tech-grid grid content-center justify-items-center gap-2 p-7 text-center">
+      <div class="surface tech-grid grid content-center justify-items-center gap-3 px-7 py-10 text-center">
         <Upload size={28} aria-hidden="true" />
-        <strong>No active uploads</strong>
-        <p>Use "New upload" on the left to start a bulk upload from a saved profile or a running mount instance, with the exact CLI command shown before every action.</p>
+        <strong>No job selected</strong>
+        <p>Pick a job on the left to see its progress and details.</p>
       </div>
     {/if}
   </section>

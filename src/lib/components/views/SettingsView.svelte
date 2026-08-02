@@ -83,7 +83,7 @@
   )
 
   // Filtered by the live resolved mode (not just an explicit Light/Dark
-  // pick) so the picker still works under "System" -- and stays correct if
+  // pick) so the picker still works under "System", and stays correct if
   // the OS appearance flips while this view is open.
   const skinPresets = $derived(presetsForMode(themeState.resolvedMode))
   const defaultSkinName = $derived(defaultSkin(themeState.resolvedMode))
@@ -169,7 +169,7 @@
           <span class="mono-label">{themeState.brightness}%</span>
           <!-- Next to the percentage, not sharing the slider's own row: that
                row is the only element there, so Reset mounting/unmounting no
-               longer changes the slider's width -- it used to sit alongside
+               longer changes the slider's width. It used to sit alongside
                the slider in a flex row, visibly shrinking (and un-shrinking)
                the track and jumping the thumb under the cursor mid-drag. -->
           {#if themeState.brightness !== 100}
@@ -215,7 +215,7 @@
       />
     </div>
     <div class="grid gap-1.5">
-      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-dir-label">Default disk cache directory</strong><InfoTip text="Seeds new profiles only. Blank uses the CLI's own ~/.mountOS/cache. Shared across every volume and fork is safe -- mountos already isolates each one under its own subfolder." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-dir-label">Default disk cache directory</strong><InfoTip text="Seeds new profiles only. Blank uses the CLI's own ~/.mountOS/cache. Shared across every volume and fork is safe, mountos already isolates each one under its own subfolder." /></span>
       <div class="flex gap-2">
         <Input
           type="text"
@@ -353,7 +353,7 @@
     {:else}
       <span class="flex items-center gap-1.5 text-warning">
         <AlertTriangle size={14} aria-hidden="true" />
-        Not found on PATH -- pin it below
+        Not found on PATH, pin it below
       </span>
     {/if}
   </div>
