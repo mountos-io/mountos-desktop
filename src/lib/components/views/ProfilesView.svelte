@@ -62,11 +62,6 @@
     toggleMountHelp,
   } from '$lib/app-state.svelte'
 
-  const secretRefOptions = $derived([
-    { value: 'prompt', label: 'Prompt on mount' },
-    { value: 'vault', label: 'Vault' },
-  ])
-
   // Only offered while unset: once a real mount detects the volume kind,
   // require_stable_identity (src-tauri/src/lib.rs) locks it server-side and
   // this profile switches to the read-only Badge instead of this Select.
@@ -122,7 +117,7 @@
     {@const selectedProfile = computed.selectedProfile}
     <form class="surface corner-brackets p-4 grid gap-4" onsubmit={(event) => { event.preventDefault(); void persistSelected() }}>
       <div class="flex items-start justify-end gap-4">
-        <div class="relative flex flex-wrap items-center gap-2 border border-border/30 p-2 ml-auto">
+        <div class="relative flex flex-wrap items-center gap-2 p-2 ml-auto">
           <div class="tech-grid absolute inset-0 pointer-events-none" aria-hidden="true"></div>
           <Button variant="outline" size="icon" class="relative" title="Duplicate profile" aria-label="Duplicate profile" disabled={appState.busy} onclick={duplicateSelected}>
             <Copy size={16} aria-hidden="true" />
@@ -147,23 +142,28 @@
             Mount
           </Button>
           {#if selectedProfile.volumeKind !== 'iceberg'}
-            <Button type="button" class="relative" title="Open a read-only, point-in-time view of this volume" disabled={appState.busy} onclick={() => requestSnapshotView(selectedProfile)}>
+            <!-- Same shared prerequisites Mount/Save already gate on (extra-args
+                 validity, access-key/volume-name format), minus mountPathError:
+                 these all open their own scratch/view mount, never
+                 selectedProfile.mountPath, so an unset or invalid mount path
+                 doesn't block them the way it blocks Mount itself. -->
+            <Button type="button" class="relative" title="Open a read-only, point-in-time view of this volume" disabled={appState.busy || !!appState.extraArgsError || appState.rejectedArgs.length > 0 || !!computed.accessKeyError || !!computed.volumeNameError} onclick={() => requestSnapshotView(selectedProfile)}>
               <Camera size={16} aria-hidden="true" />
               Snapshot
             </Button>
-            <Button type="button" class="relative" title="Open a read-only view of this volume's deleted files" disabled={appState.busy} onclick={() => requestDeletedView(selectedProfile)}>
+            <Button type="button" class="relative" title="Open a read-only view of this volume's deleted files" disabled={appState.busy || !!appState.extraArgsError || appState.rejectedArgs.length > 0 || !!computed.accessKeyError || !!computed.volumeNameError} onclick={() => requestDeletedView(selectedProfile)}>
               <Recycle size={16} aria-hidden="true" />
               Deleted files
             </Button>
-            <Button type="button" class="relative" title="Open a read-only view of one file's version history" disabled={appState.busy} onclick={() => requestVersionView(selectedProfile)}>
+            <Button type="button" class="relative" title="Open a read-only view of one file's version history" disabled={appState.busy || !!appState.extraArgsError || appState.rejectedArgs.length > 0 || !!computed.accessKeyError || !!computed.volumeNameError} onclick={() => requestVersionView(selectedProfile)}>
               <History size={16} aria-hidden="true" />
               Versions
             </Button>
-            <Button type="button" class="relative" title="Launch an S3/HDFS gateway for this volume" disabled={appState.busy} onclick={() => requestGatewayView(selectedProfile)}>
+            <Button type="button" class="relative" title="Launch an S3/HDFS gateway for this volume" disabled={appState.busy || !!appState.extraArgsError || appState.rejectedArgs.length > 0 || !!computed.accessKeyError || !!computed.volumeNameError} onclick={() => requestGatewayView(selectedProfile)}>
               <Network size={16} aria-hidden="true" />
               Gateway
             </Button>
-            <Button type="button" class="relative" title="Browse and manage this volume's forks" disabled={appState.busy} onclick={() => enterForkBrowser(selectedProfile)}>
+            <Button type="button" class="relative" title="Browse and manage this volume's forks" disabled={appState.busy || !!appState.extraArgsError || appState.rejectedArgs.length > 0 || !!computed.accessKeyError || !!computed.volumeNameError} onclick={() => enterForkBrowser(selectedProfile)}>
               <GitBranch size={16} aria-hidden="true" />
               Forks
             </Button>
@@ -270,34 +270,24 @@
             </Button>
           </div>
         </div>
-        <div class="grid gap-1.5">
-          <Label id="profile-secret-ref-label">Secret</Label>
-          <Select
-            options={secretRefOptions}
-            value={selectedProfile.secretRef}
-            ariaLabelledby="profile-secret-ref-label"
-            onchange={(value) => patchProfile({ secretRef: value as 'vault' | 'prompt' })}
-          />
-          {#if !selectedProfile.accessKeyId}
-            <small class="text-muted-foreground text-sm">Vault storage needs an access key ID first.</small>
-          {/if}
-        </div>
       </div>
 
       {#if computed.mountPathError}
         <Callout>{computed.mountPathError}</Callout>
       {/if}
 
-      <div class="flex items-center justify-between gap-4">
-        <Badge variant={appState.vaultStatus[selectedProfile.id] ? 'success' : 'warning'}>
-          <KeyRound size={14} aria-hidden="true" />
-          {appState.vaultStatus[selectedProfile.id] ? 'Secret stored' : 'No vaulted secret'}
-        </Badge>
-        <Button variant="destructive" disabled={!appState.vaultStatus[selectedProfile.id] || appState.busy} onclick={() => forgetSecret(selectedProfile.id)}>
-          <Trash2 size={16} aria-hidden="true" />
-          Forget secret
-        </Button>
-      </div>
+      {#if appState.vaultStatus[selectedProfile.id]}
+        <div class="flex items-center justify-between gap-4">
+          <Badge variant="success">
+            <KeyRound size={14} aria-hidden="true" />
+            Secret stored
+          </Badge>
+          <Button variant="destructive" disabled={appState.busy} onclick={() => forgetSecret(selectedProfile.id)}>
+            <Trash2 size={16} aria-hidden="true" />
+            Forget secret
+          </Button>
+        </div>
+      {/if}
 
       <div class="flex flex-wrap gap-4">
         <Checkbox checked={selectedProfile.readOnly} onchange={(e) => patchProfile({ readOnly: e.currentTarget.checked })} label="Read only" />

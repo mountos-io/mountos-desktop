@@ -7,9 +7,12 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{
     menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem},
@@ -2810,6 +2813,81 @@ fn detect_and_persist_volume_kind(app: &AppHandle, profile: &MountProfile) {
     if let Ok(bytes) = serde_json::to_vec_pretty(&updated) {
         let _ = fs::write(path, bytes);
     }
+}
+
+// Mirrors the daemon/CLI's own friendly-name generator: same word lists
+// (kept in sync so a CLI-created job and a GUI-created profile draw from the
+// same vocabulary) and the same "adjective-noun-xxxx" shape. Not a job/
+// profile identifier, a display label only, generated once by the caller
+// and then persisted as-is (here, a new profile's name field) -- so this
+// doesn't need cryptographic randomness, which is why it doesn't pull in
+// the `rand` crate for a cosmetic string. A splitmix64 mix seeded from
+// wall-clock time, process id, and a per-process call counter is plenty to
+// avoid same-instant collisions.
+const FRIENDLY_ADJECTIVES: &[&str] = &[
+    "amber", "arid", "auburn", "azure", "bold", "brave", "brisk", "calm", "clever", "cosmic",
+    "crimson", "crisp", "daring", "dusky", "eager", "electric", "emerald", "fleet", "fluent",
+    "frosty", "gentle", "golden", "grand", "hardy", "hazy", "honest", "humble", "ivory", "jade",
+    "jolly", "keen", "lively", "lucid", "lunar", "mellow", "merry", "mighty", "misty", "mossy",
+    "nimble", "noble", "quiet", "quick", "radiant", "rapid", "rosy", "rugged", "rustic", "sandy",
+    "sharp", "silent", "silver", "sleek", "snowy", "solar", "sonic", "sparse", "steady", "stellar",
+    "stormy", "sturdy", "sunny", "swift", "tidal", "vast", "velvet", "vivid", "warm", "windy",
+    "wise", "witty", "zesty",
+];
+
+const FRIENDLY_NOUNS: &[&str] = &[
+    "albatross", "antelope", "aurora", "badger", "basin", "beacon", "bison", "bobcat", "boulder",
+    "canyon", "cascade", "cavern", "cedar", "comet", "condor", "cougar", "coyote", "crane",
+    "creek", "delta", "dolphin", "dune", "eagle", "ember", "estuary", "falcon", "fern", "fjord",
+    "fox", "geyser", "glacier", "gorge", "grove", "gulch", "harbor", "hawk", "heron", "hollow",
+    "horizon", "ibis", "island", "jackal", "jaguar", "juniper", "kestrel", "lagoon", "lark",
+    "lynx", "magpie", "marsh", "meadow", "meteor", "mirage", "moraine", "nebula", "orca", "oriole",
+    "osprey", "otter", "outpost", "panther", "pelican", "phoenix", "pinnacle", "plateau",
+    "prairie", "quail", "quarry", "quasar", "raven", "reef", "ridge", "sable", "savanna",
+    "sequoia", "shoal", "sierra", "solstice", "sparrow", "summit", "swallow", "talon", "terrace",
+    "thicket", "thistle", "tundra", "valley", "viper", "vista", "vortex", "warbler", "willow",
+    "wren", "zephyr",
+];
+
+const FRIENDLY_NAME_HEX_DIGITS: &[u8] = b"0123456789abcdef";
+
+static FRIENDLY_NAME_CALLS: AtomicU64 = AtomicU64::new(0);
+
+fn friendly_name_splitmix64(seed: u64) -> u64 {
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn friendly_name_next_seed() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let pid = std::process::id() as u64;
+    let call = FRIENDLY_NAME_CALLS.fetch_add(1, Ordering::Relaxed);
+    friendly_name_splitmix64(
+        nanos ^ pid.wrapping_mul(0x2545_F491_4F6C_DD1D) ^ call.wrapping_mul(0xD6E8_FEB8_6659_FD93),
+    )
+}
+
+fn random_friendly_name_value() -> String {
+    let adjective = FRIENDLY_ADJECTIVES[(friendly_name_next_seed() as usize) % FRIENDLY_ADJECTIVES.len()];
+    let noun = FRIENDLY_NOUNS[(friendly_name_next_seed() as usize) % FRIENDLY_NOUNS.len()];
+    let mut seed = friendly_name_next_seed();
+    let mut suffix = [0u8; 4];
+    for byte in suffix.iter_mut() {
+        *byte = FRIENDLY_NAME_HEX_DIGITS[(seed as usize) % FRIENDLY_NAME_HEX_DIGITS.len()];
+        seed = friendly_name_splitmix64(seed);
+    }
+    // suffix is built entirely from FRIENDLY_NAME_HEX_DIGITS, always valid UTF-8.
+    format!("{adjective}-{noun}-{}", std::str::from_utf8(&suffix).unwrap())
+}
+
+#[tauri::command]
+fn random_friendly_name() -> String {
+    random_friendly_name_value()
 }
 
 #[tauri::command]
@@ -6136,6 +6214,7 @@ pub fn run() {
             get_settings,
             save_settings,
             list_profiles,
+            random_friendly_name,
             save_profile,
             delete_profile,
             export_profile,

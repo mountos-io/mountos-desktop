@@ -104,6 +104,16 @@ export async function listProfiles(): Promise<MountProfile[]> {
   return invoke<MountProfile[]>('list_profiles')
 }
 
+// Backed by Rust's random_friendly_name (src-tauri/src/lib.rs), mirroring
+// the daemon/CLI's own generator -- same word lists, same
+// "adjective-noun-xxxx" shape, so a CLI job and a GUI profile read as the
+// same product. No browser-fallback word list here: outside the desktop
+// bridge this just falls back to the old static placeholder.
+export async function randomFriendlyName(): Promise<string> {
+  if (!hasDesktopBridge()) return 'New profile'
+  return invoke<string>('random_friendly_name')
+}
+
 export async function saveProfile(profile: MountProfile): Promise<MountProfile> {
   if (!hasDesktopBridge()) return { ...profile, updatedAt: new Date().toISOString() }
   return invoke<MountProfile>('save_profile', { profile })

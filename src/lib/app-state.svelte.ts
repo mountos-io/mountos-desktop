@@ -70,6 +70,7 @@ import {
   openUploadLog,
   openVersionView,
   openVersionViewForInstance,
+  randomFriendlyName,
   ensureUploadBrowseMount,
   listUploads,
   pruneUploads,
@@ -1099,13 +1100,16 @@ async function autofixVolumeKinds(instances: MountInstance[]) {
   }
 }
 
-export function newProfile(preset: Partial<MountProfile> = {}) {
+// name generation only runs when the caller doesn't already have one to
+// give (duplicateProfile/saveAsProfile always set preset.name): the ??
+// short-circuit means the Rust round trip is skipped entirely for those.
+export async function newProfile(preset: Partial<MountProfile> = {}) {
   const now = new Date().toISOString()
   const profile: MountProfile = {
     id: crypto.randomUUID(),
     schemaVersion: 1,
     kind: 'mount',
-    name: 'New profile',
+    name: preset.name ?? (await randomFriendlyName()),
     volume: '',
     fork: 'main',
     mountPath: '',
