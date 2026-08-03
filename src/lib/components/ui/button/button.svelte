@@ -4,7 +4,12 @@
   import { type VariantProps, tv } from "tailwind-variants";
 
   export const buttonVariants = tv({
-    base: "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm text-sm font-medium outline-none transition-[color,background-color,border-color,transform,opacity] focus-visible:ring-[2px] disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+    // disabled:cursor-not-allowed, not pointer-events-none: pointer-events:none
+    // removes the element from hit-testing entirely, so the browser shows
+    // whatever's underneath (default cursor) instead of not-allowed -- a
+    // disabled button already blocks clicks/keyboard activation natively,
+    // this only needs to keep hit-testing alive for the cursor to render.
+    base: "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm text-sm font-medium outline-none transition-[color,background-color,border-color,transform,opacity] focus-visible:ring-[2px] disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
     variants: {
       variant: {
         default: "bg-transparent text-foreground border border-foreground/75 hover:bg-accent hover:border-foreground active:bg-primary/10 active:border-primary/30 active:scale-[0.98] transition-[color,background-color,border-color,transform,opacity] duration-150",
