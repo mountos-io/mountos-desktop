@@ -10,6 +10,11 @@ MAC_BUNDLE_DIR := src-tauri/target/$(MAC_TARGET)/release/bundle
 MAC_APP := $(MAC_BUNDLE_DIR)/macos/$(APP_NAME).app
 WIN_TARGETS := x86_64-pc-windows-msvc aarch64-pc-windows-msvc
 
+# signtool ships with the Windows SDK and is not on PATH in a stock shell, so
+# fall back to the newest SDK build that has it rather than failing with
+# "command not found". Override with SIGNTOOL=/path/to/signtool.exe.
+SIGNTOOL ?= $(shell command -v signtool 2>/dev/null || ls -1 "/c/Program Files (x86)/Windows Kits/10/bin"/*/x64/signtool.exe 2>/dev/null | sort | tail -1)
+
 # PATH edits do not survive between recipes, so every recipe invoking cargo,
 # rustup or tauri sources the guard itself rather than depending on a target.
 RUST := . scripts/ensure-rust.sh &&
@@ -100,16 +105,20 @@ notarize-macos: ## Notarize + staple the .dmg (env: APPLE_ID APPLE_PASSWORD APPL
 # Run from a POSIX shell (Git Bash or CI); signtool comes from the Windows SDK.
 # Signs with the certificate already imported into the Windows cert store, so
 # no password ever appears on a command line.
+# MSYS_NO_PATHCONV=1: Git Bash rewrites arguments that look like absolute paths,
+# turning /fd into C:/Program Files/Git/fd. signtool then reports "No file digest
+# algorithm specified" even though the flag is right there in the command.
 sign-windows: ## signtool-sign every built NSIS installer, both arches (env: WINDOWS_CERT_THUMBPRINT TIMESTAMP_URL)
 	@test -n "$(WINDOWS_CERT_THUMBPRINT)" || { echo "error: WINDOWS_CERT_THUMBPRINT (SHA1 thumbprint of the store-imported cert) is required"; exit 1; }
 	@test -n "$(TIMESTAMP_URL)" || { echo "error: TIMESTAMP_URL is required (your CA's RFC 3161 server, e.g. http://time.certum.pl or http://timestamp.digicert.com)"; exit 1; }
+	@test -n "$(SIGNTOOL)" || { echo "error: signtool.exe not found. Install the Windows SDK, or pass SIGNTOOL=/path/to/signtool.exe"; exit 1; }
 	@found=0; \
 	for target in $(WIN_TARGETS); do \
 		for exe in src-tauri/target/$$target/release/bundle/nsis/*.exe; do \
 			[ -e "$$exe" ] || continue; \
 			found=1; \
-			signtool sign /fd SHA256 /td SHA256 /tr "$(TIMESTAMP_URL)" /sha1 "$(WINDOWS_CERT_THUMBPRINT)" "$$exe" || exit 1; \
-			signtool verify /pa "$$exe" || exit 1; \
+			MSYS_NO_PATHCONV=1 "$(SIGNTOOL)" sign /fd SHA256 /td SHA256 /tr "$(TIMESTAMP_URL)" /sha1 "$(WINDOWS_CERT_THUMBPRINT)" "$$exe" || exit 1; \
+			MSYS_NO_PATHCONV=1 "$(SIGNTOOL)" verify /pa "$$exe" || exit 1; \
 		done; \
 	done; \
 	test "$$found" = "1" || { echo "error: no installer under src-tauri/target/<arch>/release/bundle/nsis; run make bundle first"; exit 1; }
