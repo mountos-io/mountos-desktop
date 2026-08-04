@@ -62,6 +62,11 @@
     ],
     "resources": {
       "../LICENSES/*.json": "LICENSES/"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine"
+      }
     }
   }
 }
