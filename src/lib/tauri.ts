@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
 import { join, tempDir } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/plugin-dialog'
-import type { DownloadStartParams, GatewayLaunchParams, UploadStartParams } from './cli'
+import type { DownloadStartParams, GatewayLaunchParams, SinkStartParams, UploadStartParams } from './cli'
 import type {
+  CliSignatureStatus,
   DesktopSettings,
   DiagnosticsBundle,
   DownloadJob,
@@ -13,6 +14,8 @@ import type {
   MountProfile,
   MountResult,
   SecretStatus,
+  SinkJob,
+  SinkStatus,
   SystemState,
   ThirdPartyLicenses,
   UnmountResult,
@@ -130,7 +133,7 @@ export async function exportProfile(profileId: string): Promise<ExportedProfile>
 }
 
 export async function getSettings(): Promise<DesktopSettings> {
-  if (!hasDesktopBridge()) return { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false }
+  if (!hasDesktopBridge()) return { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false, featureOverrides: {} }
   return invoke<DesktopSettings>('get_settings')
 }
 
@@ -342,6 +345,68 @@ export async function pruneDownloads(keep: number): Promise<string> {
   return invoke<string>('prune_downloads', { keep })
 }
 
+export async function listSinks(): Promise<SinkJob[]> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<SinkJob[]>('list_sinks')
+}
+
+// Exactly one of profileId/instance is expected, same resolution as
+// startUpload's (reuses resolve_upload_source_profile Rust-side, see its own
+// doc comment): sink's connection needs are identical to upload's (a saved
+// profile, or an already-mounted instance's credentials/fork), only the
+// positionals differ in meaning (source is the M3U8 URL, not a local path).
+export async function startSink(
+  profileId: string | undefined,
+  instance: UploadInstanceRef | undefined,
+  source: string,
+  dest: string,
+  params: SinkStartParams,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('start_sink', { profileId, instance, source, dest, params, secret })
+}
+
+// Resume works from discoveryUrl/accessKeyId alone, same as resumeUpload,
+// job.json already fixes the job's volume/fork/paths server-side.
+export async function resumeSink(
+  discoveryUrl: string,
+  accessKeyId: string,
+  jobId: string,
+  secret?: string,
+): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('resume_sink', { discoveryUrl, accessKeyId, jobId, secret })
+}
+
+export async function cancelSink(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('cancel_sink', { jobId })
+}
+
+// Sink's own graceful stop: unlike finishUpload/finishDownload (only valid
+// once a halted job's WAL is already drained), sink's control socket lets a
+// RUNNING job be told to finish live, draining the WAL, writing the real
+// EXT-X-ENDLIST, and ending the job. Works the same way finishUpload/
+// finishDownload do when the job isn't running.
+export async function finishSink(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('finish_sink', { jobId })
+}
+
+export async function pruneSinks(keep: number): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('prune_sinks', { keep })
+}
+
+// The fuller single-job rate/lag snapshot (`sink status --job <id> --json`),
+// fetched on demand for whichever job is currently selected rather than
+// polled, mirrors this app's "no background CLI shell-out" stance elsewhere.
+export async function getSinkStatus(jobId: string): Promise<SinkStatus> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<SinkStatus>('get_sink_status', { jobId })
+}
+
 export async function openSnapshotView(
   profileId: string,
   destination: string,
@@ -480,6 +545,11 @@ export async function openDownloadLog(path: string): Promise<void> {
   await invoke('open_download_log', { path })
 }
 
+export async function openSinkLog(path: string): Promise<void> {
+  if (!hasDesktopBridge()) return
+  await invoke('open_sink_log', { path })
+}
+
 export async function getInstanceConfig(target: string): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('get_instance_config', { target })
@@ -534,6 +604,11 @@ export async function browseCliBinary(defaultPath?: string): Promise<string | nu
 export async function validateCliCandidate(path: string): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('validate_cli_candidate', { path })
+}
+
+export async function verifyCliSignature(path: string): Promise<CliSignatureStatus> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<CliSignatureStatus>('verify_cli_signature', { path })
 }
 
 export async function showMainWindow(): Promise<void> {

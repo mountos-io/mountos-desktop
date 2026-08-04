@@ -45,4 +45,6 @@ WCAG AA target. M1 acceptance criteria: complete keyboard-only path for mount/un
 
 ## Platform
 
-**Desktop only, not responsive.** A native macOS/Windows app window, not a web page; there is no mobile or tablet target and never will be. The main window enforces `minWidth: 860 / minHeight: 560` in `tauri.conf.json`, so the practical viewport range is "≥860px" with a tray-popover window as the only other surface (a fixed-size native panel, not a breakpoint target). Judge responsive/adaptive-layout audit criteria against that reality: a `@media (max-width: 860px)` rule is edge-case tolerance for tiling window managers at the exact floor, not a mobile layout, and should not be scored as if it needs to support phone/tablet widths.
+web
+
+**Desktop only, not responsive.** Tauri wraps the UI in a native macOS/Windows app window, not a web page; there is no mobile or tablet target and never will be. The main window enforces `minWidth: 860 / minHeight: 560` in `tauri.conf.json`, so the practical viewport range is "≥860px" with a tray-popover window as the only other surface (a fixed-size native panel, not a breakpoint target). Judge responsive/adaptive-layout audit criteria against that reality: a `@media (max-width: 860px)` rule is edge-case tolerance for tiling window managers at the exact floor, not a mobile layout, and should not be scored as if it needs to support phone/tablet widths.

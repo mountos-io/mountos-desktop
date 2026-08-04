@@ -45,10 +45,10 @@
     <ChevronLeft size={16} aria-hidden="true" /> Back to profile
   </button>
 
-  <h3 class="flex items-center gap-2"><History size={19} aria-hidden="true" /> {profile.name}: file versions</h3>
+  <h3 class="flex items-center gap-2 wrap-anywhere"><History size={19} aria-hidden="true" /> {profile.name}: file versions</h3>
 
   <form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void confirmVersionView() }}>
-    <p class="max-w-[70ch]">Mounts a read-only timeline of every version of one file from this profile's volume ("{profile.volume || profile.name}") at a folder you choose. It appears as its own row once ready.</p>
+    <p class="max-w-[70ch] wrap-anywhere">Mounts a read-only timeline of every version of one file from this profile's volume ("{profile.volume || profile.name}") at a folder you choose. It appears as its own row once ready.</p>
 
     <div class="grid gap-1.5">
       <Label>File</Label>

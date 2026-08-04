@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Command, Download, HardDrive, MonitorDot, PanelLeft, Plus, RefreshCw, Settings, Upload } from '@lucide/svelte'
+  import { Command, Download, HardDrive, MonitorDot, PanelLeft, PanelLeftOpen, Plus, Radio, RefreshCw, Settings, Upload } from '@lucide/svelte'
   import Toaster from '$lib/components/Toaster.svelte'
   import { Button } from '$lib/components/ui/button'
   import * as Breadcrumb from '$lib/components/ui/breadcrumb'
@@ -9,6 +9,7 @@
   import ProfilesView from '$lib/components/views/ProfilesView.svelte'
   import UploadsView from '$lib/components/views/UploadsView.svelte'
   import DownloadsView from '$lib/components/views/DownloadsView.svelte'
+  import SinkView from '$lib/components/views/SinkView.svelte'
   import SettingsView from '$lib/components/views/SettingsView.svelte'
   import SecretPromptDialog from '$lib/components/dialogs/SecretPromptDialog.svelte'
   import DeleteProfileDialog from '$lib/components/dialogs/DeleteProfileDialog.svelte'
@@ -21,9 +22,11 @@
   import ForkRestoreDialog from '$lib/components/dialogs/ForkRestoreDialog.svelte'
   import UploadPruneDialog from '$lib/components/dialogs/UploadPruneDialog.svelte'
   import DownloadPruneDialog from '$lib/components/dialogs/DownloadPruneDialog.svelte'
+  import SinkPruneDialog from '$lib/components/dialogs/SinkPruneDialog.svelte'
   import TipsDialog from '$lib/components/dialogs/TipsDialog.svelte'
   import ThirdPartyLicensesDialog from '$lib/components/dialogs/ThirdPartyLicensesDialog.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
+  import { FEATURE_REGISTRY } from '$lib/features'
   import {
     appState,
     computed,
@@ -31,26 +34,40 @@
     drillIntoFork,
     exitDownloadCreate,
     exitProfileSubView,
+    exitSinkCreate,
     exitUploadCreate,
     HIDDEN_POLL_MS,
     loadSettings,
     newProfile,
+    openJobPanelFloating,
     pollSystem,
     refresh,
     runDownloadList,
+    runSinkList,
     runUploadList,
+    setJobPanelCollapsed,
     toggleSidebar,
     viewTitle,
     type View,
   } from '$lib/app-state.svelte'
+
+  const sinkFeatureLabel = FEATURE_REGISTRY.find((feature) => feature.id === 'sink')?.label ?? 'Media ingest'
 
   const navItems: Array<{ id: View; label: string; icon: typeof MonitorDot }> = [
     { id: 'instances', label: 'Instances', icon: MonitorDot },
     { id: 'profiles', label: 'Profiles', icon: HardDrive },
     { id: 'uploads', label: 'Uploads', icon: Upload },
     { id: 'downloads', label: 'Downloads', icon: Download },
+    { id: 'sink', label: sinkFeatureLabel, icon: Radio },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]
+
+  // Optional features stay out of the sidebar until turned on in Settings.
+  // A nav item whose id matches a feature id is gated on the resolved
+  // feature state; an id absent from the registry (every other nav item)
+  // resolves to undefined, which is never `false`, so it always shows. See
+  // $lib/features for the registry.
+  const visibleNavItems = $derived(navItems.filter((item) => computed.resolvedFeatures[item.id] !== false))
 
   let commandPaletteOpen = $state(false)
   let viewScroller: HTMLDivElement | undefined = $state()
@@ -93,8 +110,26 @@
   type Crumb = { label: string; onclick?: () => void }
   const subViewLabels = { forks: 'Forks', snapshot: 'Snapshot view', deleted: 'Deleted files', version: 'File versions', gateway: 'Gateway' } as const
 
+  // Header chip for whichever job-list view is both mounted (its JobPanel
+  // section is actually on screen, not swapped for a create/resume/sub-view
+  // form -- see JobPanel's jobPanelMounted comment) and collapsed. Reuses
+  // navItems for label/icon so adding a future JobPanel-based view needs no
+  // changes here beyond the navItems entry it would add regardless.
+  const jobPanelChipItem = $derived(
+    appState.jobPanelMounted[appState.view] && appState.jobPanelCollapsed[appState.view]
+      ? visibleNavItems.find((item) => item.id === appState.view)
+      : undefined,
+  )
+
   const breadcrumbs = $derived.by((): Crumb[] => {
-    const rootAction = appState.view === 'uploads' ? exitUploadCreate : appState.view === 'downloads' ? exitDownloadCreate : exitProfileSubView
+    const rootAction =
+      appState.view === 'uploads'
+        ? exitUploadCreate
+        : appState.view === 'downloads'
+          ? exitDownloadCreate
+          : appState.view === 'sink'
+            ? exitSinkCreate
+            : exitProfileSubView
     const crumbs: Array<Crumb & { onclick?: () => void }> = [{ label: viewTitle(appState.view), onclick: rootAction }]
     if (appState.view === 'profiles' && computed.selectedProfile) {
       crumbs.push({ label: computed.selectedProfile.name, onclick: exitProfileSubView })
@@ -110,6 +145,8 @@
       crumbs.push({ label: 'New upload', onclick: exitUploadCreate })
     } else if (appState.view === 'downloads' && appState.downloadSubView === 'create') {
       crumbs.push({ label: 'New download', onclick: exitDownloadCreate })
+    } else if (appState.view === 'sink' && appState.sinkSubView === 'create') {
+      crumbs.push({ label: 'New ingest', onclick: exitSinkCreate })
     }
     // Every crumb but the last is clickable; the last is the current page.
     return crumbs.map((crumb, index) => (index === crumbs.length - 1 ? { label: crumb.label } : crumb))
@@ -122,6 +159,12 @@
     if (viewScroller) viewScroller.scrollTop = 0
   })
 
+  // Turning a feature off in Settings while its view is open would otherwise
+  // strand the user on a view with no sidebar entry to get back to.
+  $effect(() => {
+    if (appState.view === 'sink' && !computed.resolvedFeatures.sink) appState.view = 'instances'
+  })
+
   $effect(() => {
     void loadSettings()
     void refresh(false)
@@ -131,6 +174,14 @@
     // nothing.
     void runUploadList()
     void runDownloadList()
+  })
+
+  // Sink is opt-in and off by default (see $lib/features), so its list
+  // fetch is gated on the feature being enabled -- an always-on fetch here
+  // would defeat the "no CLI shell-out for a feature most sessions never
+  // touch" reasoning the comment above already applies to uploads/downloads.
+  $effect(() => {
+    if (computed.resolvedFeatures.sink) void runSinkList()
   })
 
   $effect(() => {
@@ -192,7 +243,7 @@
     </div>
 
     <nav aria-label="Primary" class="grid gap-1 px-2">
-      {#each navItems as item}
+      {#each visibleNavItems as item}
         <button
           class={cn(
             'flex items-center gap-2.5 border border-transparent px-3 py-2 text-left text-foreground/80 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
@@ -222,6 +273,14 @@
               </span>
               <span class="sr-only">{runningLabel}</span>
             {/if}
+            {#if item.id === 'sink' && computed.sinkRunningCount > 0}
+              {@const runningLabel = `${computed.sinkRunningCount} ingest job${computed.sinkRunningCount === 1 ? '' : 's'} running`}
+              <span class="absolute -right-1.5 -top-1.5 flex h-2.5 w-2.5" title={runningLabel} aria-hidden="true">
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75"></span>
+                <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary"></span>
+              </span>
+              <span class="sr-only">{runningLabel}</span>
+            {/if}
           </span>
           {#if !appState.sidebarCollapsed}<span>{item.label}</span>{/if}
         </button>
@@ -243,10 +302,10 @@
   </aside>
 
   <main class="flex min-h-0 min-w-0 flex-col overflow-hidden" aria-busy={appState.busy}>
-    <header class="flex items-center justify-between gap-4 border-b border-border px-4 py-3" data-tauri-drag-region="deep">
-      <div class="flex items-center gap-3">
+    <header class="flex flex-wrap items-center justify-between gap-4 border-b border-border px-4 py-3" data-tauri-drag-region="deep">
+      <div class="flex min-w-0 items-center gap-3">
         <button
-          class="flex h-9 w-9 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          class="flex h-9 w-9 shrink-0 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           type="button"
           title="Toggle sidebar"
           aria-label="Toggle sidebar"
@@ -255,8 +314,8 @@
         >
           <PanelLeft size={18} aria-hidden="true" />
         </button>
-        <Breadcrumb.Root>
-          <Breadcrumb.List class="flex-nowrap gap-1.5">
+        <Breadcrumb.Root class="min-w-0">
+          <Breadcrumb.List class="gap-1.5">
             {#each breadcrumbs as crumb, index (index)}
               {#if index > 0}
                 <Breadcrumb.Separator />
@@ -271,8 +330,35 @@
             {/each}
           </Breadcrumb.List>
         </Breadcrumb.Root>
+
+        {#if jobPanelChipItem}
+          {@const chipOpen = appState.jobPanelFloatingId === appState.view}
+          <span class="flex shrink-0 items-stretch border border-border bg-card">
+            <button
+              type="button"
+              class={cn(
+                'flex items-center gap-2 px-2.5 text-sm text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
+                chipOpen && 'bg-accent text-primary',
+              )}
+              title="Search and select"
+              onclick={() => openJobPanelFloating(appState.view)}
+            >
+              <jobPanelChipItem.icon size={15} aria-hidden="true" />
+              <span>{jobPanelChipItem.label}</span>
+            </button>
+            <button
+              type="button"
+              class="flex items-center justify-center border-l border-border px-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              title="Expand panel"
+              aria-label="Expand panel"
+              onclick={() => setJobPanelCollapsed(appState.view, false)}
+            >
+              <PanelLeftOpen size={15} aria-hidden="true" />
+            </button>
+          </span>
+        {/if}
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
           class="flex h-9 w-72 shrink-0 items-center justify-between gap-2 whitespace-nowrap border border-input bg-background px-3 text-muted-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
@@ -306,6 +392,8 @@
           <UploadsView />
         {:else if appState.view === 'downloads'}
           <DownloadsView />
+        {:else if appState.view === 'sink'}
+          <SinkView />
         {:else}
           <SettingsView />
         {/if}
@@ -325,5 +413,6 @@
 <ForkRestoreDialog />
 <UploadPruneDialog />
 <DownloadPruneDialog />
+<SinkPruneDialog />
 <TipsDialog />
 <ThirdPartyLicensesDialog />

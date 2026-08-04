@@ -11,6 +11,7 @@
     History,
     KeyRound,
     Network,
+    PanelLeftClose,
     Plus,
     Power,
     Recycle,
@@ -28,6 +29,7 @@
   import Callout from '$lib/components/Callout.svelte'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
+  import JobPanel from '$lib/components/shared/JobPanel.svelte'
   import ForkBrowserView from '$lib/components/views/ForkBrowserView.svelte'
   import SnapshotView from '$lib/components/views/SnapshotView.svelte'
   import DeletedView from '$lib/components/views/DeletedView.svelte'
@@ -37,11 +39,13 @@
   import { FSKIT_MOUNT_PREFIX } from '$lib/cli'
   import { volumeKindBadgeStyle } from '$lib/health'
   import type { Backend } from '$lib/types'
+  import { matchesSearch } from '$lib/utils'
   import {
     ACCESS_KEY_ID_LENGTH,
     appState,
     browseMountPath,
     buildMountArgv,
+    closeJobPanelFloating,
     computed,
     duplicateSelected,
     enterForkBrowser,
@@ -59,6 +63,7 @@
     selectProfile,
     setAccessKeyId,
     setExtraArgs,
+    setJobPanelCollapsed,
     toggleMountHelp,
   } from '$lib/app-state.svelte'
 
@@ -85,39 +90,57 @@
     <GatewayView />
   {/if}
 {:else}
-<section class="grid grid-cols-[240px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
-  <div class="surface p-4">
-    <h3 class="mb-4">Saved Profiles</h3>
-    <label class="relative flex items-center mb-3">
-      <Search size={15} aria-hidden="true" class="absolute left-2.5 text-muted-foreground" />
-      <span class="sr-only">Search profile names</span>
-      <Input bind:value={appState.profileQuery} placeholder="Search profiles" class="pl-8" />
-    </label>
-    <div class="grid gap-1.5">
-      {#each computed.filteredProfiles as profile (profile.id)}
-        <button
-          class:bg-accent={appState.selectedProfileId === profile.id}
-          class="flex min-w-0 items-center gap-2.5 border border-transparent p-2 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
-          type="button"
-          title={profile.mountPath || 'No target selected'}
-          onclick={() => selectProfile(profile)}
-        >
-          <HardDrive size={17} aria-hidden="true" class="shrink-0" />
-          <strong class="min-w-0 truncate">{profile.name}</strong>
-        </button>
-      {:else}
-        <div class="tech-grid px-7 py-10 text-center">
-          <p>{appState.profiles.length === 0 ? 'No saved profiles yet.' : `No profiles match "${appState.profileQuery}".`}</p>
-        </div>
-      {/each}
-    </div>
-  </div>
+<section
+  class="grid gap-4 m-[22px] outline-hidden"
+  style:grid-template-columns={appState.jobPanelCollapsed.profiles ? 'minmax(0,1fr)' : '240px minmax(0,1fr)'}
+  tabindex="-1"
+  use:focusOnMount
+>
+  <JobPanel id="profiles" searchPlaceholder="Search profiles...">
+    {#snippet children(floatingQuery, floating)}
+      {@const floatingProfiles = computed.filteredProfiles.filter((profile) => matchesSearch(floatingQuery, profile.name, profile.mountPath))}
+      <div class="mb-4 flex items-center justify-between gap-2">
+        <h3>Saved Profiles</h3>
+        {#if !floating}
+          <Button type="button" size="icon" variant="ghost" onclick={() => setJobPanelCollapsed('profiles', true)} title="Collapse panel" aria-label="Collapse panel">
+            <PanelLeftClose size={15} aria-hidden="true" />
+          </Button>
+        {/if}
+      </div>
+      <label class="relative flex items-center mb-3">
+        <Search size={15} aria-hidden="true" class="absolute left-2.5 text-muted-foreground" />
+        <span class="sr-only">Search profile names</span>
+        <Input bind:value={appState.profileQuery} placeholder="Search profiles" class="pl-8" />
+      </label>
+      <div class="grid gap-1.5">
+        {#each (floatingQuery ? floatingProfiles : computed.filteredProfiles) as profile (profile.id)}
+          <button
+            class:bg-accent={appState.selectedProfileId === profile.id}
+            class="flex min-w-0 items-center gap-2.5 border border-transparent p-2 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+            type="button"
+            title={profile.mountPath || 'No target selected'}
+            onclick={() => {
+              selectProfile(profile)
+              closeJobPanelFloating()
+            }}
+          >
+            <HardDrive size={17} aria-hidden="true" class="shrink-0" />
+            <strong class="min-w-0 truncate">{profile.name}</strong>
+          </button>
+        {:else}
+          <div class="tech-grid px-7 py-10 text-center">
+            <p class="wrap-anywhere">{appState.profiles.length === 0 ? 'No saved profiles yet.' : `No profiles match "${floatingQuery || appState.profileQuery}".`}</p>
+          </div>
+        {/each}
+      </div>
+    {/snippet}
+  </JobPanel>
 
   {#if computed.selectedProfile}
     {@const selectedProfile = computed.selectedProfile}
     <form class="surface corner-brackets p-4 grid gap-4" onsubmit={(event) => { event.preventDefault(); void persistSelected() }}>
-      <div class="flex items-start justify-end gap-4">
-        <div class="relative flex flex-wrap items-center gap-2 p-2 ml-auto">
+      <div class="flex items-start justify-center gap-4">
+        <div class="relative flex flex-wrap items-center justify-center gap-2 p-2">
           <div class="tech-grid absolute inset-0 pointer-events-none" aria-hidden="true"></div>
           <Button variant="outline" size="icon" class="relative" title="Duplicate profile" aria-label="Duplicate profile" disabled={appState.busy} onclick={duplicateSelected}>
             <Copy size={16} aria-hidden="true" />

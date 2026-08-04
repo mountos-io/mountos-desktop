@@ -1,6 +1,6 @@
 import type { Backend, ErrorClass, MountProfile } from './types'
 
-// UI-only mirror of src-tauri/src/lib.rs's validate_extra_args — gives the
+// UI-only mirror of src-tauri/src/lib.rs's validate_extra_args -- gives the
 // user inline "rejected" feedback before they hit Save/Mount. The Rust side
 // independently re-validates everything from the on-disk profile before
 // acting, so this copy is not itself a security boundary, but it IS a
@@ -78,7 +78,7 @@ function pushBackendFlag(argv: string[], backend: Backend): void {
 
 // Accepts a Unix absolute path or a Windows drive-letter path (bare "C:",
 // "C:\", "C:/", or "C:\..."/"C:/..."), regardless of which OS this build is
-// running on — the authoritative, OS-specific check lives in Rust's
+// running on -- the authoritative, OS-specific check lives in Rust's
 // is_openable_target; this is only for immediate UI feedback.
 export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]?$/.test(path) || /^[A-Za-z]:[\\/]/.test(path)
@@ -95,7 +95,7 @@ export function isValidFolderName(name: string): boolean {
   return !/[/\\\x00-\x1f]/.test(name)
 }
 
-// UI-only mirror of src-tauri/src/lib.rs's validate_mount_path_for_backend —
+// UI-only mirror of src-tauri/src/lib.rs's validate_mount_path_for_backend --
 // same hand-synced-duplicate caveat as the flag allowlists above; the Rust
 // side independently re-validates.
 export function validateMountPathForBackend(backend: Backend, mountPath: string): string | null {
@@ -177,7 +177,7 @@ export function buildMountArgv(profile: MountProfile): string[] {
 
 // UI-only mirrors of src-tauri/src/lib.rs's satellite_volname/
 // build_snapshot_argv/build_deleted_argv/build_version_argv/build_fork_*_argv
-// — same hand-synced-duplicate caveat as buildMountArgv: these only drive the
+// -- same hand-synced-duplicate caveat as buildMountArgv: these only drive the
 // live command preview shown in each dialog, Rust independently rebuilds and
 // re-validates everything from the on-disk profile before acting.
 // Short and non-linguistic: "(deleted)"/"(snapshot)"/"(version)" reads fine
@@ -280,7 +280,7 @@ export function buildVersionArgv(
 
 // No --type flag is ever emitted (defaults to "general" server-side; iceberg
 // volumes have no profile representation in this GUI). No volume-identifying
-// flag is needed either — the access key alone scopes the volume.
+// flag is needed either -- the access key alone scopes the volume.
 export function buildForkListArgv(profile: MountProfile): string[] {
   const argv = ['fork', 'list']
   if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
@@ -588,6 +588,85 @@ export function buildDownloadFinishArgv(jobId: string): string[] {
 
 export function buildDownloadPruneArgv(keep: number): string[] {
   const argv = ['download', 'prune']
+  if (keep > 0) argv.push('--keep', String(keep))
+  return argv
+}
+
+export interface SinkStartParams {
+  variant?: string
+  maxLatency?: string
+  walMax?: string
+}
+
+// `mountos sink <M3U8_URL> <SINK_PATH>`'s flag surface, confirmed against
+// cmd_sink.go: --fork (not --fork-name, matches upload's convention), plus
+// --variant/--max-latency/--wal-max. No --config here: the desktop only
+// drives the single-stream form, never the multi-stream YAML file. No
+// --once/--overwrite/--dry-run/--bwlimit/--include/--exclude/
+// --follow-symlinks/--create-source-directory either, sink has none of
+// those, do not carry them over from upload/download by habit. Mirrors
+// src-tauri/src/lib.rs's build_sink_start_argv, including the
+// flags-first-then-"--"-then-positionals ordering (see
+// buildUploadStartArgv's own comment for why "--" is the actual safety
+// boundary for an arbitrary source/dest value).
+export function buildSinkStartArgv(profile: MountProfile, source: string, dest: string, params: SinkStartParams): string[] {
+  const argv = ['sink']
+  if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
+  // Fork is always derived from the resolved profile, never a free-typed
+  // value, mirrors buildUploadStartArgv's own --fork sourcing.
+  if (profile.fork) argv.push('--fork', profile.fork)
+  if (params.variant?.trim()) argv.push('--variant', params.variant.trim())
+  if (params.maxLatency?.trim()) argv.push('--max-latency', params.maxLatency.trim())
+  if (params.walMax?.trim()) argv.push('--wal-max', params.walMax.trim())
+  pushSatelliteCredentials(argv, profile)
+  argv.push('--', source, dest)
+  return argv
+}
+
+// `sink resume <job-id>` registers no flags of its own (confirmed against
+// createSinkResumeCommand, cmd_sink.go: no --variant/--max-latency/
+// --wal-max on the resume subcommand, job.json already fixes those
+// server-side), only the root-inherited --discovery-url/-a/-s needed to
+// reconnect. Mirrors buildUploadResumeArgv's credential-flag pattern minus
+// once/rescanInterval, which sink never had to begin with.
+export function buildSinkResumeArgv(profile: MountProfile, jobId: string): string[] {
+  const argv = ['sink', 'resume', jobId]
+  if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
+  pushSatelliteCredentials(argv, profile)
+  return argv
+}
+
+// list/cancel/status are purely local (job dir + control socket, confirmed
+// against cmd_sink.go/cmd_list_sink.go: none of the three call
+// resolveUploadCredentials), so unlike buildSinkStartArgv/buildSinkResumeArgv
+// these take no MountProfile at all. `sink list` is its own subcommand, not
+// `mountos list --kind sink` (a sink row's rate/lag shape doesn't fit
+// mountListEntry's per-status counts map, see cmd_list_sink.go's own doc
+// comment), so the argv shape differs from buildUploadListArgv/
+// buildDownloadListArgv.
+export function buildSinkListArgv(): string[] {
+  return ['sink', 'list', '--json']
+}
+
+export function buildSinkCancelArgv(jobId: string): string[] {
+  return ['sink', 'cancel', jobId]
+}
+
+// Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running this
+// signals a live control-socket shutdown (drains the WAL, writes the real
+// EXT-X-ENDLIST, ends the job); when not running it stamps the terminal
+// state directly once the WAL is already drained. Same subcommand either
+// way, no separate flag, same reasoning as buildUploadFinishArgv.
+export function buildSinkFinishArgv(jobId: string): string[] {
+  return ['sink', 'finish', jobId]
+}
+
+export function buildSinkStatusArgv(jobId: string): string[] {
+  return ['sink', 'status', '--job', jobId, '--json']
+}
+
+export function buildSinkPruneArgv(keep: number): string[] {
+  const argv = ['sink', 'prune']
   if (keep > 0) argv.push('--keep', String(keep))
   return argv
 }

@@ -8,6 +8,11 @@
 :root {
   color-scheme: light;
   --radius: 0.25rem;
+  /* App.svelte's <header> height: py-3 (0.75rem*2) + h-9 controls (2.25rem)
+     + border-b (1px) = 61px. JobPanel's floating quick-select overlay pins
+     its top to this same token so it sits flush under the header's border
+     line instead of a separately-guessed offset that can drift out of sync. */
+  --header-h: 61px;
   --background: oklch(0.95 0.02 94.63);
   --foreground: oklch(0.12 0 0);
   --card: oklch(0.96 0.025 94.63);

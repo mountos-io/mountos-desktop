@@ -20,7 +20,7 @@
         {#if appState.unmountPromptFor === 'all'}
           <p class="py-4">Unmount all {appState.systemState.instances.length} running mounts?</p>
         {:else}
-          <p class="py-4">Unmount "{appState.unmountPromptFor.name || appState.unmountPromptFor.mountPath}"?</p>
+          <p class="py-4 wrap-anywhere">Unmount "{appState.unmountPromptFor.name || appState.unmountPromptFor.mountPath}"?</p>
         {/if}
         {#if appState.settings.allowUnmountForce}
           <div class="grid gap-4 pb-4">

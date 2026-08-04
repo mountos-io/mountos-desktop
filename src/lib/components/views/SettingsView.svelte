@@ -2,14 +2,32 @@
   import { getVersion } from '@tauri-apps/api/app'
   import { checkForUpdate, type UpdateState } from '$lib/updates'
   import { openExternalUrl } from '$lib/tauri'
-  import { AlertTriangle, Bot, FileArchive, FolderOpen, Mail, Monitor, Moon, RefreshCw, ScrollText, ShieldCheck, Sun } from '@lucide/svelte'
+  import {
+    Activity,
+    Bot,
+    ChevronDown,
+    ChevronUp,
+    Database,
+    FileArchive,
+    FolderOpen,
+    Info,
+    Mail,
+    Monitor,
+    Moon,
+    Palette,
+    RefreshCw,
+    ScrollText,
+    ShieldAlert,
+    ShieldCheck,
+    Sun,
+    ToggleRight,
+    TriangleAlert,
+  } from '@lucide/svelte'
   import { Button } from '$lib/components/ui/button'
   import { Input } from '$lib/components/ui/input'
-  import { Label } from '$lib/components/ui/label'
   import { Select } from '$lib/components/ui/select'
   import { Checkbox } from '$lib/components/ui/checkbox'
   import { Badge } from '$lib/components/ui/badge'
-  import { Separator } from '$lib/components/ui/separator'
   import Callout from '$lib/components/Callout.svelte'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
@@ -18,6 +36,8 @@
   import type { Theme, FontSize } from '$lib/theme.svelte'
   import { presetsForMode, defaultSkin } from '$lib/themes'
   import type { Backend } from '$lib/types'
+  import { FEATURE_REGISTRY } from '$lib/features'
+  import type { SettingsTab } from '$lib/app-state.svelte'
   import {
     appState,
     browseDefaultCacheDir,
@@ -39,10 +59,12 @@
     pickCliPathOverride,
     POLL_CHOICES,
     refresh,
+    setFeatureEnabled,
     setSkipUnmountConfirm,
     showLicenses,
     toggleDefaultCacheSizeAuto,
     uninstallMcp,
+    verifyCliBinary,
   } from '$lib/app-state.svelte'
 
   const themeOptions: Array<{ value: Theme; label: string; icon: typeof Sun }> = [
@@ -58,6 +80,76 @@
     { value: 'extra-large', label: 'Extra Large' },
     { value: 'jumbo', label: 'Jumbo' },
   ]
+
+  const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: typeof Sun }> = [
+    { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'mounting', label: 'Mounting defaults', icon: Database },
+    { id: 'monitoring', label: 'Monitoring & dashboard', icon: Activity },
+    { id: 'actions', label: 'Actions', icon: ShieldAlert },
+    { id: 'features', label: 'Optional features', icon: ToggleRight },
+    { id: 'mcp', label: 'MCP for AI agents', icon: Bot },
+    { id: 'diagnostics', label: 'Diagnostics', icon: ShieldCheck },
+    { id: 'about', label: 'About mountOS', icon: Info },
+  ]
+
+  // Shared with the command palette / Tips dialog (appState.settingsTab), not
+  // local state, so "jump to a Settings section" can select the right tab
+  // from outside this component.
+  const activeTab = $derived(appState.settingsTab)
+
+  // Icon-rail collapse tracks this panel's own measured width, not the window's,
+  // so it folds correctly whether the primary app sidebar is expanded or collapsed.
+  let navWidth = $state(0)
+  const navCollapsed = $derived(navWidth > 0 && navWidth < 640)
+
+  function focusTab(tab: SettingsTab) {
+    appState.settingsTab = tab
+  }
+
+  function handleTabKeydown(event: KeyboardEvent, index: number) {
+    const lastIndex = SETTINGS_TABS.length - 1
+    let nextIndex: number | undefined
+    if (event.key === 'ArrowDown') nextIndex = index === lastIndex ? 0 : index + 1
+    else if (event.key === 'ArrowUp') nextIndex = index === 0 ? lastIndex : index - 1
+    else if (event.key === 'Home') nextIndex = 0
+    else if (event.key === 'End') nextIndex = lastIndex
+    if (nextIndex === undefined) return
+    event.preventDefault()
+    focusTab(SETTINGS_TABS[nextIndex].id)
+    const nextButton = document.getElementById(`settings-tab-${SETTINGS_TABS[nextIndex].id}`)
+    nextButton?.focus()
+  }
+
+  // Discoverability for the panel's own auto-hide scrollbar (see .overflow-y-auto
+  // in app.css, transparent until hover): an edge fade + chevron hints that there
+  // is more content before the user has to hover the track to find out.
+  let scrollEl = $state<HTMLDivElement | undefined>()
+  let canScrollUp = $state(false)
+  let canScrollDown = $state(false)
+
+  function updateScrollHints() {
+    if (!scrollEl) return
+    canScrollUp = scrollEl.scrollTop > 4
+    canScrollDown = scrollEl.scrollTop + scrollEl.clientHeight < scrollEl.scrollHeight - 4
+  }
+
+  function scrollPanel(direction: -1 | 1) {
+    scrollEl?.scrollBy({ top: direction * 240, behavior: 'smooth' })
+  }
+
+  $effect(() => {
+    activeTab
+    if (!scrollEl) return
+    scrollEl.scrollTop = 0
+    updateScrollHints()
+  })
+
+  $effect(() => {
+    if (!scrollEl) return
+    const observer = new ResizeObserver(() => updateScrollHints())
+    observer.observe(scrollEl)
+    return () => observer.disconnect()
+  })
 
   let cliPathValidating = $state(false)
 
@@ -112,11 +204,62 @@
   })
 </script>
 
-<section class="corner-brackets surface m-[22px] p-4 grid gap-5 outline-hidden" tabindex="-1" use:focusOnMount>
-  <h3>Desktop policies</h3>
+<section
+  class="corner-brackets surface m-[22px] flex min-h-0 flex-1 outline-hidden"
+  tabindex="-1"
+  use:focusOnMount
+  bind:clientWidth={navWidth}
+>
+  <div
+    aria-label="Settings categories"
+    aria-orientation="vertical"
+    role="tablist"
+    class="settings-nav flex shrink-0 flex-col gap-1 overflow-y-auto border-r border-border p-2"
+    class:w-[3.25rem]={navCollapsed}
+    class:w-52={!navCollapsed}
+  >
+    {#each SETTINGS_TABS as tab, index (tab.id)}
+      <button
+        type="button"
+        id={`settings-tab-${tab.id}`}
+        role="tab"
+        aria-selected={activeTab === tab.id}
+        aria-controls="settings-panel"
+        tabindex={activeTab === tab.id ? 0 : -1}
+        title={navCollapsed ? tab.label : undefined}
+        class="settings-tab-button flex items-center gap-2.5 border border-transparent px-3 py-2 text-left text-foreground/80 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+        class:justify-center={navCollapsed}
+        class:px-0={navCollapsed}
+        class:bg-accent={activeTab === tab.id}
+        class:text-foreground={activeTab === tab.id}
+        onclick={() => focusTab(tab.id)}
+        onkeydown={(event) => handleTabKeydown(event, index)}
+      >
+        <tab.icon size={17} aria-hidden="true" class="shrink-0" />
+        {#if !navCollapsed}<span>{tab.label}</span>{/if}
+      </button>
+    {/each}
+  </div>
 
+  <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+    <div class="settings-scroll-fade settings-scroll-fade-top" class:visible={canScrollUp}></div>
+    {#if canScrollUp}
+      <button type="button" class="settings-scroll-chevron settings-scroll-chevron-top" tabindex="-1" aria-hidden="true" onclick={() => scrollPanel(-1)}>
+        <ChevronUp size={14} aria-hidden="true" />
+      </button>
+    {/if}
+
+    <div
+      bind:this={scrollEl}
+      id="settings-panel"
+      role="tabpanel"
+      aria-labelledby={`settings-tab-${activeTab}`}
+      class="settings-scroll min-h-0 min-w-0 flex-1 overflow-y-auto p-4 grid grid-cols-[minmax(0,1fr)] gap-5 content-start"
+      onscroll={updateScrollHints}
+    >
+      {#if activeTab === 'appearance'}
   <div class="grid gap-3" id="settings-appearance">
-    <span class="mono-label">Appearance</span>
+    <h3>Appearance</h3>
     <div class="flex items-center justify-between gap-4">
       <span class="inline-flex items-center gap-1"><strong>Theme</strong><InfoTip text="Follows the system appearance until you pick Light or Dark." /></span>
       <div class="flex gap-1.5" role="group" aria-label="Theme">
@@ -189,11 +332,9 @@
       />
     </div>
   </div>
-
-  <Separator />
-
+      {:else if activeTab === 'mounting'}
   <div class="grid gap-3">
-    <span class="mono-label">Mounting defaults</span>
+    <h3>Mounting defaults</h3>
     <div class="flex items-center justify-between gap-4">
       <span class="inline-flex items-center gap-1"><strong id="settings-default-backend-label">Default backend</strong><InfoTip text="Used for new profiles; Auto follows the CLI's platform order." /></span>
       <Select
@@ -250,11 +391,9 @@
       </div>
     </div>
   </div>
-
-  <Separator />
-
+      {:else if activeTab === 'monitoring'}
   <div class="grid gap-3">
-    <span class="mono-label">Monitoring &amp; dashboard</span>
+    <h3>Monitoring &amp; dashboard</h3>
     <div class="flex items-center justify-between gap-4">
       <span class="inline-flex items-center gap-1"><strong id="settings-refresh-interval-label">Refresh interval</strong><InfoTip text="How often mounts refresh. Off disables auto-refresh; use the Refresh button instead." /></span>
       <Select
@@ -276,16 +415,14 @@
       />
     </div>
   </div>
-
-  <Separator />
-
+      {:else if activeTab === 'actions'}
   <div class="grid gap-3">
-    <span class="mono-label">Actions</span>
+    <h3>Actions</h3>
     <div class="flex items-center justify-between gap-4">
       <span class="inline-flex items-center gap-1">
         <strong id="settings-skip-unmount-confirm-label">Skip unmount confirmation</strong>
         <InfoTip text="Skips the confirmation dialog on Unmount and Unmount all." />
-        <Badge variant="warning"><AlertTriangle size={12} aria-hidden="true" />Not recommended</Badge>
+        <Badge variant="warning"><TriangleAlert size={12} aria-hidden="true" />Not recommended</Badge>
       </span>
       <Checkbox
         checked={appState.skipUnmountConfirm}
@@ -316,10 +453,26 @@
       <Callout>Forcing disconnects whatever is still using the mount. Apps reading or writing files there will get an error and lose unsaved work. Without it, a mount that is in use stays mounted and keeps working.</Callout>
     {/if}
   </div>
-</section>
-
-<section class="surface m-[22px] p-4 grid gap-4" id="settings-about">
-  <h3>About mountOS</h3>
+      {:else if activeTab === 'features'}
+  <div class="grid gap-3" id="settings-optional-features">
+    <h3>Optional features</h3>
+    {#each FEATURE_REGISTRY as feature (feature.id)}
+      <div class="flex items-center justify-between gap-4">
+        <span class="grid gap-0.5">
+          <strong id={`settings-feature-${feature.id}-label`}>{feature.label}</strong>
+          <span class="text-sm text-muted-foreground">{feature.description}</span>
+        </span>
+        <Checkbox
+          checked={computed.resolvedFeatures[feature.id] ?? feature.defaultEnabled}
+          onchange={(e) => setFeatureEnabled(feature.id, e.currentTarget.checked)}
+          aria-labelledby={`settings-feature-${feature.id}-label`}
+        />
+      </div>
+    {/each}
+  </div>
+      {:else if activeTab === 'about'}
+  <div class="grid grid-cols-[minmax(0,1fr)] gap-3" id="settings-about">
+    <h3>About mountOS</h3>
   <div class="flex items-center justify-between gap-4">
     <span><strong>Platform</strong></span>
     <span class="mono-label">{appState.systemState.platform}</span>
@@ -346,17 +499,37 @@
       </span>
     </div>
   {/if}
-  <div class="flex items-center justify-between gap-4">
-    <span><strong>CLI path</strong></span>
+  <div class="flex min-w-0 items-center justify-between gap-4">
+    <span class="shrink-0"><strong>CLI path</strong></span>
     {#if appState.systemState.cliPath}
-      <code>{appState.systemState.cliPath}</code>
+      <code class="min-w-0 wrap-anywhere text-right">{appState.systemState.cliPath}</code>
     {:else}
-      <span class="flex items-center gap-1.5 text-warning">
-        <AlertTriangle size={14} aria-hidden="true" />
+      <span class="flex min-w-0 items-center gap-1.5 text-warning">
+        <TriangleAlert size={14} aria-hidden="true" class="shrink-0" />
         Not found on PATH, pin it below
       </span>
     {/if}
   </div>
+
+  {#if appState.systemState.cliPath}
+    <div class="flex items-center justify-between gap-4">
+      <span class="inline-flex items-center gap-1"><strong>Signature</strong><InfoTip text="Checks the binary's actual code-signing signature, not just whether --version prints mountos (which a spoofed binary could fake too)." /></span>
+      <span class="flex items-center gap-2">
+        {#if appState.cliSignatureStatus}
+          <Badge variant={appState.cliSignatureStatus.verified ? 'success' : 'warning'}>
+            {appState.cliSignatureStatus.verified ? 'Verified' : 'Not verified'}
+          </Badge>
+        {/if}
+        <Button type="button" size="sm" variant="outline" onclick={verifyCliBinary} disabled={appState.cliSignatureChecking}>
+          <ShieldCheck size={14} aria-hidden="true" />
+          {appState.cliSignatureChecking ? 'Verifying…' : appState.cliSignatureStatus ? 'Re-verify' : 'Verify'}
+        </Button>
+      </span>
+    </div>
+    {#if appState.cliSignatureStatus}
+      <p class="text-sm text-muted-foreground">{appState.cliSignatureStatus.detail}</p>
+    {/if}
+  {/if}
 
   {#if appState.systemState.cliPathAlternates.length}
     <Callout>
@@ -365,10 +538,10 @@
     </Callout>
   {/if}
 
-  <div class="grid gap-1.5">
-    <span class="inline-flex items-center gap-1"><strong id="settings-cli-path-override-label">Pin CLI path</strong><InfoTip text="Pick the mountos binary from disk. It's run with --version and only pinned if the output looks like mountos; cleared uses PATH lookup." /></span>
-    <div class="flex items-center gap-2">
-      <code class="flex-1 truncate" aria-labelledby="settings-cli-path-override-label">{appState.settings.cliPathOverride ?? 'Using PATH lookup'}</code>
+  <div class="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+    <span class="inline-flex items-center gap-1"><strong id="settings-cli-path-override-label">Pin CLI path</strong><InfoTip text="Pick the mountos binary from disk." /></span>
+    <div class="flex min-w-0 items-start gap-2">
+      <code class="min-w-0 flex-1 wrap-anywhere" aria-labelledby="settings-cli-path-override-label">{appState.settings.cliPathOverride ?? 'Using PATH lookup'}</code>
       {#if appState.settings.cliPathOverride}
         <Button type="button" variant="outline" onclick={clearCliPathOverride} class="shrink-0">Clear</Button>
       {/if}
@@ -392,9 +565,9 @@
       support@mountos.io
     </Button>
   </div>
-</section>
-
-<section class="surface m-[22px] p-4 grid gap-4" id="settings-mcp">
+  </div>
+      {:else if activeTab === 'mcp'}
+  <div class="grid gap-3" id="settings-mcp">
   <div class="flex items-start justify-between gap-4">
     <h3 class="flex items-center gap-2"><Bot size={19} aria-hidden="true" /> MCP for AI agents</h3>
     <div class="flex flex-wrap items-center gap-2">
@@ -412,9 +585,9 @@
       <pre class="m-0 whitespace-pre-wrap break-words"><code>{appState.mcpStatusText}</code></pre>
     </CommandPreview>
   {/if}
-</section>
-
-<section class="surface m-[22px] p-4 grid gap-4">
+  </div>
+      {:else if activeTab === 'diagnostics'}
+  <div class="grid grid-cols-[minmax(0,1fr)] gap-3">
   <div class="flex items-start justify-between gap-4">
     <h3 class="flex items-center gap-2"><ShieldCheck size={19} aria-hidden="true" /> Diagnostics</h3>
     <div class="flex flex-wrap items-center gap-2">
@@ -430,11 +603,15 @@
        stay on screen. The rest of the old Health page was a dump of what the
        bundle already contains. -->
   {#if appState.systemState.issues.length}
-    <div class="grid gap-3">
+    <div class="grid grid-cols-[minmax(0,1fr)] gap-3">
       {#each appState.systemState.issues as issue}
-        <article class="flex items-start gap-3">
-          <AlertTriangle size={18} class={issue.severity === 'error' ? 'text-destructive' : issue.severity === 'warning' ? 'text-warning' : 'text-muted-foreground'} aria-hidden="true" />
-          <div>
+        <article class="flex min-w-0 items-start gap-3">
+          <TriangleAlert size={18} class={issue.severity === 'error' ? 'text-destructive' : issue.severity === 'warning' ? 'text-warning' : 'text-muted-foreground'} aria-hidden="true" />
+          <!-- Titles, details and fix commands come from `mountos check` and
+               routinely name paths. wrap-anywhere is inherited by all three,
+               and it also shrinks this flex item's min-content width so the
+               article can hold them. -->
+          <div class="min-w-0 wrap-anywhere">
             <strong>{issue.title}</strong>
             {#if issue.detail}<p>{issue.detail}</p>{/if}
             {#if issue.fixCommand}<code>{issue.fixCommand}</code>{/if}
@@ -452,10 +629,10 @@
     </Button>
   </div>
   {#if appState.diagnosticsBundle}
-    <div class="grid gap-1.5">
+    <div class="grid grid-cols-[minmax(0,1fr)] gap-1.5">
       <span class="mono-label">BUNDLE</span>
-      <div class="flex items-center justify-between gap-2.5">
-        <code class="break-all">{appState.diagnosticsBundle.path}</code>
+      <div class="flex min-w-0 items-center justify-between gap-2.5">
+        <code class="min-w-0 break-all">{appState.diagnosticsBundle.path}</code>
         <Button type="button" onclick={openBundle} disabled={appState.busy} class="shrink-0">
           <FolderOpen size={16} aria-hidden="true" />
           Open
@@ -463,6 +640,17 @@
       </div>
     </div>
   {/if}
+  </div>
+      {/if}
+    </div>
+
+    <div class="settings-scroll-fade settings-scroll-fade-bottom" class:visible={canScrollDown}></div>
+    {#if canScrollDown}
+      <button type="button" class="settings-scroll-chevron settings-scroll-chevron-bottom" tabindex="-1" aria-hidden="true" onclick={() => scrollPanel(1)}>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -500,5 +688,64 @@
     font-weight: 500;
     color: var(--sw-fg);
     white-space: nowrap;
+  }
+
+  /* Discoverability hint for .overflow-y-auto's own auto-hide scrollbar
+     (transparent thumb until hover, see app.css): a soft edge fade plus a
+     click-to-scroll chevron, shown only while there is more content past
+     that edge. Native wheel/trackpad/keyboard scrolling is unaffected. */
+  .settings-scroll-fade {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 28px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease-out;
+    z-index: 1;
+  }
+
+  .settings-scroll-fade-top {
+    top: 0;
+    background: linear-gradient(to bottom, var(--card), transparent);
+  }
+
+  .settings-scroll-fade-bottom {
+    bottom: 0;
+    background: linear-gradient(to top, var(--card), transparent);
+  }
+
+  .settings-scroll-fade.visible {
+    opacity: 1;
+  }
+
+  .settings-scroll-chevron {
+    position: absolute;
+    left: 50%;
+    z-index: 2;
+    display: flex;
+    width: 28px;
+    height: 16px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    transform: translateX(-50%);
+    transition: color 0.15s ease-out;
+  }
+
+  .settings-scroll-chevron:hover {
+    color: var(--foreground);
+  }
+
+  .settings-scroll-chevron-top {
+    top: 2px;
+  }
+
+  .settings-scroll-chevron-bottom {
+    bottom: 2px;
   }
 </style>

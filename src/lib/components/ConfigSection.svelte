@@ -37,7 +37,11 @@
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5">
       {#each primitives as [key, value] (key)}
         <dt class="font-mono text-xs text-muted-foreground">{humanizeKey(key)}</dt>
-        <dd class="m-0 break-words font-mono text-xs">{formatPrimitive(value)}</dd>
+        <!-- wrap-anywhere, not break-words: these values are cache dirs,
+             mount paths and discovery URLs, and this dd is a grid item, where
+             overflow-wrap:break-word leaves the min-content width untouched
+             and the 1fr track still blows out. -->
+        <dd class="m-0 wrap-anywhere font-mono text-xs">{formatPrimitive(value)}</dd>
       {/each}
     </dl>
   {/if}

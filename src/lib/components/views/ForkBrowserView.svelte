@@ -48,7 +48,11 @@
     </div>
   </div>
 
-  <h3 class="flex items-center gap-2"><GitBranch size={19} aria-hidden="true" /> {profile.name}: forks</h3>
+  <!-- The profile name is an anonymous flex item here, so it carries
+       min-width:auto and cannot be given min-w-0 directly. wrap-anywhere is
+       what reduces its min-content width so a name with no spaces wraps
+       instead of pushing the heading past the panel. -->
+  <h3 class="flex items-center gap-2 wrap-anywhere"><GitBranch size={19} aria-hidden="true" /> {profile.name}: forks</h3>
 
   {#if needsSecret}
     <div class="grid gap-1.5 max-w-sm">
@@ -62,7 +66,7 @@
   </CommandPreview>
 
   {#if appState.forkError}
-    <p class="text-destructive text-sm" role="alert">{appState.forkError}</p>
+    <p class="text-destructive text-sm wrap-anywhere" role="alert">{appState.forkError}</p>
   {/if}
 
   <div class="grid gap-2">
@@ -85,7 +89,7 @@
       {#each computed.forkChildren as fork (fork.fid)}
         <div class="flex items-center justify-between gap-2 border border-transparent p-2 hover:bg-accent/50">
           <button type="button" class="flex flex-1 min-w-0 items-center gap-2 text-left" onclick={() => drillIntoFork(fork.fid)}>
-            <strong class="truncate">{fork.name || 'main'}</strong>
+            <strong class="min-w-0 truncate">{fork.name || 'main'}</strong>
             {#if fork.inactive}<Badge variant="warning">Deleted</Badge>{/if}
             {#if fork.isTemporary}<Badge>Sandbox</Badge>{/if}
             <span class="flex items-center gap-1 text-muted-foreground text-sm ml-auto">

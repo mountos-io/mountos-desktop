@@ -36,6 +36,27 @@ export function formatBytes(bytes: number): string {
   return `${value >= 100 ? value.toFixed(0) : value.toFixed(1)} ${BYTE_UNITS[exponent]}`
 }
 
+// Relative "Updated Xs/Xm/Xh ago" staleness label, shared by every list
+// view (Uploads/Downloads/Sink) that shows a manual-refresh timestamp.
+export function lastFetchedLabel(fetchedAt: number | null, current: number): string {
+  if (fetchedAt == null) return ''
+  const diffSec = Math.max(0, Math.floor((current - fetchedAt) / 1000))
+  if (diffSec < 5) return 'Updated just now'
+  if (diffSec < 60) return `Updated ${diffSec}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `Updated ${diffMin}m ago`
+  return `Updated ${Math.floor(diffMin / 60)}h ago`
+}
+
+// Shared by every JobPanel-based list (Uploads/Downloads/Sink/Profiles):
+// case-insensitive substring match across whichever row fields the caller
+// considers searchable, empty query matches everything.
+export function matchesSearch(query: string, ...fields: Array<string | undefined | null>): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return fields.some((field) => field?.toLowerCase().includes(q))
+}
+
 export type WithoutChild<T> = T extends { child?: any } ? Omit<T, "child"> : T;
 
 export type WithoutChildren<T> = T extends { children?: any } ? Omit<T, "children"> : T;

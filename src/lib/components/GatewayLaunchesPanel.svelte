@@ -29,7 +29,7 @@
       <Table.Body>
         {#each gatewayOnlyLaunches as launch (launch.id)}
           <Table.Row>
-            <Table.Cell><strong>{launch.profileName}</strong></Table.Cell>
+            <Table.Cell><strong class="wrap-anywhere">{launch.profileName}</strong></Table.Cell>
             <Table.Cell>
               {#each launch.protocols as protocol}
                 <Badge variant="secondary">{protocol}</Badge>
@@ -38,7 +38,7 @@
             <Table.Cell>
               {#if launch.endpoints.length}
                 {#each launch.endpoints as endpoint}
-                  <div><code>{endpoint.protocol}: {endpoint.url}</code></div>
+                  <div><code class="wrap-anywhere">{endpoint.protocol}: {endpoint.url}</code></div>
                 {/each}
               {:else}
                 <span class="mono-label">unknown (no descriptor found)</span>

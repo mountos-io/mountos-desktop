@@ -14,6 +14,9 @@ import {
   buildForkRestoreArgv,
   buildGatewayArgv,
   buildMountArgv,
+  buildSinkPruneArgv,
+  buildSinkResumeArgv,
+  buildSinkStartArgv,
   buildSnapshotArgv,
   buildUploadCancelArgv,
   buildUploadListArgv,
@@ -32,8 +35,9 @@ import {
   validateMountPathForBackend,
   validateUploadPositional,
 } from './cli'
-import type { DownloadStartParams, UploadStartParams } from './cli'
+import type { DownloadStartParams, SinkStartParams, UploadStartParams } from './cli'
 import { viewModeBadge } from './health'
+import { FEATURE_REGISTRY, resolveFeatures } from './features'
 import {
   browseCliBinary,
   browseFolder,
@@ -86,6 +90,14 @@ import {
   finishDownload,
   pruneDownloads,
   openDownloadLog,
+  listSinks,
+  startSink,
+  resumeSink,
+  cancelSink,
+  finishSink,
+  pruneSinks,
+  getSinkStatus,
+  openSinkLog,
   saveProfile,
   saveSettings,
   setProfileSecret,
@@ -95,9 +107,11 @@ import {
   unmountTarget,
   unmountAllTargets,
   validateCliCandidate,
+  verifyCliSignature,
 } from './tauri'
 import type {
   Backend,
+  CliSignatureStatus,
   DesktopSettings,
   DiagnosticsBundle,
   DownloadJob,
@@ -105,18 +119,26 @@ import type {
   GatewayEndpointInfo,
   MountInstance,
   MountProfile,
+  SinkJob,
+  SinkSnapshot,
+  SinkStatus,
   SystemState,
   ThirdPartyLicenses,
   UploadInstanceRef,
   UploadJob,
 } from './types'
 
-export type View = 'instances' | 'profiles' | 'uploads' | 'downloads' | 'settings'
+export type View = 'instances' | 'profiles' | 'uploads' | 'downloads' | 'sink' | 'settings'
 
 // The profile editor's right-hand pane: the plain editor form, or one of the
 // five full-width sub-views nested under the selected profile (Forks and the
 // four former Snapshot/Deleted/Version/Gateway dialogs).
 export type ProfileSubView = 'editor' | 'forks' | 'snapshot' | 'deleted' | 'version' | 'gateway'
+
+// Settings view's sidebar-tab category. Lives here, not as local component
+// state, so the command palette (goToSettingsSection) can select a tab from
+// outside SettingsView.
+export type SettingsTab = 'appearance' | 'mounting' | 'monitoring' | 'actions' | 'features' | 'mcp' | 'diagnostics' | 'about'
 
 // The subset of an instance's own live .mountOS/.config (read via
 // getInstanceConfig) relevant to the external Deleted/Version dialogs,
@@ -172,6 +194,20 @@ function initialSkipUnmountConfirm(): boolean {
   return localStorage.getItem('mountos-desktop-skip-unmount-confirm') === 'true'
 }
 
+// One JSON blob keyed by panel id (uploads/downloads/sink/profiles/...), not
+// a hand-rolled boolean per panel like sidebarCollapsed above -- JobPanel is
+// a shared component mounted by every job-list view, so a new view gets
+// collapse persistence for free instead of needing its own storage key.
+function initialJobPanelCollapsed(): Record<string, boolean> {
+  if (typeof localStorage === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem('mountos-desktop-job-panel-collapsed')
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
 const state = $state({
   view: 'instances' as View,
   loaded: false,
@@ -193,15 +229,30 @@ const state = $state({
   rejectedArgs: [] as string[],
   extraArgsInput: '',
   extraArgsError: '',
-  settings: { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false } as DesktopSettings,
+  settings: { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false, featureOverrides: {} } as DesktopSettings,
   vaultStatus: {} as Record<string, boolean>,
   diagnosticsBundle: null as DiagnosticsBundle | null,
   mcpStatusText: '',
+  // Result of the last "Verify" click for the CLI path currently in effect
+  // (pinned override or PATH lookup). Cleared whenever that path changes, so
+  // a stale result never appears to describe a different binary.
+  cliSignatureStatus: null as CliSignatureStatus | null,
+  cliSignatureChecking: false,
   expandedConfig: {} as Record<string, string>,
   mountHelpText: '',
   mountHelpVisible: false,
   sidebarCollapsed: initialSidebarCollapsed(),
   skipUnmountConfirm: initialSkipUnmountConfirm(),
+  // Collapse preference per JobPanel id, persisted. jobPanelFloatingId/
+  // jobPanelMounted are both transient (session-only): floating tracks which
+  // panel's quick-select overlay is open (at most one at a time), mounted
+  // tracks which panel ids currently have a live JobPanel instance in the
+  // DOM, since a view can swap its job-list section out entirely for a
+  // create/resume/sub-view form -- gates the header chip so it never offers
+  // to reopen a panel that isn't actually there right now.
+  jobPanelCollapsed: initialJobPanelCollapsed() as Record<string, boolean>,
+  jobPanelFloatingId: null as string | null,
+  jobPanelMounted: {} as Record<string, boolean>,
   tipsOpen: false,
   licensesOpen: false,
   licensesKind: 'rust' as 'rust' | 'js',
@@ -231,6 +282,10 @@ const state = $state({
 
   // Stop-gateway confirm (standalone gateway-only rows, see runStopGatewayOnly)
   stopGatewayPromptFor: null as MountInstance | null,
+
+  // Settings view's active sidebar tab (see SettingsTab); shared state so
+  // goToSettingsSection can select it from the command palette.
+  settingsTab: 'appearance' as SettingsTab,
 
   // Fork management: its own navigable place (ForkBrowserView), reached from
   // the profile editor via a "Forks" satellite button, not embedded inline
@@ -425,6 +480,66 @@ const state = $state({
   downloadPrunePromptOpen: false,
   downloadPruneKeep: '0',
   downloadPruneError: '',
+
+  // Sink (Media ingest): same top-level view/subview shape as Uploads/
+  // Downloads (list is the default master-detail sub-view; "New ingest"/
+  // "Resume" are their own full-panel sub-views). A sink job's live state is
+  // rate/lag counters, not a bounded per-status work list, so there is no
+  // showCompleted-style counts derivation the way upload/download have --
+  // sortSinkJobs/sinkStateRank cover ordering only.
+  sinkSubView: 'list' as 'list' | 'create' | 'resume',
+  sinks: [] as SinkJob[],
+  sinksBusy: false,
+  sinksError: '',
+  // Mount-on-first-view fetch, manual refresh, and a refetch after every
+  // mutating action, same baseline as uploadsLastFetchedAt -- plus SinkView's
+  // own bounded poll while a job is running (see runSinkStatus's comment),
+  // unlike uploads/downloads which never auto-refresh.
+  sinksLastFetchedAt: null as number | null,
+  sinkSelectedJobId: null as string | null,
+  sinkShowCompleted: false,
+  // The fuller single-job rate/lag snapshot (`sink status --job <id>
+  // --json`), fetched on demand for whichever job is selected, keyed by job
+  // id so switching between jobs doesn't have to re-fetch one already seen
+  // this session. Cleared on runSinkList (a fresh list pass invalidates any
+  // stale per-job snapshot).
+  sinkStatusByJobId: {} as Record<string, SinkStatus>,
+
+  // Create-job form: the connection (fork/discovery-url/access-key) is
+  // either a saved profile OR a live running mount instance, identical
+  // resolution to uploadSourceKind (sink's dest is always the mountOS
+  // volume, same as upload's, regardless of source mode -- sink has no
+  // "read straight through a live mount" source the way download's instance
+  // mode does, its source is always a remote M3U8 URL).
+  sinkSourceKind: 'profile' as 'profile' | 'instance',
+  sinkSourceProfileId: null as string | null,
+  sinkProfileQuery: '',
+  sinkSourceInstance: null as UploadInstanceRef | null,
+
+  // Form fields. streamUrl is the M3U8_URL positional (always a remote
+  // URL, never local/browsable), sinkPath is the SINK_PATH positional (a
+  // template, %Y/%m/%d/%H/%M substitutions apply server-side, so this is
+  // free text, not a Browse-picked path the way upload/download's dest is).
+  sinkStreamUrl: '',
+  sinkPath: '',
+  sinkStreamUrlError: '',
+  sinkPathError: '',
+  sinkAdvancedOpen: false,
+  sinkVariant: '',
+  sinkMaxLatency: '',
+  sinkWalMax: '',
+  sinkStartSecretValue: '',
+  sinkStartError: '',
+
+  sinkResumePromptFor: null as SinkJob | null,
+  sinkResumeDiscoveryUrl: '',
+  sinkResumeAccessKeyId: '',
+  sinkResumeSecretValue: '',
+  sinkResumeError: '',
+
+  sinkPrunePromptOpen: false,
+  sinkPruneKeep: '0',
+  sinkPruneError: '',
 
   // Snapshot/Deleted/Version view-mounts: destination is always an explicit
   // folder pick (browseFolder), never free-typed. -m/--destination is
@@ -900,6 +1015,122 @@ const downloadVisibleJobsTotal = $derived(
 )
 const downloadVisibleJobsTruncated = $derived(downloadVisibleJobsTotal > DOWNLOAD_VISIBLE_JOB_CAP)
 
+// Search-filtered for the sink create form's profile picker, mirrors
+// uploadFilteredProfiles exactly.
+const sinkFilteredProfiles = $derived.by(() => {
+  const q = state.sinkProfileQuery.trim().toLowerCase()
+  if (!q) return state.profiles
+  return state.profiles.filter((profile) => profile.name.toLowerCase().includes(q))
+})
+
+const sinkSelectedProfile = $derived(state.profiles.find((profile) => profile.id === state.sinkSourceProfileId))
+
+// Reused verbatim, not duplicated: sink's connection needs (fork/discovery-
+// url/credentials to write into the volume) are identical to upload's, see
+// canUploadFrom's own doc comment for the eligibility criterion.
+const sinkEligibleInstances = $derived(state.systemState.instances.filter(canUploadFrom))
+
+const sinkResolvedFork = $derived(
+  state.sinkSourceKind === 'profile' ? (sinkSelectedProfile?.fork ?? '') : (state.sinkSourceInstance?.fork ?? ''),
+)
+
+const sinkNeedsSecret = $derived(
+  state.sinkSourceKind === 'profile'
+    ? Boolean(sinkSelectedProfile) && (sinkSelectedProfile!.secretRef === 'prompt' || !state.vaultStatus[sinkSelectedProfile!.id])
+    : Boolean(state.sinkSourceInstance),
+)
+
+// A profile-shaped object purely for COMMAND PREVIEW / argv building, never
+// sent anywhere itself (the real start_sink call re-derives its own profile
+// server-side via resolve_upload_source_profile), mirrors
+// uploadPreviewProfile exactly.
+const sinkPreviewProfile = $derived.by((): MountProfile | null => {
+  if (state.sinkSourceKind === 'profile') return sinkSelectedProfile ?? null
+  const instance = state.sinkSourceInstance
+  if (!instance) return null
+  return {
+    id: 'instance',
+    schemaVersion: 1,
+    kind: 'mount',
+    name: instance.volume || 'Running instance',
+    volume: instance.volume,
+    fork: instance.fork,
+    mountPath: instance.mountPath,
+    discoveryUrl: instance.discoveryUrl,
+    accessKeyId: instance.accessKeyId,
+    secretRef: 'prompt',
+    backend: instance.backend,
+    readOnly: false,
+    autoRemount: false,
+    temporaryFork: false,
+    extraArgs: [],
+    createdAt: '',
+    updatedAt: '',
+  }
+})
+
+export function sinkStartParams(): SinkStartParams {
+  return {
+    variant: state.sinkVariant.trim() || undefined,
+    maxLatency: state.sinkMaxLatency.trim() || undefined,
+    walMax: state.sinkWalMax.trim() || undefined,
+  }
+}
+
+const sinkCommandText = $derived.by(() => {
+  const profile = sinkPreviewProfile
+  if (!profile || !state.sinkStreamUrl.trim() || !state.sinkPath.trim()) return ''
+  return `mountos ${buildSinkStartArgv(profile, state.sinkStreamUrl.trim(), state.sinkPath.trim(), sinkStartParams()).join(' ')}`
+})
+
+// Sidebar badge count, same lazily-updated convention as
+// uploadRunningCount/downloadRunningCount.
+const sinkRunningCount = $derived(state.sinks.filter((job) => job.state === 'running').length)
+
+function isCleanlyCompletedSink(job: SinkJob): boolean {
+  // 'finished' is `sink finish`'s own terminal state (distinct from
+  // 'completed', see querySinkStatus's state machine server-side), just as
+  // hideable behind "Show completed" once it carries no haltReason.
+  return (job.state === 'completed' || job.state === 'finished') && !job.haltReason
+}
+
+const sinkHiddenCompletedCount = $derived(state.sinks.filter(isCleanlyCompletedSink).length)
+
+const SINK_VISIBLE_JOB_CAP = 300
+
+// `sink list` has no stable ordering of its own either (ListJobDirs, same
+// caveat as uploadStateRank's own comment), so without this a genuinely
+// running job could sort behind an old completed one and get pushed past
+// the cap.
+export function sinkStateRank(job: SinkJob): number {
+  if (job.state === 'running') return 0
+  if (job.state === 'halted' || job.state === 'resumable') return 1
+  return 2 // completed
+}
+
+export function sortSinkJobs(jobs: SinkJob[]): SinkJob[] {
+  return [...jobs].sort((a, b) => {
+    const rankDiff = sinkStateRank(a) - sinkStateRank(b)
+    return rankDiff !== 0 ? rankDiff : (b.createdAt ?? 0) - (a.createdAt ?? 0)
+  })
+}
+
+const sinkVisibleJobs = $derived.by(() => {
+  const base = state.sinkShowCompleted ? state.sinks : state.sinks.filter((job) => !isCleanlyCompletedSink(job))
+  const sorted = sortSinkJobs(base)
+  return sorted.slice(0, SINK_VISIBLE_JOB_CAP)
+})
+
+const sinkVisibleJobsTotal = $derived(
+  state.sinkShowCompleted ? state.sinks.length : state.sinks.length - sinkHiddenCompletedCount,
+)
+const sinkVisibleJobsTruncated = $derived(sinkVisibleJobsTotal > SINK_VISIBLE_JOB_CAP)
+
+// Layers state.settings.featureOverrides over FEATURE_REGISTRY's defaults.
+// Anything reading feature visibility (sidebar, Settings list) goes through
+// this rather than the registry directly, so an override always wins.
+const resolvedFeatures = $derived(resolveFeatures(state.settings.featureOverrides))
+
 const backends = $derived<Backend[]>(
   state.systemState.platform === 'windows'
     ? ['auto', 'mountosio']
@@ -977,12 +1208,23 @@ export const computed = {
   get downloadVisibleJobs() { return downloadVisibleJobs },
   get downloadVisibleJobsTotal() { return downloadVisibleJobsTotal },
   get downloadVisibleJobsTruncated() { return downloadVisibleJobsTruncated },
+  get sinkFilteredProfiles() { return sinkFilteredProfiles },
+  get sinkEligibleInstances() { return sinkEligibleInstances },
+  get sinkResolvedFork() { return sinkResolvedFork },
+  get sinkNeedsSecret() { return sinkNeedsSecret },
+  get sinkCommandText() { return sinkCommandText },
+  get sinkRunningCount() { return sinkRunningCount },
+  get sinkHiddenCompletedCount() { return sinkHiddenCompletedCount },
+  get sinkVisibleJobs() { return sinkVisibleJobs },
+  get sinkVisibleJobsTotal() { return sinkVisibleJobsTotal },
+  get sinkVisibleJobsTruncated() { return sinkVisibleJobsTruncated },
   get backends() { return backends },
   get mountPathError() { return mountPathError },
   get trimmedSecret() { return trimmedSecret },
   get secretLengthError() { return secretLengthError },
   get accessKeyError() { return accessKeyError },
   get volumeNameError() { return volumeNameError },
+  get resolvedFeatures() { return resolvedFeatures },
 }
 
 // Lost-mount detection compares only against snapshots taken during THIS
@@ -2186,6 +2428,303 @@ export async function confirmDownloadPrune() {
   }
 }
 
+// Sink (Media ingest): list is authoritative (fetched from `mountos sink
+// list --json`, same "list is authoritative" pattern as runUploadList),
+// while start/resume are session-local launches that re-fetch the list
+// afterward rather than threading a job id back through the launch result.
+
+// Bumped by runSinkList so an in-flight runSinkStatus can detect that its
+// result raced a list refresh and must not write a snapshot back over the
+// invalidated map (see runSinkStatus).
+let sinkListGeneration = 0
+
+export async function runSinkList() {
+  state.sinksBusy = true
+  state.sinksError = ''
+  sinkListGeneration++
+  try {
+    // `sink list` has no stable ordering of its own either, same caveat as
+    // runUploadList's own comment. Sort newest-first so a just-started job
+    // lands at the top and becomes the default selection.
+    const jobs = await listSinks()
+    jobs.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+    state.sinks = jobs
+    state.sinksLastFetchedAt = Date.now()
+    // A fresh list pass invalidates any cached per-job snapshot: a job that
+    // was running may have halted/completed since, and a stale "running"
+    // snapshot must never outlive the list refresh that would have shown
+    // otherwise.
+    state.sinkStatusByJobId = {}
+  } catch (error) {
+    state.sinksError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+// The fuller single-job rate/lag snapshot, fetched on demand for whichever
+// job is currently selected, then kept fresh by SinkView's own bounded poll
+// while that job is running (unlike uploads/downloads, whose rows are
+// completion counts, not a liveness reading, so they never auto-refresh).
+// Silently no-ops on failure rather than surfacing a separate error: the
+// list-derived summary (lag/wal/discontinuities) already covers the job's
+// health, this only enriches the detail pane with segmentsCommitted/
+// fileSize/bitrateObserved/lastCommitAt/lastSegmentAt.
+export async function runSinkStatus(jobId: string) {
+  if (state.sinkStatusByJobId[jobId]) return
+  const generation = sinkListGeneration
+  try {
+    const status = await getSinkStatus(jobId)
+    // A list refresh cleared the map while this was in flight; writing
+    // back now would resurrect a snapshot the refresh just invalidated.
+    if (generation !== sinkListGeneration) return
+    state.sinkStatusByJobId = { ...state.sinkStatusByJobId, [jobId]: status }
+  } catch {
+    // No error surfaced, see doc comment above.
+  }
+}
+
+// Stale-while-revalidate pair for SinkView's detail snapshot. runSinkList
+// clears sinkStatusByJobId on every list refresh (a job's state may have
+// changed since), so the live snapshot is briefly undefined each poll tick
+// while runSinkStatus refetches it. Rendering "Not available" for that gap
+// is misleading for a job that already has a known reading, so SinkView
+// keeps its own per-job cache: withSinkSnapshotCached folds a fresh live
+// snapshot into it, sinkDisplaySnapshot prefers the live value and falls
+// back to the cached one -- but only while jobRunning, i.e. only across the
+// sub-second gap runSinkList's own clear creates for a job that is still
+// actually running. Once a job stops for good (halted/completed/finished/
+// resumable, including a SIGKILLed daemon that never got to cache final
+// counters), live goes to undefined permanently, not just for one poll
+// tick, and falling back would freeze the pane on a stale live reading
+// forever with no staleness marker -- the freshly resolved status (nil
+// snapshot, or a cached one tagged lastKnown) must win instead.
+export function withSinkSnapshotCached(
+  cache: Record<string, SinkSnapshot>,
+  jobId: string | null | undefined,
+  live: SinkSnapshot | undefined,
+): Record<string, SinkSnapshot> {
+  if (!jobId || !live || cache[jobId] === live) return cache
+  return { ...cache, [jobId]: live }
+}
+
+export function sinkDisplaySnapshot(
+  cache: Record<string, SinkSnapshot>,
+  jobId: string | null | undefined,
+  live: SinkSnapshot | undefined,
+  jobRunning: boolean,
+): SinkSnapshot | undefined {
+  if (live) return live
+  if (!jobRunning || !jobId) return undefined
+  return cache[jobId]
+}
+
+export function resetSinkForm() {
+  state.sinkStreamUrl = ''
+  state.sinkPath = ''
+  state.sinkStreamUrlError = ''
+  state.sinkPathError = ''
+  state.sinkAdvancedOpen = false
+  state.sinkVariant = ''
+  state.sinkMaxLatency = ''
+  state.sinkWalMax = ''
+  state.sinkStartSecretValue = ''
+  state.sinkStartError = ''
+}
+
+export function enterSinkCreate() {
+  state.sinkSubView = 'create'
+  state.sinkSourceKind = 'profile'
+  state.sinkSourceProfileId = selectedProfile?.id ?? appState.profiles[0]?.id ?? null
+  state.sinkProfileQuery = ''
+  state.sinkSourceInstance = null
+  resetSinkForm()
+}
+
+export function exitSinkCreate() {
+  state.sinkSubView = 'list'
+}
+
+export function selectSinkProfile(profileId: string) {
+  if (state.sinkSourceKind === 'profile' && state.sinkSourceProfileId === profileId) return
+  state.sinkSourceKind = 'profile'
+  state.sinkSourceProfileId = profileId
+  state.sinkSourceInstance = null
+  resetSinkForm()
+}
+
+// Captures the instance's live config once (getInstanceConfig), same
+// one-shot pattern as selectUploadInstance -- resolve_upload_source_profile
+// (Rust) falls back to exactly this cached value if the instance is no
+// longer mounted by the time it's actually used.
+export async function selectSinkInstance(instance: MountInstance) {
+  state.sinkSourceKind = 'instance'
+  state.sinkSourceProfileId = null
+  resetSinkForm()
+  const backend = instance.backend ?? 'auto'
+  state.sinkSourceInstance = { mountPath: instance.mountPath, backend, discoveryUrl: '', fork: '', volume: '', accessKeyId: '' }
+  try {
+    const config = JSON.parse(await getInstanceConfig(instance.mountPath))
+    if (state.sinkSourceInstance?.mountPath !== instance.mountPath) return
+    state.sinkSourceInstance = {
+      mountPath: instance.mountPath,
+      backend,
+      discoveryUrl: typeof config.discoveryUrl === 'string' ? config.discoveryUrl : '',
+      fork: typeof config.forkName === 'string' ? config.forkName : '',
+      volume: typeof config.volumeName === 'string' ? config.volumeName : '',
+      accessKeyId: typeof config.accessId === 'string' ? config.accessId : '',
+    }
+  } catch (error) {
+    state.sinkStartError = describeError(error)
+  }
+}
+
+export async function runSinkStart() {
+  const profileId = state.sinkSourceKind === 'profile' ? (state.sinkSourceProfileId ?? undefined) : undefined
+  const instance = state.sinkSourceKind === 'instance' ? (state.sinkSourceInstance ?? undefined) : undefined
+  if (!profileId && !instance) return
+  const streamUrl = state.sinkStreamUrl.trim()
+  const sinkPath = state.sinkPath.trim()
+  state.sinkStreamUrlError = streamUrl ? (validateUploadPositional(streamUrl, 'Stream URL') ?? '') : 'Stream URL is required'
+  state.sinkPathError = sinkPath ? (validateUploadPositional(sinkPath, 'Destination path') ?? '') : 'Destination path is required'
+  if (state.sinkStreamUrlError || state.sinkPathError) return
+  state.sinksBusy = true
+  state.sinkStartError = ''
+  try {
+    await startSink(profileId, instance, streamUrl, sinkPath, sinkStartParams(), state.sinkStartSecretValue || undefined)
+    notify(`Ingest started: ${streamUrl} -> ${sinkPath}`)
+    state.sinkSubView = 'list'
+    await runSinkList()
+  } catch (error) {
+    state.sinkStartError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+export function requestSinkResume(job: SinkJob) {
+  state.sinkResumePromptFor = job
+  state.sinkSubView = 'resume'
+  // Best-effort convenience default, not a requirement, mirrors
+  // requestUploadResume's own comment.
+  state.sinkResumeDiscoveryUrl = selectedProfile?.discoveryUrl ?? ''
+  state.sinkResumeAccessKeyId = selectedProfile?.accessKeyId ?? ''
+  state.sinkResumeSecretValue = ''
+  state.sinkResumeError = ''
+}
+
+export function cancelSinkResume() {
+  state.sinkResumePromptFor = null
+  state.sinkResumeSecretValue = ''
+  state.sinkSubView = 'list'
+}
+
+export async function confirmSinkResume() {
+  const job = state.sinkResumePromptFor
+  if (!job) return
+  const discoveryUrl = state.sinkResumeDiscoveryUrl.trim()
+  const accessKeyId = state.sinkResumeAccessKeyId.trim()
+  if (!discoveryUrl || !accessKeyId) {
+    state.sinkResumeError = !discoveryUrl ? 'Discovery URL is required' : 'Access key ID is required'
+    return
+  }
+  state.sinksBusy = true
+  state.sinkResumeError = ''
+  try {
+    await resumeSink(discoveryUrl, accessKeyId, job.jobId, state.sinkResumeSecretValue || undefined)
+    state.sinkResumePromptFor = null
+    state.sinkResumeSecretValue = ''
+    state.sinkSubView = 'list'
+    notify(`Ingest job ${job.jobId} resumed`)
+    await runSinkList()
+  } catch (error) {
+    state.sinkResumeError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+// Cancel is a graceful stop, the job stays resumable. No retry-failed for
+// sink (cmd_sink.go has no such subcommand): there is no per-file batch to
+// retry, transient failures are already retried internally by the runner.
+// Runs directly from a row button, same as runUploadCancel.
+export async function runSinkCancel(job: SinkJob) {
+  state.sinksBusy = true
+  state.sinksError = ''
+  try {
+    await cancelSink(job.jobId)
+    notify(`Ingest job ${job.jobId} cancelled`)
+    await runSinkList()
+  } catch (error) {
+    state.sinksError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+// Finish is the graceful stop: unlike cancel, it finalizes the recording
+// (a real EXT-X-ENDLIST, not a resumable cutoff) and ends the job rather
+// than leaving it resumable. Runs directly from a row button while the job
+// is running, same as runSinkCancel.
+export async function runSinkFinish(job: SinkJob) {
+  state.sinksBusy = true
+  state.sinksError = ''
+  try {
+    await finishSink(job.jobId)
+    notify(`Ingest job ${job.jobId} finished`)
+    await runSinkList()
+  } catch (error) {
+    state.sinksError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+export function requestSinkPrune() {
+  state.sinkPrunePromptOpen = true
+  state.sinkPruneKeep = '0'
+  state.sinkPruneError = ''
+}
+
+export function cancelSinkPrune() {
+  state.sinkPrunePromptOpen = false
+}
+
+export async function confirmSinkPrune() {
+  const keep = Number.parseInt(state.sinkPruneKeep, 10)
+  state.sinksBusy = true
+  state.sinkPruneError = ''
+  try {
+    await pruneSinks(Number.isFinite(keep) && keep > 0 ? keep : 0)
+    state.sinkPrunePromptOpen = false
+    notify('Completed/halted ingest jobs pruned')
+    await runSinkList()
+  } catch (error) {
+    state.sinkPruneError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+export async function openSinkJobLog(job: SinkJob) {
+  if (!job.logPath) return
+  try {
+    await openSinkLog(job.logPath)
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Could not open the log file', 'error')
+  }
+}
+
+export async function copySinkJobLogPath(job: SinkJob) {
+  if (!job.logPath) return
+  try {
+    await navigator.clipboard.writeText(job.logPath)
+    notify('Log path copied')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Failed to copy log path', 'error')
+  }
+}
+
 // Snapshot/Deleted/Version/Gateway are all profile-based, not instance-based:
 // none of these mountos commands need an existing running mount, they
 // connect to discovery+dataserv independently using the profile's own
@@ -3152,6 +3691,19 @@ export function setSkipUnmountConfirm(next: boolean) {
   if (typeof localStorage !== 'undefined') localStorage.setItem('mountos-desktop-skip-unmount-confirm', String(next))
 }
 
+export function setJobPanelCollapsed(id: string, collapsed: boolean) {
+  state.jobPanelCollapsed[id] = collapsed
+  if (typeof localStorage !== 'undefined') localStorage.setItem('mountos-desktop-job-panel-collapsed', JSON.stringify(state.jobPanelCollapsed))
+}
+
+export function openJobPanelFloating(id: string) {
+  state.jobPanelFloatingId = id
+}
+
+export function closeJobPanelFloating() {
+  state.jobPanelFloatingId = null
+}
+
 export function showTips() {
   state.tipsOpen = true
 }
@@ -3192,10 +3744,11 @@ export function setLicensesKind(kind: 'rust' | 'js') {
 // block: 'nearest' rather than 'start', since pinning a near-the-bottom section
 // to the viewport top can overscroll past the page's real content, leaving a
 // blank gap below it since there's nothing left to fill the revealed space.
-export async function goToSettingsSection(id: string) {
+export async function goToSettingsSection(tab: SettingsTab, elementId?: string) {
   state.view = 'settings'
+  state.settingsTab = tab
   await tick()
-  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  if (elementId) document.getElementById(elementId)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
 }
 
 export async function loadSettings() {
@@ -3228,6 +3781,20 @@ export async function changeAllowUnmountForce(enabled: boolean) {
   try {
     state.settings = await saveSettings({ ...state.settings, allowUnmountForce: enabled })
     notify(enabled ? 'Force unmount allowed' : 'Force unmount disallowed')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Failed to save settings', 'error')
+  }
+}
+
+// Visibility only: turning a feature off just hides its sidebar entry. It
+// never touches a running job or the CLI, which don't know this toggle
+// exists.
+export async function setFeatureEnabled(id: string, enabled: boolean) {
+  const label = FEATURE_REGISTRY.find((feature) => feature.id === id)?.label ?? id
+  try {
+    const nextOverrides = { ...state.settings.featureOverrides, [id]: enabled }
+    state.settings = await saveSettings({ ...state.settings, featureOverrides: nextOverrides })
+    notify(`${label} ${enabled ? 'enabled' : 'disabled'}`)
   } catch (error) {
     notify(error instanceof Error ? error.message : 'Failed to save settings', 'error')
   }
@@ -3307,6 +3874,7 @@ export async function pickCliPathOverride() {
   try {
     await validateCliCandidate(chosen)
     state.settings = await saveSettings({ ...state.settings, cliPathOverride: chosen })
+    state.cliSignatureStatus = null
     notify('Pinned mountos CLI path')
     await refresh(false)
   } catch (error) {
@@ -3317,10 +3885,28 @@ export async function pickCliPathOverride() {
 export async function clearCliPathOverride() {
   try {
     state.settings = await saveSettings({ ...state.settings, cliPathOverride: undefined })
+    state.cliSignatureStatus = null
     notify('CLI path pin cleared, using PATH lookup again')
     await refresh(false)
   } catch (error) {
     notify(error instanceof Error ? error.message : 'Failed to save settings', 'error')
+  }
+}
+
+// Checks the code-signing signature of whichever binary is actually in
+// effect (the pinned override if set, else the PATH-resolved one) -- a
+// stronger claim than validateCliCandidate's "--version prints mountos" text
+// sniff, which a spoofed binary could trivially satisfy.
+export async function verifyCliBinary() {
+  const path = state.settings.cliPathOverride ?? state.systemState.cliPath
+  if (!path) return
+  state.cliSignatureChecking = true
+  try {
+    state.cliSignatureStatus = await verifyCliSignature(path)
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Failed to verify the CLI signature', 'error')
+  } finally {
+    state.cliSignatureChecking = false
   }
 }
 
@@ -3360,6 +3946,8 @@ export async function uninstallMcp() {
 }
 
 export function viewTitle(nextView: View) {
+  const feature = FEATURE_REGISTRY.find((candidate) => candidate.id === nextView)
+  if (feature) return feature.label
   return nextView === 'instances'
     ? 'Instances'
     : nextView === 'profiles'
@@ -3385,6 +3973,9 @@ export {
   buildForkRestoreArgv,
   buildGatewayArgv,
   buildMountArgv,
+  buildSinkPruneArgv,
+  buildSinkResumeArgv,
+  buildSinkStartArgv,
   buildSnapshotArgv,
   buildUploadCancelArgv,
   buildUploadListArgv,

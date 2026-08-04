@@ -10,9 +10,11 @@
     FolderOpen,
     ListChecks,
     OctagonX,
+    PanelLeftClose,
     Plus,
     RefreshCw,
     RotateCcw,
+    Tag,
     Trash2,
   } from '@lucide/svelte'
   import { Button } from '$lib/components/ui/button'
@@ -25,6 +27,7 @@
   import { Table, TableBody, TableRow, TableCell } from '$lib/components/ui/table'
   import Combobox from '$lib/components/shared/Combobox.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
+  import JobPanel from '$lib/components/shared/JobPanel.svelte'
   import CliErrorOutput from '$lib/components/CliErrorOutput.svelte'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import { focusOnMount } from '$lib/actions'
@@ -34,6 +37,7 @@
     browseDownloadSource,
     buildDownloadResumeArgv,
     cancelDownloadResume,
+    closeJobPanelFloating,
     computed,
     confirmDownloadResume,
     copyDownloadJobLogPath,
@@ -50,9 +54,10 @@
     runDownloadStart,
     selectDownloadInstance,
     selectDownloadProfile,
+    setJobPanelCollapsed,
   } from '$lib/app-state.svelte'
   import type { DownloadJob, MountInstance, MountProfile } from '$lib/types'
-  import { formatBytes } from '$lib/utils'
+  import { formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
 
   // Fetch exactly once per mount, mirrors UploadsView's own fetchedOnce
   // gate (an empty job list is the normal first-run state, so gating on
@@ -72,16 +77,6 @@
     const id = setInterval(() => { now = Date.now() }, 1000)
     return () => clearInterval(id)
   })
-
-  function lastFetchedLabel(fetchedAt: number | null, current: number): string {
-    if (fetchedAt == null) return ''
-    const diffSec = Math.max(0, Math.floor((current - fetchedAt) / 1000))
-    if (diffSec < 5) return 'Updated just now'
-    if (diffSec < 60) return `Updated ${diffSec}s ago`
-    const diffMin = Math.floor(diffSec / 60)
-    if (diffMin < 60) return `Updated ${diffMin}m ago`
-    return `Updated ${Math.floor(diffMin / 60)}h ago`
-  }
 
   const stateBadgeVariant: Record<string, BadgeVariant> = {
     running: 'success',
@@ -239,7 +234,7 @@
             <ChevronLeft size={16} aria-hidden="true" /> Back to download jobs
           </button>
           {#if downloadSourceReady && computed.downloadResolvedFork}
-            <Badge variant="secondary" title="Fork: {computed.downloadResolvedFork}">{computed.downloadResolvedFork}</Badge>
+            <Badge variant="secondary" class="min-w-0 shrink truncate" title="Fork: {computed.downloadResolvedFork}">{computed.downloadResolvedFork}</Badge>
           {/if}
         </div>
         <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.downloadsBusy || !downloadSourceReady || !appState.downloadSource.trim() || !appState.downloadDest.trim()}>
@@ -322,7 +317,7 @@ Leave blank to read the fork's current, live content." />
             <small class="text-destructive text-sm">{appState.downloadSourceError}</small>
           {/if}
           {#if appState.downloadBrowseError}
-            <small class="text-destructive text-sm">{appState.downloadBrowseError}</small>
+            <small class="text-destructive text-sm wrap-anywhere">{appState.downloadBrowseError}</small>
           {/if}
         </div>
 
@@ -481,7 +476,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
       <h3 class="flex items-center gap-2"><RefreshCw size={19} aria-hidden="true" /> Resume download</h3>
 
-      <div class="grid gap-1 max-w-sm">
+      <div class="grid min-w-0 gap-1 max-w-sm">
         <Label>Job ID</Label>
         <code class="truncate">{resumeJob.jobId}</code>
       </div>
@@ -552,7 +547,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         <Download size={28} aria-hidden="true" />
         <strong>No active downloads</strong>
         {#if appState.downloadsError}
-          <p class="text-destructive text-sm" role="alert">{appState.downloadsError}</p>
+          <p class="text-destructive text-sm wrap-anywhere" role="alert">{appState.downloadsError}</p>
         {/if}
         <p>Pull files from an already-mounted instance or a saved profile's fork, with the exact CLI command shown before every action.</p>
         <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
@@ -563,70 +558,106 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
     </div>
   </section>
 {:else}
-  <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
-    <div class="surface p-4">
-      <div class="mb-4 flex items-center justify-between gap-2">
-        <h3 class="flex items-center gap-2"><Download size={18} aria-hidden="true" /> Downloads</h3>
-        <div class="flex items-center gap-1">
-          <Button type="button" size="icon" variant="ghost" onclick={runDownloadList} disabled={appState.downloadsBusy} title="Refresh job list" aria-label="Refresh job list">
-            <RefreshCw size={15} aria-hidden="true" />
-          </Button>
-          <Button type="button" size="icon" variant="ghost" onclick={requestDownloadPrune} disabled={appState.downloadsBusy} title="Prune completed/halted jobs" aria-label="Prune completed/halted jobs">
-            <Trash2 size={15} aria-hidden="true" />
-          </Button>
-        </div>
-      </div>
-      <Button type="button" variant="primary" class="w-full mb-3 cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
-        <Plus size={16} aria-hidden="true" />
-        New download
-      </Button>
-      {#if appState.downloadsError}
-        <p class="text-destructive text-sm mb-2" role="alert">{appState.downloadsError}</p>
-      {/if}
-      {#if computed.downloadHiddenCompletedCount > 0}
-        <Checkbox
-          bind:checked={appState.downloadShowCompleted}
-          label="Show completed ({computed.downloadHiddenCompletedCount})"
-          class="mb-2"
-        />
-      {/if}
-      <div class="grid gap-1.5">
-        {#if computed.downloadVisibleJobs.length === 0}
-          <div class="tech-grid px-5 py-6 text-center">
-            <p>{appState.downloads.length === 1 ? 'The only job has completed.' : `All ${appState.downloads.length} jobs have completed.`}</p>
+  <section
+    class="grid flex-1 grid-rows-1 gap-4 m-[22px] outline-hidden"
+    style:grid-template-columns={appState.jobPanelCollapsed.downloads ? 'minmax(0,1fr)' : '280px minmax(0,1fr)'}
+    tabindex="-1"
+    use:focusOnMount
+  >
+    <JobPanel id="downloads" searchPlaceholder="Search downloads...">
+      {#snippet children(query, floating)}
+        {@const filteredJobs = computed.downloadVisibleJobs.filter((job) => matchesSearch(query, job.name, job.sourcePath, job.destPath, job.jobId))}
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="flex items-center gap-2"><Download size={18} aria-hidden="true" /> Downloads</h3>
+          <div class="flex flex-wrap items-center gap-2">
+            {#if !floating}
+              <Button type="button" size="icon" variant="ghost" onclick={() => setJobPanelCollapsed('downloads', true)} title="Collapse panel" aria-label="Collapse panel">
+                <PanelLeftClose size={15} aria-hidden="true" />
+              </Button>
+            {/if}
+            <Button type="button" size="icon" variant="ghost" onclick={runDownloadList} disabled={appState.downloadsBusy} title="Refresh job list" aria-label="Refresh job list">
+              <RefreshCw size={15} aria-hidden="true" />
+            </Button>
+            <Button type="button" size="icon" variant="ghost" onclick={requestDownloadPrune} disabled={appState.downloadsBusy} title="Prune completed/halted jobs" aria-label="Prune completed/halted jobs">
+              <Trash2 size={15} aria-hidden="true" />
+            </Button>
+            {#if floating}
+              <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
+                <Plus size={16} aria-hidden="true" />
+                New download
+              </Button>
+            {/if}
           </div>
-        {:else}
-          {#each computed.downloadVisibleJobs as job (job.jobId)}
-            <button
-              class:bg-accent={appState.downloadSelectedJobId === job.jobId}
-              class="flex min-w-0 items-center gap-2.5 border border-transparent p-2 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
-              type="button"
-              onclick={() => (appState.downloadSelectedJobId = job.jobId)}
-            >
-              <Download size={16} aria-hidden="true" class="shrink-0" />
-              <span class="min-w-0 flex-1">
-                <strong class="block truncate">{job.name || job.sourcePath || job.jobId}</strong>
-                <span class="block truncate text-muted-foreground text-sm">{job.destPath ?? ''}</span>
-              </span>
-              <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{job.state}</Badge>
-            </button>
-          {/each}
-          {#if computed.downloadVisibleJobsTruncated}
-            <p class="text-muted-foreground text-sm p-2">
-              Showing the first {computed.downloadVisibleJobs.length} of {computed.downloadVisibleJobsTotal} jobs, prune old jobs to see the rest.
-            </p>
-          {/if}
+        </div>
+        {#if !floating}
+          <Button type="button" variant="primary" class="w-full mb-3 cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
+            <Plus size={16} aria-hidden="true" />
+            New download
+          </Button>
         {/if}
-      </div>
-    </div>
+        {#if appState.downloadsError}
+          <p class="text-destructive text-sm mb-2 wrap-anywhere" role="alert">{appState.downloadsError}</p>
+        {/if}
+        {#if computed.downloadHiddenCompletedCount > 0}
+          <Checkbox
+            bind:checked={appState.downloadShowCompleted}
+            label="Show completed ({computed.downloadHiddenCompletedCount})"
+            class="mb-2"
+          />
+        {/if}
+        <div class="grid gap-1.5">
+          {#if computed.downloadVisibleJobs.length === 0}
+            <div class="tech-grid px-5 py-6 text-center">
+              <p>{appState.downloads.length === 1 ? 'The only job has completed.' : `All ${appState.downloads.length} jobs have completed.`}</p>
+            </div>
+          {:else if filteredJobs.length === 0}
+            <div class="tech-grid px-5 py-6 text-center">
+              <p>No jobs match &quot;{query}&quot;.</p>
+            </div>
+          {:else}
+            {#each filteredJobs as job (job.jobId)}
+              <button
+                class:bg-accent={appState.downloadSelectedJobId === job.jobId}
+                class="flex min-w-0 items-center gap-2.5 border border-transparent p-2 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                type="button"
+                onclick={() => {
+                  appState.downloadSelectedJobId = job.jobId
+                  closeJobPanelFloating()
+                }}
+              >
+                <Download size={16} aria-hidden="true" class="shrink-0" />
+                <span class="min-w-0 flex-1">
+                  <strong class="block truncate">{job.name || job.sourcePath || job.jobId}</strong>
+                  <span class="block truncate text-muted-foreground text-sm">{job.destPath ?? ''}</span>
+                </span>
+                <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{job.state}</Badge>
+              </button>
+            {/each}
+            {#if computed.downloadVisibleJobsTruncated}
+              <p class="text-muted-foreground text-sm p-2">
+                Showing the first {computed.downloadVisibleJobs.length} of {computed.downloadVisibleJobsTotal} jobs, prune old jobs to see the rest.
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/snippet}
+    </JobPanel>
 
     {#if selectedJob}
       {@const job = selectedJob}
       {@const resumable = job.state === 'halted' || job.state === 'resumable'}
-      <div class="surface corner-brackets p-4 grid content-start gap-4">
-        <div class="flex items-start justify-between gap-4">
-          <div class="min-w-0">
-            <h3 class="flex items-center gap-2 truncate"><Download size={19} aria-hidden="true" class="shrink-0" /> {job.name || job.sourcePath || job.jobId}</h3>
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="min-w-0 flex-1 basis-48">
+            <h3 class="flex min-w-0 items-center gap-2">
+              <Download size={19} aria-hidden="true" class="shrink-0" />
+              <span class="min-w-0 flex-1 truncate">{job.name || job.sourcePath || job.jobId}</span>
+              <Badge variant="secondary" class="shrink-0" title="Fork name">{job.forkName || 'main'}</Badge>
+              <Badge variant="secondary" class="ml-auto min-w-0 shrink truncate" title="Job ID">
+                <Tag size={12} aria-hidden="true" class="shrink-0" />
+                {job.jobId}
+              </Badge>
+            </h3>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             {#if job.state === 'running'}
@@ -651,22 +682,14 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
-          <div class="grid gap-1">
-            <Label>Job ID</Label>
-            <code class="truncate">{job.jobId}</code>
-          </div>
-          <div class="grid gap-1">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Source</Label>
             <p class="truncate" title={job.sourcePath}>{job.sourcePath ?? 'source profile'}</p>
           </div>
-          <div class="grid gap-1">
+          <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Destination</Label>
             <p class="truncate" title={job.destPath}>{job.destPath}</p>
-          </div>
-          <div class="grid gap-1">
-            <Label>Fork</Label>
-            <p class="truncate">{job.forkName || '—'}</p>
           </div>
           <div class="grid gap-1">
             <Label>State</Label>
@@ -695,14 +718,14 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         {/if}
 
         {#if job.logPath}
-          <div class="grid gap-1">
+          <div class="grid gap-1 min-w-0">
             <Label>Log</Label>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0">
               <code class="min-w-0 flex-1 truncate" title={job.logPath}>{job.logPath}</code>
-              <Button type="button" variant="outline" size="icon" title="Copy log path" aria-label="Copy log path" onclick={() => copyDownloadJobLogPath(job)}>
+              <Button type="button" variant="outline" size="icon" class="shrink-0" title="Copy log path" aria-label="Copy log path" onclick={() => copyDownloadJobLogPath(job)}>
                 <Copy size={16} aria-hidden="true" />
               </Button>
-              <Button type="button" variant="outline" size="icon" title="Open log" aria-label="Open log" onclick={() => openDownloadJobLog(job)}>
+              <Button type="button" variant="outline" size="icon" class="shrink-0" title="Open log" aria-label="Open log" onclick={() => openDownloadJobLog(job)}>
                 <ExternalLink size={16} aria-hidden="true" />
               </Button>
             </div>
@@ -710,7 +733,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         {/if}
 
         <div class="grid gap-2">
-          <div class="flex items-center justify-between gap-2 border-b-2 border-primary pb-1.5">
+          <div class="flex items-center justify-between gap-2 border-b-2 border-primary pb-2 mb-2">
             <p class="text-xs font-bold uppercase tracking-wide">Progress</p>
             {#if appState.downloadsLastFetchedAt != null}
               <span

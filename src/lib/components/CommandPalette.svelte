@@ -1,8 +1,23 @@
 <script lang="ts">
-  import { Bot, FileArchive, HardDrive, Info, Lightbulb, Mail, MonitorDot, Palette, PanelLeft, Plus, RefreshCw, ScrollText, Settings, TerminalSquare, Unplug } from '@lucide/svelte'
+  import { Bot, Download, FileArchive, HardDrive, Info, Lightbulb, Mail, MonitorDot, Palette, PanelLeft, Plus, Radio, RefreshCw, ScrollText, Settings, TerminalSquare, Unplug, Upload } from '@lucide/svelte'
   import * as Command from '$lib/components/ui/command'
-  import { appState, createBundle, goToSettingsSection, newProfile, refresh, requestUnmountAll, selectProfile, showLicenses, showTips, toggleSidebar } from '$lib/app-state.svelte'
+  import {
+    appState,
+    computed,
+    createBundle,
+    enterDownloadCreate,
+    enterUploadCreate,
+    goToSettingsSection,
+    newProfile,
+    refresh,
+    requestUnmountAll,
+    selectProfile,
+    showLicenses,
+    showTips,
+    toggleSidebar,
+  } from '$lib/app-state.svelte'
   import type { View } from '$lib/app-state.svelte'
+  import { FEATURE_REGISTRY } from '$lib/features'
   import { isMacPlatform } from '$lib/utils'
 
   let { open = $bindable(false) }: { open?: boolean } = $props()
@@ -10,8 +25,17 @@
   const navItems: Array<{ id: View; label: string; icon: typeof MonitorDot }> = [
     { id: 'instances', label: 'Instances', icon: MonitorDot },
     { id: 'profiles', label: 'Profiles', icon: HardDrive },
+    { id: 'uploads', label: 'Uploads', icon: Upload },
+    { id: 'downloads', label: 'Downloads', icon: Download },
     { id: 'settings', label: 'Settings', icon: Settings },
   ]
+
+  const sinkFeatureLabel = FEATURE_REGISTRY.find((feature) => feature.id === 'sink')?.label ?? 'Media ingest'
+
+  function openSink() {
+    if (computed.resolvedFeatures.sink) appState.view = 'sink'
+    else void goToSettingsSection('features')
+  }
 
   const mac = $derived(isMacPlatform(appState.systemState.platform))
   const settingsShortcut = $derived(mac ? '⌘,' : 'Ctrl+,')
@@ -40,28 +64,35 @@
           {/if}
         </Command.CommandItem>
       {/each}
+      <!-- Sink stays out of navItems: it's opt-in and hidden from the sidebar
+           until enabled, so this entry routes to the feature toggle instead
+           of a blank/missing view when it's off. -->
+      <Command.CommandItem value={sinkFeatureLabel} keywords={['sink', 'media', 'ingest', 'camera', 'stream']} onSelect={() => run(openSink)}>
+        <Radio class="mr-2 h-4 w-4" />
+        {sinkFeatureLabel}
+      </Command.CommandItem>
     </Command.CommandGroup>
 
     <Command.CommandSeparator />
 
     <Command.CommandGroup heading="Settings">
-      <Command.CommandItem value="Appearance" keywords={['theme', 'skin', 'dark', 'light', 'colors']} onSelect={() => run(() => goToSettingsSection('settings-appearance'))}>
+      <Command.CommandItem value="Appearance" keywords={['theme', 'skin', 'dark', 'light', 'colors']} onSelect={() => run(() => goToSettingsSection('appearance', 'settings-appearance'))}>
         <Palette class="mr-2 h-4 w-4" />
         Appearance
       </Command.CommandItem>
-      <Command.CommandItem value="Terminal" keywords={['dashboard', 'shell']} onSelect={() => run(() => goToSettingsSection('settings-terminal'))}>
+      <Command.CommandItem value="Terminal" keywords={['dashboard', 'shell']} onSelect={() => run(() => goToSettingsSection('monitoring', 'settings-terminal'))}>
         <TerminalSquare class="mr-2 h-4 w-4" />
         Terminal
       </Command.CommandItem>
-      <Command.CommandItem value="MCP for AI agents" keywords={['mcp', 'model context protocol', 'ai agent', 'claude', 'codex', 'gemini']} onSelect={() => run(() => goToSettingsSection('settings-mcp'))}>
+      <Command.CommandItem value="MCP for AI agents" keywords={['mcp', 'model context protocol', 'ai agent', 'claude', 'codex', 'gemini']} onSelect={() => run(() => goToSettingsSection('mcp', 'settings-mcp'))}>
         <Bot class="mr-2 h-4 w-4" />
         MCP for AI agents
       </Command.CommandItem>
-      <Command.CommandItem value="About mountOS" keywords={['version', 'platform', 'cli', 'support', 'licenses']} onSelect={() => run(() => goToSettingsSection('settings-about'))}>
+      <Command.CommandItem value="About mountOS" keywords={['version', 'platform', 'cli', 'support', 'licenses']} onSelect={() => run(() => goToSettingsSection('about', 'settings-about'))}>
         <Info class="mr-2 h-4 w-4" />
         About mountOS
       </Command.CommandItem>
-      <Command.CommandItem value="Support" keywords={['help', 'contact', 'email', 'mailto']} onSelect={() => run(() => goToSettingsSection('settings-about'))}>
+      <Command.CommandItem value="Support" keywords={['help', 'contact', 'email', 'mailto']} onSelect={() => run(() => goToSettingsSection('about', 'settings-about'))}>
         <Mail class="mr-2 h-4 w-4" />
         Support
       </Command.CommandItem>
@@ -85,6 +116,14 @@
         New profile
         <Command.CommandShortcut>{newProfileShortcut}</Command.CommandShortcut>
       </Command.CommandItem>
+      <Command.CommandItem value="New upload" onSelect={() => run(() => { appState.view = 'uploads'; enterUploadCreate() })}>
+        <Upload class="mr-2 h-4 w-4" />
+        New upload
+      </Command.CommandItem>
+      <Command.CommandItem value="New download" onSelect={() => run(() => { appState.view = 'downloads'; enterDownloadCreate() })}>
+        <Download class="mr-2 h-4 w-4" />
+        New download
+      </Command.CommandItem>
       <Command.CommandItem
         value="Unmount all"
         disabled={appState.systemState.instances.length === 0}
@@ -97,7 +136,7 @@
         value="Create diagnostics bundle"
         onSelect={() => run(async () => {
           await createBundle()
-          await goToSettingsSection('settings-diagnostics-bundle')
+          await goToSettingsSection('diagnostics', 'settings-diagnostics-bundle')
         })}
       >
         <FileArchive class="mr-2 h-4 w-4" />

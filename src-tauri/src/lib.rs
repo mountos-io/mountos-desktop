@@ -295,6 +295,13 @@ struct DesktopSettings {
     // busy and stays mounted and working.
     #[serde(default)]
     allow_unmount_force: bool,
+    // User overrides for optional-feature visibility, keyed by feature id
+    // (see src/lib/features.ts's FEATURE_REGISTRY). Absent id means "use the
+    // registry default", not "off". Local to this install only, never synced
+    // anywhere. #[serde(default)] so settings.json files written before this
+    // field existed still deserialize to an empty map rather than failing.
+    #[serde(default)]
+    feature_overrides: std::collections::HashMap<String, bool>,
 }
 
 impl Default for DesktopSettings {
@@ -309,6 +316,7 @@ impl Default for DesktopSettings {
             terminal: None,
             allow_fork_force_delete: false,
             allow_unmount_force: false,
+            feature_overrides: std::collections::HashMap::new(),
         }
     }
 }
@@ -436,6 +444,110 @@ struct DownloadStartParams {
     create_source_directory: bool,
 }
 
+// Mirrors mountos-servers' sinkListEntry (`mountos sink list --json`,
+// cmd_list_sink.go) -- a sink job's live state is rate/lag counters, not a
+// bounded per-status work list, so this is a genuinely different shape from
+// UploadJob/DownloadJob's `counts` map, not a reuse of it. Every counter
+// field carries `omitempty` server-side and is 0/absent for a job that has
+// neither a live daemon nor cached counters. A stopped job with cached
+// final counters (JobSpec.CachedCounts) reports them here too, tagged
+// last_known -- lag fields stay 0 in that case, they describe an active
+// fetch loop that no longer exists (see cmd_list_sink.go's own doc comment).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SinkJob {
+    job_id: String,
+    name: String,
+    // running | halted | completed | resumable | finished
+    state: String,
+    source: String, // redacted stream URL
+    sink_template: String,
+    fork: String,
+    lag_segments: Option<i64>,
+    lag_seconds: Option<f64>,
+    wal_bytes: Option<i64>,
+    wal_segments: Option<i32>,
+    discontinuities: Option<i64>,
+    segments_fetched: Option<i64>,
+    bytes_committed: Option<i64>,
+    fetch_errors: Option<i64>,
+    commit_retries: Option<i64>,
+    halt_reason: Option<String>,
+    pid: Option<u32>,
+    created_at: Option<i64>,
+    completed_at: Option<i64>,
+    log_path: Option<String>,
+    last_known: bool,
+    // Number of destination files this job has produced so far, and the
+    // rendered path of the one currently being written -- see cmd_list_
+    // sink.go's sinkListEntry.FileCount/.CurrentPath doc comments. Both
+    // omitempty Go-side (absent before the first file opens).
+    file_count: Option<i64>,
+    current_path: Option<String>,
+}
+
+// Mirrors mountos-servers' SinkSnapshot (sink_runner.go) -- the fuller
+// single-job rate/lag reading from `mountos sink status --job <id> --json`.
+// Present for a running job (a live reading) or for a stopped job with
+// cached final counters (SinkStatus.last_known true) -- see
+// sinkStatusPayload's own doc comment. last_commit_at/last_segment_at are
+// always None in the cached case: SinkCachedCounts does not persist them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SinkSnapshot {
+    state: String,
+    lag_segments: i64,
+    lag_seconds: f64,
+    wal_bytes: i64,
+    wal_segments: i32,
+    discontinuities: i64,
+    segments_fetched: i64,
+    segments_committed: i64,
+    bytes_committed: i64,
+    file_size: i64,
+    bitrate_observed: f64,
+    fetch_errors: i64,
+    commit_retries: i64,
+    // Number of destination files opened so far, and the rendered path of
+    // the one currently being written -- see sink_runner.go's SinkSnapshot.
+    // FileCount/.CurrentPath doc comments. Neither is omitempty Go-side.
+    file_count: i64,
+    current_path: String,
+    // Go's zero time.Time ("0001-01-01T00:00:00Z") is normalized to None
+    // rather than passed through -- see parse_sink_snapshot_value.
+    last_commit_at: Option<String>,
+    last_segment_at: Option<String>,
+}
+
+// Mirrors mountos-servers' sinkStatusPayload (cmd_sink.go).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SinkStatus {
+    job_id: String,
+    running: bool,
+    state: String,
+    friendly_name: Option<String>,
+    source: Option<String>,
+    sink_template: Option<String>,
+    fork: Option<String>,
+    halt_reason: Option<String>,
+    snapshot: Option<SinkSnapshot>,
+    last_known: bool,
+}
+
+// Frontend-supplied flags for the `mountos sink <M3U8_URL> <SINK_PATH>` run
+// form -- confirmed against cmd_sink.go: only --variant/--max-latency/
+// --wal-max exist beyond the shared --fork/credentials every satellite
+// builder already handles. No once/overwrite/dryRun/bwlimit/include/
+// exclude the way UploadStartParams has, sink has none of those.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SinkStartParams {
+    variant: Option<String>,
+    max_latency: Option<String>,
+    wal_max: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct UnmountResult {
     state: String,
@@ -536,6 +648,12 @@ const UPLOAD_ONCE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // round trip -- bounded tight so an unresponsive/hung pick fails fast rather
 // than leaving the settings UI stuck validating.
 const CLI_VALIDATE_TIMEOUT: Duration = Duration::from_secs(5);
+// mountOS's Apple Developer Team ID, pinned here rather than read from
+// tauri.conf.json: the bundle config has no signingIdentity key (the build
+// scripts supply APPLE_TEAM_ID/MOUNTOS_CODESIGN_IDENTITY as env vars at sign
+// time instead), so there's nothing to read it from at runtime.
+#[cfg(target_os = "macos")]
+const MOUNTOS_MACOS_TEAM_ID: &str = "2J6SJSDP78";
 
 fn keyring_entry(profile_id: &str) -> Result<keyring::Entry, DesktopError> {
     validate_profile_id(profile_id)?;
@@ -590,7 +708,7 @@ fn mountos_path() -> Result<PathBuf, DesktopError> {
             Ok(pinned)
         } else {
             // Fail loudly rather than silently falling back to a different
-            // PATH match — that would defeat the point of pinning a path.
+            // PATH match -- that would defeat the point of pinning a path.
             Err(DesktopError::Message(format!(
                 "pinned CLI path no longer exists: {}",
                 pinned.display()
@@ -1066,7 +1184,7 @@ fn read_profiles(app: &AppHandle) -> Result<Vec<MountProfile>, DesktopError> {
 // sets (and their TS mirrors in src/lib/cli.ts) are what stops a profile's
 // "extra args" field from overriding security-sensitive managed flags
 // (discovery URL, credentials, mount target). They must be updated whenever
-// mountos-servers' cmd/mfuse CLI adds a new flag — especially a new
+// mountos-servers' cmd/mfuse CLI adds a new flag -- especially a new
 // value-taking SHORT flag, since validate_extra_args's short-cluster scan
 // only special-cases '-o' as a value-absorbing flag; any other new
 // value-taking short flag would need the same treatment or it risks being
@@ -1831,6 +1949,114 @@ fn build_download_prune_argv(keep: u32) -> Vec<String> {
     argv
 }
 
+// `mountos sink <M3U8_URL> <SINK_PATH>`'s flag surface, confirmed against
+// cmd_sink.go: --fork (not --fork-name, matches upload's convention), plus
+// --variant/--max-latency/--wal-max. No --config here: the desktop only
+// ever drives the single-stream form, never the multi-stream YAML file. No
+// once/overwrite/dryRun/bwlimit/include/exclude/follow-symlinks/
+// create-source-directory either, do not carry those over from upload/
+// download by habit. Same flags-first-then-"--"-then-positionals ordering
+// as build_upload_start_argv, for the same reason (see that function's
+// comment) -- source is an operator-supplied URL and dest a path template,
+// both free text.
+fn build_sink_start_argv(
+    profile: &MountProfile,
+    source: &str,
+    dest: &str,
+    params: &SinkStartParams,
+) -> Vec<String> {
+    let mut argv = vec!["sink".to_string()];
+    if !profile.discovery_url.is_empty() {
+        argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
+    }
+    if !profile.fork.is_empty() {
+        argv.extend(["--fork".to_string(), profile.fork.clone()]);
+    }
+    if let Some(variant) = params
+        .variant
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        argv.extend(["--variant".to_string(), variant.to_string()]);
+    }
+    if let Some(max_latency) = params
+        .max_latency
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        argv.extend(["--max-latency".to_string(), max_latency.to_string()]);
+    }
+    if let Some(wal_max) = params
+        .wal_max
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        argv.extend(["--wal-max".to_string(), wal_max.to_string()]);
+    }
+    push_satellite_credentials(&mut argv, profile);
+    argv.extend(["--".to_string(), source.to_string(), dest.to_string()]);
+    argv
+}
+
+// `sink resume <job-id>` registers no flags of its own (confirmed against
+// createSinkResumeCommand, cmd_sink.go: no --variant/--max-latency/
+// --wal-max on the resume subcommand, job.json already fixes those
+// server-side), only the root-inherited --discovery-url/-a/-s needed to
+// reconnect.
+fn build_sink_resume_argv(profile: &MountProfile, job_id: &str) -> Vec<String> {
+    let mut argv = vec!["sink".to_string(), "resume".to_string(), job_id.to_string()];
+    if !profile.discovery_url.is_empty() {
+        argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
+    }
+    push_satellite_credentials(&mut argv, profile);
+    argv
+}
+
+// list/cancel/status are purely local (job dir + control socket, confirmed
+// against cmd_sink.go/cmd_list_sink.go: none of the three call
+// resolveUploadCredentials), so these take no MountProfile at all. `sink
+// list` is its own subcommand, not `mountos list --kind sink` (a sink row's
+// rate/lag shape doesn't fit mountListEntry's per-status counts map, see
+// cmd_list_sink.go's own doc comment), so this differs from
+// build_upload_list_argv/build_download_list_argv's shape.
+fn build_sink_list_argv() -> Vec<String> {
+    vec!["sink".to_string(), "list".to_string(), "--json".to_string()]
+}
+
+fn build_sink_cancel_argv(job_id: &str) -> Vec<String> {
+    vec!["sink".to_string(), "cancel".to_string(), job_id.to_string()]
+}
+
+// Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running
+// this signals a live control-socket shutdown (drains the WAL, writes the
+// real EXT-X-ENDLIST, ends the job); when not running it stamps the
+// terminal state directly once the WAL is already drained. Same subcommand
+// either way, no separate flag, matches build_upload_finish_argv's shape.
+fn build_sink_finish_argv(job_id: &str) -> Vec<String> {
+    vec!["sink".to_string(), "finish".to_string(), job_id.to_string()]
+}
+
+fn build_sink_status_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "sink".to_string(),
+        "status".to_string(),
+        "--job".to_string(),
+        job_id.to_string(),
+        "--json".to_string(),
+    ]
+}
+
+fn build_sink_prune_argv(keep: u32) -> Vec<String> {
+    let mut argv = vec!["sink".to_string(), "prune".to_string()];
+    if keep > 0 {
+        argv.extend(["--keep".to_string(), keep.to_string()]);
+    }
+    argv
+}
+
 // gateway-only mode uses the standalone `gateway` subcommand (no -m, no
 // backend flag, no --volname -- there is no FUSE mount at all, confirmed
 // against cmd_gateway.go/cmd_mount.go: -m is optional whenever
@@ -1907,7 +2133,7 @@ fn validate_backend_for_platform(backend: &Backend) -> Result<(), DesktopError> 
     }
 }
 
-// FSKit requires its mount point to live under this exact directory — the
+// FSKit requires its mount point to live under this exact directory -- the
 // kernel-side FSKit extension registration only resolves volumes rooted
 // here, mirroring the same constraint the mos-sanity/mos-tests skills
 // already document for manual FSKit testing.
@@ -2185,7 +2411,7 @@ fn run_cli_with_secret(
 }
 
 // Fork subcommands are one-shot TCP calls (connect, do the op, print, exit),
-// not mounts — no daemonize, no list --json polling, just exit-code +
+// not mounts -- no daemonize, no list --json polling, just exit-code +
 // stdout/stderr, mirroring mount_help_blocking's shape.
 fn fork_command_blocking(
     argv: Vec<String>,
@@ -2336,6 +2562,122 @@ fn validate_cli_candidate(path: String) -> Result<String, DesktopError> {
         )));
     }
     Ok(stdout)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CliSignatureStatus {
+    verified: bool,
+    detail: String,
+}
+
+// Stronger than validate_cli_candidate's "--version prints mountos" text
+// sniff: checks the binary's actual code-signing signature rather than
+// trusting whatever it prints. On macOS this confirms the signer is
+// mountOS's own Developer ID (not just "signed by someone"). On Windows it
+// only confirms the Authenticode signature is valid -- no certificate
+// thumbprint is checked into this repo to pin the signer against (see
+// MOUNTOS_MACOS_TEAM_ID's comment). Unsigned dev/local builds correctly
+// report unverified; that's expected, not an error.
+#[tauri::command]
+fn verify_cli_signature(path: String) -> Result<CliSignatureStatus, DesktopError> {
+    let candidate = PathBuf::from(&path);
+    if !candidate.is_file() {
+        return Err(DesktopError::Message(format!("{path} is not a file")));
+    }
+    Ok(verify_cli_signature_impl(&candidate))
+}
+
+#[cfg(target_os = "macos")]
+fn verify_cli_signature_impl(path: &Path) -> CliSignatureStatus {
+    let output = match Command::new("codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return CliSignatureStatus {
+                verified: false,
+                detail: format!("Could not run codesign: {error}"),
+            }
+        }
+    };
+    if !output.status.success() {
+        return CliSignatureStatus {
+            verified: false,
+            detail: "Not signed, or the signature is invalid".to_string(),
+        };
+    }
+    // codesign -dv writes its report to stderr, not stdout.
+    let info = String::from_utf8_lossy(&output.stderr);
+    let team_id = info
+        .lines()
+        .find_map(|line| line.strip_prefix("TeamIdentifier="))
+        .unwrap_or("");
+    if team_id == MOUNTOS_MACOS_TEAM_ID {
+        CliSignatureStatus {
+            verified: true,
+            detail: format!("Signed by mountOS (Team ID {MOUNTOS_MACOS_TEAM_ID})"),
+        }
+    } else if team_id.is_empty() || team_id == "not set" {
+        CliSignatureStatus {
+            verified: false,
+            detail: "Not signed".to_string(),
+        }
+    } else {
+        CliSignatureStatus {
+            verified: false,
+            detail: format!("Signed, but not by mountOS (Team ID {team_id})"),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn verify_cli_signature_impl(path: &Path) -> CliSignatureStatus {
+    let script = format!(
+        "(Get-AuthenticodeSignature -LiteralPath '{}').Status",
+        path.display().to_string().replace('\'', "''")
+    );
+    let output = match Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return CliSignatureStatus {
+                verified: false,
+                detail: format!("Could not run Get-AuthenticodeSignature: {error}"),
+            }
+        }
+    };
+    let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if status == "Valid" {
+        CliSignatureStatus {
+            verified: true,
+            detail: "Signed with a valid Authenticode signature".to_string(),
+        }
+    } else {
+        CliSignatureStatus {
+            verified: false,
+            detail: format!(
+                "Signature status: {}",
+                if status.is_empty() {
+                    "NotSigned".to_string()
+                } else {
+                    status
+                }
+            ),
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn verify_cli_signature_impl(_path: &Path) -> CliSignatureStatus {
+    CliSignatureStatus {
+        verified: false,
+        detail: "Signature verification is not available on this platform".to_string(),
+    }
 }
 
 fn cli_version() -> Option<String> {
@@ -3095,7 +3437,7 @@ fn mount_profile_blocking(
 
 // Shared by mount_profile_blocking and open_snapshot_view_blocking: both
 // subcommands daemonize normally (parent forks, blocks on the readiness
-// pipe up to LAUNCH_TIMEOUT, exits 0 with "started with PID" on success) —
+// pipe up to LAUNCH_TIMEOUT, exits 0 with "started with PID" on success) --
 // confirmed for `snapshot` by reading cmd_snapshot.go (Config.Foreground is
 // never set there, unlike deleted/version).
 fn spawn_daemonizing_and_wait(
@@ -3230,7 +3572,7 @@ fn spawn_daemonizing_upload_and_wait(
 // readiness while concurrently checking try_wait() so a fast failure (bad
 // credentials, discovery error) is caught promptly rather than waiting out
 // the full timeout. On success the Child handle is dropped without being
-// waited on — std::process::Child has no kill-on-drop behavior, so this
+// waited on -- std::process::Child has no kill-on-drop behavior, so this
 // correctly releases Rust's ownership while leaving the OS process running
 // as the mount's own server, same as any other backend's detached child.
 fn spawn_foreground_view_and_poll(
@@ -4251,6 +4593,440 @@ async fn prune_downloads(keep: u32) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || prune_downloads_blocking(keep))
         .await
         .map_err(|error| DesktopError::Message(format!("prune downloads task failed: {error}")))?
+}
+
+// `sink list --json` returns a plain array of sinkListEntry directly (no
+// "kind" field to filter on, unlike parse_uploads_value/parse_downloads_value
+// -- confirmed against cmd_list_sink.go: sink list is its own subcommand,
+// never mixed with mount/upload/download/gateway kinds the way `mountos
+// list --json` is).
+fn parse_sinks_value(value: &Value) -> Vec<SinkJob> {
+    value
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| {
+            let job_id = entry.get("jobId").and_then(Value::as_str)?.to_string();
+            Some(SinkJob {
+                job_id,
+                name: entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                state: entry
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("resumable")
+                    .to_string(),
+                source: entry
+                    .get("source")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                sink_template: entry
+                    .get("sinkTemplate")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                fork: entry
+                    .get("fork")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                lag_segments: entry.get("lagSegments").and_then(Value::as_i64),
+                lag_seconds: entry.get("lagSeconds").and_then(Value::as_f64),
+                wal_bytes: entry.get("walBytes").and_then(Value::as_i64),
+                wal_segments: entry
+                    .get("walSegments")
+                    .and_then(Value::as_i64)
+                    .and_then(|v| i32::try_from(v).ok()),
+                discontinuities: entry.get("discontinuities").and_then(Value::as_i64),
+                segments_fetched: entry.get("segmentsFetched").and_then(Value::as_i64),
+                bytes_committed: entry.get("bytesCommitted").and_then(Value::as_i64),
+                fetch_errors: entry.get("fetchErrors").and_then(Value::as_i64),
+                commit_retries: entry.get("commitRetries").and_then(Value::as_i64),
+                halt_reason: entry
+                    .get("haltReason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                pid: entry
+                    .get("pid")
+                    .and_then(Value::as_u64)
+                    .and_then(|v| u32::try_from(v).ok()),
+                created_at: entry.get("createdAt").and_then(Value::as_i64),
+                completed_at: entry.get("completedAt").and_then(Value::as_i64),
+                log_path: entry
+                    .get("logPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                last_known: entry
+                    .get("lastKnown")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                file_count: entry.get("fileCount").and_then(Value::as_i64),
+                current_path: entry
+                    .get("currentPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+            })
+        })
+        .collect()
+}
+
+fn list_sinks_blocking() -> Result<Vec<SinkJob>, DesktopError> {
+    let argv = build_sink_list_argv();
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let output = command_output(&args)?;
+    if !output.status.success() {
+        return Err(DesktopError::Message(format!(
+            "mountos sink list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let value = serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
+        DesktopError::Message(format!(
+            "mountos sink list returned unparseable output: {error}"
+        ))
+    })?;
+    Ok(parse_sinks_value(&value))
+}
+
+#[tauri::command]
+async fn list_sinks() -> Result<Vec<SinkJob>, DesktopError> {
+    tauri::async_runtime::spawn_blocking(list_sinks_blocking)
+        .await
+        .map_err(|error| DesktopError::Message(format!("list sinks task failed: {error}")))?
+}
+
+// sink's start/resolve-source needs are identical to upload's (a saved
+// profile, or an already-mounted instance's credentials/fork) -- sink and
+// upload only differ in what the positionals mean (an M3U8 URL, not a local
+// path), never in how the connection is resolved -- so this reuses
+// UploadInstanceRef/resolve_upload_source_profile directly rather than a
+// second, identical Sink-prefixed copy.
+fn sink_command_blocking(argv: Vec<String>, timeout: Duration) -> Result<String, DesktopError> {
+    let output = run_cli_with_secret(&argv, None, timeout)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        return Err(DesktopError::Message(if stderr.is_empty() {
+            format!("mountos {} exited with {}", argv.join(" "), output.status)
+        } else {
+            stderr
+        }));
+    }
+    Ok(if stdout.is_empty() { stderr } else { stdout })
+}
+
+fn start_sink_blocking(
+    app: AppHandle,
+    profile_id: Option<String>,
+    instance: Option<UploadInstanceRef>,
+    source: String,
+    dest: String,
+    params: SinkStartParams,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let profile = resolve_upload_source_profile(&app, profile_id.as_deref(), instance.as_ref())?;
+    let source = source.trim();
+    let dest = dest.trim();
+    if source.is_empty() {
+        return Err(DesktopError::Message("stream URL is required".to_string()));
+    }
+    if dest.is_empty() {
+        return Err(DesktopError::Message("sink path is required".to_string()));
+    }
+    validate_upload_positional(source, "stream URL")?;
+    validate_upload_positional(dest, "sink path")?;
+    let argv = build_sink_start_argv(&profile, source, dest, &params);
+    let resolved_secret = resolve_satellite_secret(&profile, secret)?;
+    // A single profile can legitimately drive multiple concurrent sink
+    // starts at different (source, dest) pairs, same reasoning as
+    // start_upload_blocking's own suffix.
+    let suffix = short_hash(&format!("{source}->{dest}"));
+    let stderr_path = runtime_dir(&app)?.join(format!("sink-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path = runtime_dir(&app)?.join(format!("sink-{}-{suffix}-stdout.log", profile.id));
+    // Sink always daemonizes on a successful start (shouldDaemonizeSink
+    // parity with upload/download's default path -- sink has no --once
+    // foreground-block exception the way upload does), so exit 0 IS the
+    // daemonize confirmation and LAUNCH_TIMEOUT applies unconditionally.
+    spawn_daemonizing_upload_and_wait(
+        &mountos_path()?,
+        &argv,
+        resolved_secret.as_deref(),
+        &stdout_path,
+        &stderr_path,
+        LAUNCH_TIMEOUT,
+    )?;
+    Ok("sink job started".to_string())
+}
+
+#[tauri::command]
+async fn start_sink(
+    app: AppHandle,
+    profile_id: Option<String>,
+    instance: Option<UploadInstanceRef>,
+    source: String,
+    dest: String,
+    params: SinkStartParams,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        start_sink_blocking(app, profile_id, instance, source, dest, params, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("start sink task failed: {error}")))?
+}
+
+fn resume_sink_blocking(
+    app: AppHandle,
+    discovery_url: String,
+    access_key_id: String,
+    job_id: String,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    let discovery_url = discovery_url.trim().to_string();
+    let access_key_id = access_key_id.trim().to_string();
+    if discovery_url.is_empty() {
+        return Err(DesktopError::Message(
+            "discovery URL is required".to_string(),
+        ));
+    }
+    if access_key_id.is_empty() {
+        return Err(DesktopError::Message(
+            "access key ID is required".to_string(),
+        ));
+    }
+    let job_id = job_id.trim().to_string();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(&job_id)?;
+    let resolved_secret = resolve_secret_for_access_key(&app, &access_key_id, secret)?;
+    let profile = resume_profile(discovery_url, access_key_id);
+    let argv = build_sink_resume_argv(&profile, &job_id);
+    let stderr_path = runtime_dir(&app)?.join(format!("sink-resume-{job_id}-stderr.log"));
+    let stdout_path = runtime_dir(&app)?.join(format!("sink-resume-{job_id}-stdout.log"));
+    spawn_daemonizing_upload_and_wait(
+        &mountos_path()?,
+        &argv,
+        resolved_secret.as_deref(),
+        &stdout_path,
+        &stderr_path,
+        LAUNCH_TIMEOUT,
+    )?;
+    Ok("sink job resumed".to_string())
+}
+
+#[tauri::command]
+async fn resume_sink(
+    app: AppHandle,
+    discovery_url: String,
+    access_key_id: String,
+    job_id: String,
+    secret: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        resume_sink_blocking(app, discovery_url, access_key_id, job_id, secret)
+    })
+    .await
+    .map_err(|error| DesktopError::Message(format!("resume sink task failed: {error}")))?
+}
+
+fn cancel_sink_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    sink_command_blocking(build_sink_cancel_argv(job_id), FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn cancel_sink(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || cancel_sink_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("cancel sink task failed: {error}")))?
+}
+
+// Sink's own graceful stop: unlike finish_upload/finish_download (only valid
+// once a halted job's WAL is already drained), sink's control socket lets a
+// RUNNING job be told to finish live. Works the same way finish_upload/
+// finish_download do when the job isn't running.
+fn finish_sink_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    sink_command_blocking(build_sink_finish_argv(job_id), FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn finish_sink(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || finish_sink_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("finish sink task failed: {error}")))?
+}
+
+fn prune_sinks_blocking(keep: u32) -> Result<String, DesktopError> {
+    sink_command_blocking(build_sink_prune_argv(keep), FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn prune_sinks(keep: u32) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || prune_sinks_blocking(keep))
+        .await
+        .map_err(|error| DesktopError::Message(format!("prune sinks task failed: {error}")))?
+}
+
+// Go's zero time.Time ("0001-01-01T00:00:00Z") means "never happened yet
+// this run" (LastCommitAt/LastSegmentAt start zero-valued, see sink_
+// runner.go's sinkMetrics), not a real timestamp -- normalized to None so
+// the frontend never has to special-case that string.
+fn normalize_sink_timestamp(raw: Option<&str>) -> Option<String> {
+    raw.filter(|v| !v.is_empty() && *v != "0001-01-01T00:00:00Z")
+        .map(ToString::to_string)
+}
+
+fn parse_sink_snapshot_value(value: &Value) -> SinkSnapshot {
+    SinkSnapshot {
+        state: value
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        lag_segments: value
+            .get("lagSegments")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        lag_seconds: value
+            .get("lagSeconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        wal_bytes: value.get("walBytes").and_then(Value::as_i64).unwrap_or(0),
+        wal_segments: value
+            .get("walSegments")
+            .and_then(Value::as_i64)
+            .and_then(|v| i32::try_from(v).ok())
+            .unwrap_or(0),
+        discontinuities: value
+            .get("discontinuities")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        segments_fetched: value
+            .get("segmentsFetched")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        segments_committed: value
+            .get("segmentsCommitted")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        bytes_committed: value
+            .get("bytesCommitted")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        file_size: value.get("fileSize").and_then(Value::as_i64).unwrap_or(0),
+        bitrate_observed: value
+            .get("bitrateObserved")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        fetch_errors: value
+            .get("fetchErrors")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        commit_retries: value
+            .get("commitRetries")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+        file_count: value.get("fileCount").and_then(Value::as_i64).unwrap_or(0),
+        current_path: value
+            .get("currentPath")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        last_commit_at: normalize_sink_timestamp(value.get("lastCommitAt").and_then(Value::as_str)),
+        last_segment_at: normalize_sink_timestamp(
+            value.get("lastSegmentAt").and_then(Value::as_str),
+        ),
+    }
+}
+
+fn parse_sink_status_value(value: &Value) -> Result<SinkStatus, DesktopError> {
+    let job_id = value
+        .get("jobId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DesktopError::Message("sink status: missing jobId".to_string()))?
+        .to_string();
+    Ok(SinkStatus {
+        job_id,
+        running: value
+            .get("running")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        state: value
+            .get("state")
+            .and_then(Value::as_str)
+            .unwrap_or("resumable")
+            .to_string(),
+        friendly_name: value
+            .get("friendlyName")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        source: value
+            .get("source")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        sink_template: value
+            .get("sinkTemplate")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        fork: value
+            .get("fork")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        halt_reason: value
+            .get("haltReason")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        snapshot: value.get("snapshot").map(parse_sink_snapshot_value),
+        last_known: value
+            .get("lastKnown")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+fn sink_status_blocking(job_id: String) -> Result<SinkStatus, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    let argv = build_sink_status_argv(job_id);
+    let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let output = command_output(&args)?;
+    if !output.status.success() {
+        return Err(DesktopError::Message(format!(
+            "mountos sink status failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let value = serde_json::from_slice::<Value>(&output.stdout).map_err(|error| {
+        DesktopError::Message(format!(
+            "mountos sink status returned unparseable output: {error}"
+        ))
+    })?;
+    parse_sink_status_value(&value)
+}
+
+#[tauri::command]
+async fn get_sink_status(job_id: String) -> Result<SinkStatus, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || sink_status_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("sink status task failed: {error}")))?
 }
 
 // Shared guard for the three satellite view-mount commands: the destination
@@ -5408,7 +6184,7 @@ fn read_instance_config_extras(mount_path: &str) -> InstanceConfigExtras {
     }
 }
 
-// Reads .mountOS/.config directly off disk rather than shelling out — it's
+// Reads .mountOS/.config directly off disk rather than shelling out -- it's
 // a plain JSON file the mfuse process already writes for its own TUI/CLI
 // tooling (cmd/mfuse/reserved.go getConfigData), so no extra CLI round
 // trip is needed. Scrubbing is unnecessary: MountConfig carries the access
@@ -5645,7 +6421,7 @@ fn spawn_dashboard_terminal(
 
 // .output(), not .spawn(): the scripting calls here are synchronous AppleEvents
 // that return once the terminal has started the command (not once it finishes),
-// so this doesn't block on the dashboard session itself — but it DOES need to be
+// so this doesn't block on the dashboard session itself -- but it DOES need to be
 // awaited to catch a real failure, most notably "AppleEvent timed out" (-1712)
 // when this app hasn't been granted Automation permission for that terminal yet
 // (System Settings > Privacy & Security > Automation). A bare .spawn() would
@@ -5714,7 +6490,7 @@ fn spawn_dashboard_terminal(
 
     // cmd /k keeps the window open after the command finishes, like
     // Terminal.app's do script. `mode con` resizes the console before the
-    // dashboard TUI starts — its own minimum (118x35) is larger than cmd/wt's
+    // dashboard TUI starts -- its own minimum (118x35) is larger than cmd/wt's
     // default new-window/new-tab size, which otherwise shows a "Terminal too
     // small" placeholder instead of the dashboard (mirrors the macOS fix).
     //
@@ -5916,17 +6692,17 @@ fn open_diagnostics_bundle(app: AppHandle, path: String) -> Result<(), DesktopEr
     Ok(())
 }
 
-// Opens an upload job's file-logger output (mountos-servers'
+// Opens a job's file-logger output (mountos-servers'
 // internal/logger.getDefaultLogDir -- always ~/.mountOS/logs for a desktop
-// app, which never runs as Linux root).
+// app, which never runs as Linux root). Shared by upload, download and sink,
+// whose daemons all reuse the same logger machinery.
 //
 // Mirrors open_diagnostics_bundle's guard: the path is confined to that
 // fixed directory rather than opened because the frontend asked. Both sides
 // are canonicalized first, so a symlink or `..` inside the argument cannot
 // escape the directory and turn this into an arbitrary "open any file"
 // primitive.
-#[tauri::command]
-fn open_upload_log(path: String) -> Result<(), DesktopError> {
+fn open_job_log(path: String) -> Result<(), DesktopError> {
     let home =
         std::env::var("HOME").map_err(|_| DesktopError::Message("HOME is not set".to_string()))?;
     let dir = PathBuf::from(home)
@@ -5943,25 +6719,19 @@ fn open_upload_log(path: String) -> Result<(), DesktopError> {
     Ok(())
 }
 
-// Opens a download job's file-logger output. The download daemon reuses the
-// same internal/logger.getDefaultLogDir machinery as upload (~/.mountOS/logs),
-// so this is open_upload_log's exact path-jail pattern, verbatim.
+#[tauri::command]
+fn open_upload_log(path: String) -> Result<(), DesktopError> {
+    open_job_log(path)
+}
+
 #[tauri::command]
 fn open_download_log(path: String) -> Result<(), DesktopError> {
-    let home =
-        std::env::var("HOME").map_err(|_| DesktopError::Message("HOME is not set".to_string()))?;
-    let dir = PathBuf::from(home)
-        .join(".mountOS")
-        .join("logs")
-        .canonicalize()?;
-    let target = PathBuf::from(&path).canonicalize()?;
-    if !target.starts_with(&dir) {
-        return Err(DesktopError::Message(
-            "refusing to open a path outside the mountOS logs directory".to_string(),
-        ));
-    }
-    open::that_detached(target)?;
-    Ok(())
+    open_job_log(path)
+}
+
+#[tauri::command]
+fn open_sink_log(path: String) -> Result<(), DesktopError> {
+    open_job_log(path)
 }
 
 // The Dock icon (and Cmd+Tab entry) tracks the main window's own visibility
@@ -6075,7 +6845,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             None::<&str>,
         )?));
     } else {
-        // A menubar dropdown listing every mount doesn't scale — cap it and
+        // A menubar dropdown listing every mount doesn't scale -- cap it and
         // fold the rest into a single "+N more" item that opens the full app
         // (same id as "Open mountOS" below, same action) instead of growing
         // the native menu unboundedly.
@@ -6180,7 +6950,7 @@ pub fn run() {
                 .on_tray_icon_event(|tray, event| {
                     // Native menus render reliably everywhere (including over
                     // another app's fullscreen Space) since AppKit itself owns
-                    // showing them — unlike the tray-popover webview window,
+                    // showing them -- unlike the tray-popover webview window,
                     // which repeated attempts couldn't make reliably visible
                     // there. Rebuilt on hover so the mount list is current by
                     // the time an actual click follows.
@@ -6242,6 +7012,13 @@ pub fn run() {
             retry_failed_download,
             finish_download,
             prune_downloads,
+            list_sinks,
+            start_sink,
+            resume_sink,
+            cancel_sink,
+            finish_sink,
+            prune_sinks,
+            get_sink_status,
             open_snapshot_view,
             open_deleted_view,
             open_version_view,
@@ -6260,6 +7037,7 @@ pub fn run() {
             open_diagnostics_bundle,
             open_upload_log,
             open_download_log,
+            open_sink_log,
             mcp_status,
             mcp_install,
             mcp_uninstall,
@@ -6267,6 +7045,7 @@ pub fn run() {
             get_third_party_licenses,
             open_external_url,
             validate_cli_candidate,
+            verify_cli_signature,
             show_main_window,
         ])
         .build(tauri::generate_context!())
@@ -6431,7 +7210,7 @@ mod tests {
     #[cfg(not(windows))]
     fn shell_quote_survives_a_shell_round_trip() {
         // Every quoted value, fed through `sh -c 'printf %s ' + quoted`,
-        // must come back byte-for-byte identical — this is the actual
+        // must come back byte-for-byte identical -- this is the actual
         // property that matters for dashboard-launcher command construction.
         for raw in [
             "/Volumes/MountOS/Team",
@@ -6497,7 +7276,7 @@ mod tests {
         );
         // '-o' takes a fused value (mirrors real short-opt parsing: once a
         // value-taking flag is hit in a cluster, the rest of the token is
-        // its value, not further flags) — bare '-o' and '-o<value>' are both
+        // its value, not further flags) -- bare '-o' and '-o<value>' are both
         // accepted even when the value text collides with a managed letter.
         assert!(validate_extra_args(&["-o".to_string()]).is_empty());
         assert!(validate_extra_args(&["-oallow_other".to_string()]).is_empty());
@@ -7155,6 +7934,237 @@ mod tests {
         assert!(!argv.contains(&"--overwrite".to_string()));
         assert!(!argv.contains(&"--bwlimit".to_string()));
         assert!(!argv.contains(&"--dry-run".to_string()));
+    }
+
+    fn sink_params() -> SinkStartParams {
+        SinkStartParams {
+            variant: None,
+            max_latency: None,
+            wal_max: None,
+        }
+    }
+
+    // Fixture argv shared with src/lib/cli.test.ts's identically-named
+    // TypeScript test -- both assert this EXACT array for the SAME inputs,
+    // so a change to one flag's spelling/order that isn't mirrored in the
+    // other builder fails one of the two suites. This is the closest a Rust
+    // test and a Vitest test can get to enforcing "the preview argv IS what
+    // runs" without literally invoking both from one process.
+    #[test]
+    fn build_sink_start_argv_emits_source_and_dest_as_bare_positionals_after_dashdash() {
+        let argv = build_sink_start_argv(
+            &profile(),
+            "https://example.com/live/stream.m3u8",
+            "/recordings/feed.mp4",
+            &sink_params(),
+        );
+        assert_eq!(
+            argv,
+            vec![
+                "sink",
+                "--discovery-url",
+                "https://hub.example.com",
+                "--fork",
+                "main",
+                "-a",
+                "ABCDEFGHIJKLMNOPQRST",
+                "-s",
+                "--",
+                "https://example.com/live/stream.m3u8",
+                "/recordings/feed.mp4",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_sink_start_argv_emits_every_flag_when_set() {
+        let mut params = sink_params();
+        params.variant = Some(" 1080p ".to_string());
+        params.max_latency = Some(" 45s ".to_string());
+        params.wal_max = Some(" 512M ".to_string());
+        let argv = build_sink_start_argv(
+            &profile(),
+            "https://example.com/live.m3u8",
+            "/feed.mp4",
+            &params,
+        );
+        assert!(argv.windows(2).any(|a| a == ["--variant", "1080p"]));
+        assert!(argv.windows(2).any(|a| a == ["--max-latency", "45s"]));
+        assert!(argv.windows(2).any(|a| a == ["--wal-max", "512M"]));
+        // sink never had once/overwrite/dry-run/bwlimit/include/exclude/
+        // follow-symlinks/create-source-directory to begin with -- confirms
+        // none of upload's flag surface leaked in by copy-paste habit.
+        assert!(!argv.contains(&"--once".to_string()));
+        assert!(!argv.contains(&"--overwrite".to_string()));
+        assert!(!argv.contains(&"--dry-run".to_string()));
+        assert!(!argv.contains(&"--bwlimit".to_string()));
+        assert!(!argv.contains(&"--include".to_string()));
+        assert!(!argv.contains(&"--follow-symlinks".to_string()));
+        assert!(!argv.contains(&"--create-source-directory".to_string()));
+        assert!(!argv.contains(&"--config".to_string()));
+    }
+
+    #[test]
+    fn build_sink_start_argv_omits_unset_advanced_flags() {
+        let argv = build_sink_start_argv(
+            &profile(),
+            "https://example.com/live.m3u8",
+            "/feed.mp4",
+            &sink_params(),
+        );
+        assert!(!argv.contains(&"--variant".to_string()));
+        assert!(!argv.contains(&"--max-latency".to_string()));
+        assert!(!argv.contains(&"--wal-max".to_string()));
+    }
+
+    #[test]
+    fn build_sink_resume_argv_has_no_flags_of_its_own() {
+        let argv = build_sink_resume_argv(&profile(), "abcdef1234567890");
+        assert_eq!(
+            argv,
+            vec![
+                "sink",
+                "resume",
+                "abcdef1234567890",
+                "--discovery-url",
+                "https://hub.example.com",
+                "-a",
+                "ABCDEFGHIJKLMNOPQRST",
+                "-s",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_sink_list_cancel_finish_status_argv_carry_no_profile() {
+        assert_eq!(build_sink_list_argv(), vec!["sink", "list", "--json"]);
+        assert_eq!(
+            build_sink_cancel_argv("abcdef1234567890"),
+            vec!["sink", "cancel", "abcdef1234567890"]
+        );
+        assert_eq!(
+            build_sink_finish_argv("abcdef1234567890"),
+            vec!["sink", "finish", "abcdef1234567890"]
+        );
+        assert_eq!(
+            build_sink_status_argv("abcdef1234567890"),
+            vec!["sink", "status", "--job", "abcdef1234567890", "--json"]
+        );
+    }
+
+    #[test]
+    fn build_sink_prune_argv_omits_keep_at_zero() {
+        assert_eq!(build_sink_prune_argv(0), vec!["sink", "prune"]);
+        assert_eq!(
+            build_sink_prune_argv(5),
+            vec!["sink", "prune", "--keep", "5"]
+        );
+    }
+
+    #[test]
+    fn parse_sinks_value_carries_file_count_and_current_path() {
+        let value: Value = serde_json::from_str(
+            r#"[{"jobId": "abc", "state": "running",
+                 "fileCount": 3, "currentPath": "/sinktest/roll-20260804-1015.ts"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_sinks_value(&value);
+        assert_eq!(jobs[0].file_count, Some(3));
+        assert_eq!(
+            jobs[0].current_path.as_deref(),
+            Some("/sinktest/roll-20260804-1015.ts")
+        );
+    }
+
+    #[test]
+    fn parse_sinks_value_defaults_file_count_and_current_path_to_none() {
+        let value: Value =
+            serde_json::from_str(r#"[{"jobId": "abc", "state": "running"}]"#).unwrap();
+        let jobs = parse_sinks_value(&value);
+        assert_eq!(jobs[0].file_count, None);
+        assert_eq!(jobs[0].current_path, None);
+    }
+
+    #[test]
+    fn parse_sink_snapshot_value_reads_camel_case_keys_and_normalizes_zero_time() {
+        let value = serde_json::json!({
+            "state": "running",
+            "lagSegments": 2,
+            "lagSeconds": 4.5,
+            "walBytes": 1024,
+            "walSegments": 3,
+            "discontinuities": 0,
+            "segmentsFetched": 10,
+            "segmentsCommitted": 8,
+            "bytesCommitted": 4096,
+            "fileSize": 8192,
+            "bitrateObserved": 512000.0,
+            "fetchErrors": 1,
+            "commitRetries": 0,
+            "fileCount": 3,
+            "currentPath": "/sinktest/roll-20260804-1015.ts",
+            "lastCommitAt": "2026-08-04T10:15:30Z",
+            "lastSegmentAt": "0001-01-01T00:00:00Z",
+        });
+        let snap = parse_sink_snapshot_value(&value);
+        assert_eq!(snap.state, "running");
+        assert_eq!(snap.lag_segments, 2);
+        assert_eq!(snap.wal_segments, 3);
+        assert_eq!(snap.segments_committed, 8);
+        assert_eq!(snap.file_size, 8192);
+        assert_eq!(snap.file_count, 3);
+        assert_eq!(snap.current_path, "/sinktest/roll-20260804-1015.ts");
+        assert_eq!(snap.last_commit_at.as_deref(), Some("2026-08-04T10:15:30Z"));
+        // Go's zero time.Time must never reach the frontend as a real value.
+        assert_eq!(snap.last_segment_at, None);
+    }
+
+    #[test]
+    fn parse_sink_status_value_handles_a_non_running_job_with_no_snapshot() {
+        let value = serde_json::json!({
+            "jobId": "abcdef1234567890",
+            "running": false,
+            "state": "halted",
+            "source": "https://example.com/live.m3u8",
+            "sinkTemplate": "/feed.mp4",
+            "fork": "main",
+            "haltReason": "source ended unexpectedly",
+        });
+        let status = parse_sink_status_value(&value).unwrap();
+        assert_eq!(status.job_id, "abcdef1234567890");
+        assert!(!status.running);
+        assert_eq!(status.state, "halted");
+        assert_eq!(
+            status.halt_reason.as_deref(),
+            Some("source ended unexpectedly")
+        );
+        assert!(status.snapshot.is_none());
+        assert!(!status.last_known);
+    }
+
+    #[test]
+    fn parse_sink_status_value_carries_last_known_through_to_the_frontend() {
+        let value = serde_json::json!({
+            "jobId": "abcdef1234567890",
+            "running": false,
+            "state": "halted",
+            "source": "https://example.com/live.m3u8",
+            "sinkTemplate": "/feed.mp4",
+            "fork": "main",
+            "lastKnown": true,
+            "snapshot": {
+                "state": "",
+                "segmentsCommitted": 500,
+                "fileSize": 2_000_000_000i64,
+            },
+        });
+        let status = parse_sink_status_value(&value).unwrap();
+        assert!(status.last_known);
+        let snapshot = status.snapshot.expect("cached snapshot present");
+        assert_eq!(snapshot.segments_committed, 500);
+        // SinkCachedCounts does not persist commit/segment timestamps, so a
+        // cached snapshot must never fabricate one.
+        assert_eq!(snapshot.last_commit_at, None);
     }
 
     #[test]

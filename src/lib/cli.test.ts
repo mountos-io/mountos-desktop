@@ -13,6 +13,13 @@ import {
   buildForkRestoreArgv,
   buildGatewayArgv,
   buildMountArgv,
+  buildSinkCancelArgv,
+  buildSinkFinishArgv,
+  buildSinkListArgv,
+  buildSinkPruneArgv,
+  buildSinkResumeArgv,
+  buildSinkStartArgv,
+  buildSinkStatusArgv,
   buildSnapshotArgv,
   buildUploadCancelArgv,
   buildUploadListArgv,
@@ -30,7 +37,7 @@ import {
   validateMountPathForBackend,
   validateUploadPositional,
 } from './cli'
-import type { DownloadStartParams, UploadStartParams } from './cli'
+import type { DownloadStartParams, SinkStartParams, UploadStartParams } from './cli'
 import type { MountProfile } from './types'
 
 const profile: MountProfile = {
@@ -188,7 +195,7 @@ describe('cli helpers', () => {
     expect(validateExtraArgs(['-ma'])).toEqual(['-ma'])
     // '-o' takes a fused value (mirrors real short-opt parsing: once a
     // value-taking flag is hit in a cluster, the rest of the token is its
-    // value, not further flags) — bare '-o' and '-o<value>' are both
+    // value, not further flags) -- bare '-o' and '-o<value>' are both
     // accepted even when the value text collides with a managed letter.
     expect(validateExtraArgs(['-o'])).toEqual([])
     expect(validateExtraArgs(['-oallow_other'])).toEqual([])
@@ -522,5 +529,76 @@ describe('cli helpers', () => {
     expect(buildDownloadRetryFailedArgv('job123')).toEqual(['download', 'retry-failed', 'job123'])
     expect(buildDownloadPruneArgv(0)).toEqual(['download', 'prune'])
     expect(buildDownloadPruneArgv(5)).toEqual(['download', 'prune', '--keep', '5'])
+  })
+
+  const sinkParams = (): SinkStartParams => ({})
+
+  // Fixture argv shared with src-tauri/src/lib.rs's identically-named Rust
+  // test (build_sink_start_argv_emits_source_and_dest_as_bare_positionals_
+  // after_dashdash) -- both assert this EXACT array for the SAME inputs, so
+  // a flag spelling/order change that isn't mirrored in the other builder
+  // fails one of the two suites. The preview argv (this file) and the argv
+  // that actually runs (lib.rs) must never drift apart.
+  it('builds sink start argv matching the Rust build_sink_start_argv fixture exactly', () => {
+    const argv = buildSinkStartArgv(
+      profile,
+      'https://example.com/live/stream.m3u8',
+      '/recordings/feed.mp4',
+      sinkParams(),
+    )
+    expect(argv).toEqual([
+      'sink',
+      '--discovery-url', 'https://hub.example.com',
+      '--fork', 'main',
+      '-a', 'ABCDEFGHIJKLMNOPQRST',
+      '-s',
+      '--',
+      'https://example.com/live/stream.m3u8',
+      '/recordings/feed.mp4',
+    ])
+  })
+
+  it('builds sink start argv with every advanced flag set, and none of upload/download\'s flag surface', () => {
+    const params: SinkStartParams = { variant: ' 1080p ', maxLatency: ' 45s ', walMax: ' 512M ' }
+    const argv = buildSinkStartArgv(profile, 'https://example.com/live.m3u8', '/feed.mp4', params)
+    expect(argv).toEqual(expect.arrayContaining(['--variant', '1080p', '--max-latency', '45s', '--wal-max', '512M']))
+    expect(argv).not.toContain('--once')
+    expect(argv).not.toContain('--overwrite')
+    expect(argv).not.toContain('--dry-run')
+    expect(argv).not.toContain('--bwlimit')
+    expect(argv).not.toContain('--include')
+    expect(argv).not.toContain('--follow-symlinks')
+    expect(argv).not.toContain('--create-source-directory')
+    expect(argv).not.toContain('--config')
+  })
+
+  it('omits unset sink advanced flags', () => {
+    const argv = buildSinkStartArgv(profile, 'https://example.com/live.m3u8', '/feed.mp4', sinkParams())
+    expect(argv).not.toContain('--variant')
+    expect(argv).not.toContain('--max-latency')
+    expect(argv).not.toContain('--wal-max')
+  })
+
+  it('gives sink resume no flags of its own, matching the Rust build_sink_resume_argv fixture', () => {
+    expect(buildSinkResumeArgv(profile, 'abcdef1234567890')).toEqual([
+      'sink',
+      'resume',
+      'abcdef1234567890',
+      '--discovery-url', 'https://hub.example.com',
+      '-a', 'ABCDEFGHIJKLMNOPQRST',
+      '-s',
+    ])
+  })
+
+  it('carries no credentials for the local-only sink list/cancel/finish/status commands, and sink list is its own subcommand', () => {
+    expect(buildSinkListArgv()).toEqual(['sink', 'list', '--json'])
+    expect(buildSinkCancelArgv('job123')).toEqual(['sink', 'cancel', 'job123'])
+    expect(buildSinkFinishArgv('job123')).toEqual(['sink', 'finish', 'job123'])
+    expect(buildSinkStatusArgv('job123')).toEqual(['sink', 'status', '--job', 'job123', '--json'])
+  })
+
+  it('builds sink prune argv, keep omitted at 0', () => {
+    expect(buildSinkPruneArgv(0)).toEqual(['sink', 'prune'])
+    expect(buildSinkPruneArgv(5)).toEqual(['sink', 'prune', '--keep', '5'])
   })
 })

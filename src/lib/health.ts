@@ -21,7 +21,7 @@ export function healthTitle(health: HealthState | string): string {
 
 /**
  * `viewMode` is a comma-joined flag string ("r,del", "r,ver", "r,snap", "rw",
- * "r") from Go's MountMode.String(), never an exact-match value — an equality
+ * "r") from Go's MountMode.String(), never an exact-match value -- an equality
  * check against a single literal would never fire. Identifies a satellite
  * Deleted/Version/Snapshot view so its row can carry a badge and skip
  * Save-as-profile/Clone-profile (cloning one would silently produce a

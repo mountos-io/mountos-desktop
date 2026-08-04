@@ -190,7 +190,7 @@
                      An external mount is exactly one offering "Save as
                      profile" rather than "Clone profile", so the badge only
                      restated the row next to it. -->
-                <strong>{instance.name || instance.volumeId || 'mountOS volume'}</strong>
+                <strong class="wrap-anywhere">{instance.name || instance.volumeId || 'mountOS volume'}</strong>
                 {#if viewModeBadge(instance.viewMode)}
                   <Badge>{viewModeBadge(instance.viewMode)}</Badge>
                 {:else if instance.viewMode === 'r'}
@@ -227,7 +227,12 @@
             <Table.Cell>
               {#if instance.kind !== 'gateway'}
                 <div class="flex items-center gap-2">
-                  <code>{instance.mountPath}</code>
+                  <!-- A Windows mount path (\\?\Volume{...}\...) has neither a
+                       space nor a hyphen, and a backslash is not a CSS break
+                       opportunity, so without wrap-anywhere this one cell sets
+                       the column's min-content width and pushes Backend and
+                       Actions out of the table's scroll viewport. -->
+                  <code class="wrap-anywhere">{instance.mountPath}</code>
                   <Button variant="ghost" size="icon" title="Copy target" aria-label="Copy target" onclick={() => copyText(instance.mountPath, 'Target copied')}>
                     <Copy size={16} aria-hidden="true" />
                   </Button>
@@ -246,7 +251,7 @@
                   {#each instance.gatewayEndpoints as endpoint (endpoint.protocol)}
                     <div class="flex items-center gap-2">
                       <Badge variant="secondary" class="uppercase">{endpoint.protocol}</Badge>
-                      <code class="text-xs">{endpoint.url}</code>
+                      <code class="text-xs wrap-anywhere">{endpoint.url}</code>
                       <Button
                         variant="ghost"
                         size="icon"

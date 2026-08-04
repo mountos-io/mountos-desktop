@@ -113,7 +113,7 @@
       {:else if appState.licensesError}
         <p class="text-base text-destructive">{appState.licensesError}</p>
       {:else if filtered.length === 0}
-        <p class="text-base text-muted-foreground">{rows.length ? `No packages match "${query}".` : 'No license data available.'}</p>
+        <p class="text-base text-muted-foreground wrap-anywhere">{rows.length ? `No packages match "${query}".` : 'No license data available.'}</p>
       {:else}
         <div class="grid grid-cols-[minmax(0,220px)_1fr] gap-3 h-[55vh]">
           <div class="grid gap-1 content-start overflow-auto border border-border p-1">
@@ -146,7 +146,7 @@
                 {#if selected.repository}
                   <a
                     href={selected.repository}
-                    class="text-base text-muted-foreground hover:underline"
+                    class="min-w-0 break-words text-base text-muted-foreground hover:underline"
                     onclick={(event) => {
                       event.preventDefault()
                       void openRepository(selected.repository!)

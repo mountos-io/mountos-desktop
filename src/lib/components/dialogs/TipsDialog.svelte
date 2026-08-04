@@ -6,11 +6,12 @@
   import { Separator } from '$lib/components/ui/separator'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import { appState, goToSettingsSection, hideTips } from '$lib/app-state.svelte'
+  import type { SettingsTab } from '$lib/app-state.svelte'
   import { TIPS } from '$lib/tips'
 
-  function openSettingsSection(id: string) {
+  function openSettingsSection(tab: SettingsTab) {
     hideTips()
-    void goToSettingsSection(id)
+    void goToSettingsSection(tab)
   }
 </script>
 
@@ -27,8 +28,8 @@
           <p class="text-sm text-muted-foreground">{tip.body}</p>
           {#if tip.command}
             <CommandPreview text={tip.command}><code>{tip.command}</code></CommandPreview>
-          {:else if tip.settingsSection}
-            <Button type="button" size="sm" variant="outline" class="w-fit" onclick={() => openSettingsSection(tip.settingsSection!)}>
+          {:else if tip.settingsTab}
+            <Button type="button" size="sm" variant="outline" class="w-fit" onclick={() => openSettingsSection(tip.settingsTab!)}>
               <Settings size={14} aria-hidden="true" />
               Open Settings
             </Button>

@@ -9,10 +9,12 @@
     FolderOpen,
     ListChecks,
     OctagonX,
+    PanelLeftClose,
     Plus,
     Radar,
     RefreshCw,
     RotateCcw,
+    Tag,
     Trash2,
     Upload,
   } from '@lucide/svelte'
@@ -25,6 +27,7 @@
   import { Table, TableBody, TableRow, TableCell } from '$lib/components/ui/table'
   import Combobox from '$lib/components/shared/Combobox.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
+  import JobPanel from '$lib/components/shared/JobPanel.svelte'
   import CliErrorOutput from '$lib/components/CliErrorOutput.svelte'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import { focusOnMount } from '$lib/actions'
@@ -49,9 +52,11 @@
     runUploadStart,
     selectUploadInstance,
     selectUploadProfile,
+    closeJobPanelFloating,
+    setJobPanelCollapsed,
   } from '$lib/app-state.svelte'
   import type { MountInstance, MountProfile, UploadJob } from '$lib/types'
-  import { formatBytes } from '$lib/utils'
+  import { formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
 
   // Fetch exactly once per mount, not gated on uploads.length === 0. Unlike
   // forks (every profile always has at least "main", so that gate never
@@ -73,16 +78,6 @@
     const id = setInterval(() => { now = Date.now() }, 1000)
     return () => clearInterval(id)
   })
-
-  function lastFetchedLabel(fetchedAt: number | null, current: number): string {
-    if (fetchedAt == null) return ''
-    const diffSec = Math.max(0, Math.floor((current - fetchedAt) / 1000))
-    if (diffSec < 5) return 'Updated just now'
-    if (diffSec < 60) return `Updated ${diffSec}s ago`
-    const diffMin = Math.floor(diffSec / 60)
-    if (diffMin < 60) return `Updated ${diffMin}m ago`
-    return `Updated ${Math.floor(diffMin / 60)}h ago`
-  }
 
   const stateBadgeVariant: Record<string, BadgeVariant> = {
     running: 'success',
@@ -147,8 +142,8 @@
   // separate comboboxes. Values are prefixed to disambiguate on
   // selection, since a profile id and a mount path share no namespace.
   const uploadSourceOptions = $derived([
-    ...computed.uploadFilteredProfiles.map((p) => ({ value: `profile:${p.id}`, label: `Profile — ${p.name}` })),
-    ...computed.uploadEligibleInstances.map((i) => ({ value: `instance:${i.mountPath}`, label: `Running — ${instanceLabel(i)}` })),
+    ...computed.uploadFilteredProfiles.map((p) => ({ value: `profile:${p.id}`, label: `Profile - ${p.name}` })),
+    ...computed.uploadEligibleInstances.map((i) => ({ value: `instance:${i.mountPath}`, label: `Running - ${instanceLabel(i)}` })),
   ])
 
   const uploadSourceValue = $derived(
@@ -219,7 +214,7 @@
             <ChevronLeft size={16} aria-hidden="true" /> Back to upload jobs
           </button>
           {#if uploadSourceReady}
-            <Badge variant="secondary" title="Fork: {computed.uploadResolvedFork || 'main'}">{computed.uploadResolvedFork || 'main'}</Badge>
+            <Badge variant="secondary" class="min-w-0 shrink truncate" title="Fork: {computed.uploadResolvedFork || 'main'}">{computed.uploadResolvedFork || 'main'}</Badge>
           {/if}
         </div>
         <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy || !uploadSourceReady || !appState.uploadSource.trim() || !appState.uploadDest.trim()}>
@@ -269,7 +264,7 @@
             <small class="text-destructive text-sm">{appState.uploadDestError}</small>
           {/if}
           {#if appState.uploadBrowseError}
-            <small class="text-destructive text-sm">{appState.uploadBrowseError}</small>
+            <small class="text-destructive text-sm wrap-anywhere">{appState.uploadBrowseError}</small>
           {/if}
         </div>
 
@@ -410,7 +405,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
       <h3 class="flex items-center gap-2"><RefreshCw size={19} aria-hidden="true" /> Resume upload</h3>
 
-      <div class="grid gap-1 max-w-sm">
+      <div class="grid min-w-0 gap-1 max-w-sm">
         <Label>Job ID</Label>
         <code class="truncate">{resumeJob.jobId}</code>
       </div>
@@ -493,7 +488,7 @@ Check this when you just want the current backlog cleared and the job to finish 
         <Upload size={28} aria-hidden="true" />
         <strong>No active uploads</strong>
         {#if appState.uploadsError}
-          <p class="text-destructive text-sm" role="alert">{appState.uploadsError}</p>
+          <p class="text-destructive text-sm wrap-anywhere" role="alert">{appState.uploadsError}</p>
         {/if}
         <p>Push a local folder or file list into a mountOS volume, with the exact CLI command shown before every action.</p>
         <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
@@ -504,62 +499,90 @@ Check this when you just want the current backlog cleared and the job to finish 
     </div>
   </section>
 {:else}
-  <section class="grid flex-1 grid-rows-1 grid-cols-[280px_minmax(0,1fr)] gap-4 m-[22px] outline-hidden" tabindex="-1" use:focusOnMount>
-    <div class="surface p-4">
-      <div class="mb-4 flex items-center justify-between gap-2">
-        <h3 class="flex items-center gap-2"><Upload size={18} aria-hidden="true" /> Uploads</h3>
-        <div class="flex items-center gap-1">
-          <Button type="button" size="icon" variant="ghost" onclick={runUploadList} disabled={appState.uploadsBusy} title="Refresh job list" aria-label="Refresh job list">
-            <RefreshCw size={15} aria-hidden="true" />
-          </Button>
-          <Button type="button" size="icon" variant="ghost" onclick={requestUploadPrune} disabled={appState.uploadsBusy} title="Prune completed/halted jobs" aria-label="Prune completed/halted jobs">
-            <Trash2 size={15} aria-hidden="true" />
-          </Button>
-        </div>
-      </div>
-      <Button type="button" variant="primary" class="w-full mb-3 cyberpunk-skewed-sm" onclick={enterUploadCreate}>
-        <Plus size={16} aria-hidden="true" />
-        New upload
-      </Button>
-      {#if appState.uploadsError}
-        <p class="text-destructive text-sm mb-2" role="alert">{appState.uploadsError}</p>
-      {/if}
-      {#if computed.uploadHiddenCompletedCount > 0}
-        <Checkbox
-          bind:checked={appState.uploadShowCompleted}
-          label="Show completed ({computed.uploadHiddenCompletedCount})"
-          class="mb-2"
-        />
-      {/if}
-      <div class="grid gap-1.5">
-        {#if computed.uploadVisibleJobs.length === 0}
-          <div class="tech-grid px-5 py-6 text-center">
-            <p>{appState.uploads.length === 1 ? 'The only job has completed.' : `All ${appState.uploads.length} jobs have completed.`}</p>
+  <section
+    class="grid flex-1 grid-rows-1 gap-4 m-[22px] outline-hidden"
+    style:grid-template-columns={appState.jobPanelCollapsed.uploads ? 'minmax(0,1fr)' : '280px minmax(0,1fr)'}
+    tabindex="-1"
+    use:focusOnMount
+  >
+    <JobPanel id="uploads" searchPlaceholder="Search uploads...">
+      {#snippet children(query, floating)}
+        {@const filteredJobs = computed.uploadVisibleJobs.filter((job) => matchesSearch(query, job.name, job.destPath, job.sourcePath, job.jobId))}
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="flex items-center gap-2"><Upload size={18} aria-hidden="true" /> Uploads</h3>
+          <div class="flex flex-wrap items-center gap-2">
+            {#if !floating}
+              <Button type="button" size="icon" variant="ghost" onclick={() => setJobPanelCollapsed('uploads', true)} title="Collapse panel" aria-label="Collapse panel">
+                <PanelLeftClose size={15} aria-hidden="true" />
+              </Button>
+            {/if}
+            <Button type="button" size="icon" variant="ghost" onclick={runUploadList} disabled={appState.uploadsBusy} title="Refresh job list" aria-label="Refresh job list">
+              <RefreshCw size={15} aria-hidden="true" />
+            </Button>
+            <Button type="button" size="icon" variant="ghost" onclick={requestUploadPrune} disabled={appState.uploadsBusy} title="Prune completed/halted jobs" aria-label="Prune completed/halted jobs">
+              <Trash2 size={15} aria-hidden="true" />
+            </Button>
+            {#if floating}
+              <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
+                <Plus size={16} aria-hidden="true" />
+                New upload
+              </Button>
+            {/if}
           </div>
-        {:else}
-          {#each computed.uploadVisibleJobs as job (job.jobId)}
-            <button
-              class:bg-accent={appState.uploadSelectedJobId === job.jobId}
-              class="flex min-w-0 items-center gap-2.5 border border-transparent p-2 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
-              type="button"
-              onclick={() => (appState.uploadSelectedJobId = job.jobId)}
-            >
-              <Upload size={16} aria-hidden="true" class="shrink-0" />
-              <span class="min-w-0 flex-1">
-                <strong class="block truncate">{job.name || job.destPath || job.jobId}</strong>
-                <span class="block truncate text-muted-foreground text-sm">{job.sourcePath ?? 'source profile'}</span>
-              </span>
-              <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{job.state}</Badge>
-            </button>
-          {/each}
-          {#if computed.uploadVisibleJobsTruncated}
-            <p class="text-muted-foreground text-sm p-2">
-              Showing the first {computed.uploadVisibleJobs.length} of {computed.uploadVisibleJobsTotal} jobs, prune old jobs to see the rest.
-            </p>
-          {/if}
+        </div>
+        {#if !floating}
+          <Button type="button" variant="primary" class="w-full mb-3 cyberpunk-skewed-sm" onclick={enterUploadCreate}>
+            <Plus size={16} aria-hidden="true" />
+            New upload
+          </Button>
         {/if}
-      </div>
-    </div>
+        {#if appState.uploadsError}
+          <p class="text-destructive text-sm mb-2 wrap-anywhere" role="alert">{appState.uploadsError}</p>
+        {/if}
+        {#if computed.uploadHiddenCompletedCount > 0}
+          <Checkbox
+            bind:checked={appState.uploadShowCompleted}
+            label="Show completed ({computed.uploadHiddenCompletedCount})"
+            class="mb-2"
+          />
+        {/if}
+        <div class="grid gap-1.5">
+          {#if computed.uploadVisibleJobs.length === 0}
+            <div class="tech-grid px-5 py-6 text-center">
+              <p>{appState.uploads.length === 1 ? 'The only job has completed.' : `All ${appState.uploads.length} jobs have completed.`}</p>
+            </div>
+          {:else if filteredJobs.length === 0}
+            <div class="tech-grid px-5 py-6 text-center">
+              <p>No jobs match &quot;{query}&quot;.</p>
+            </div>
+          {:else}
+            {#each filteredJobs as job (job.jobId)}
+              <button
+                class:bg-accent={appState.uploadSelectedJobId === job.jobId}
+                class="flex min-w-0 items-center gap-2.5 border border-transparent p-2 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+                type="button"
+                onclick={() => {
+                  appState.uploadSelectedJobId = job.jobId
+                  closeJobPanelFloating()
+                }}
+              >
+                <Upload size={16} aria-hidden="true" class="shrink-0" />
+                <span class="min-w-0 flex-1">
+                  <strong class="block truncate">{job.name || job.destPath || job.jobId}</strong>
+                  <span class="block truncate text-muted-foreground text-sm">{job.sourcePath ?? 'source profile'}</span>
+                </span>
+                <Badge variant={stateBadgeVariant[displayState(job)] ?? 'default'}>{job.state}</Badge>
+              </button>
+            {/each}
+            {#if computed.uploadVisibleJobsTruncated}
+              <p class="text-muted-foreground text-sm p-2">
+                Showing the first {computed.uploadVisibleJobs.length} of {computed.uploadVisibleJobsTotal} jobs, prune old jobs to see the rest.
+              </p>
+            {/if}
+          {/if}
+        </div>
+      {/snippet}
+    </JobPanel>
 
     {#if selectedJob}
       {@const job = selectedJob}
@@ -569,10 +592,18 @@ Check this when you just want the current backlog cleared and the job to finish 
            CSS grid's default align-content is stretch. Without this, the
            header/detail/progress rows spread apart to fill that height
            instead of staying compact at the top. -->
-      <div class="surface corner-brackets p-4 grid content-start gap-4">
-        <div class="flex items-start justify-between gap-4">
-          <div class="min-w-0">
-            <h3 class="flex items-center gap-2 truncate"><Upload size={19} aria-hidden="true" class="shrink-0" /> {job.name || job.destPath || job.jobId}</h3>
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="min-w-0 flex-1 basis-48">
+            <h3 class="flex min-w-0 items-center gap-2">
+              <Upload size={19} aria-hidden="true" class="shrink-0" />
+              <span class="min-w-0 flex-1 truncate">{job.name || job.destPath || job.jobId}</span>
+              <Badge variant="secondary" class="shrink-0" title="Fork name">{job.forkName || 'main'}</Badge>
+              <Badge variant="secondary" class="ml-auto min-w-0 shrink truncate" title="Job ID">
+                <Tag size={12} aria-hidden="true" class="shrink-0" />
+                {job.jobId}
+              </Badge>
+            </h3>
           </div>
           <div class="flex items-center gap-2 shrink-0">
             {#if job.state === 'running'}
@@ -597,22 +628,14 @@ Check this when you just want the current backlog cleared and the job to finish 
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
-          <div class="grid gap-1">
-            <Label>Job ID</Label>
-            <code class="truncate">{job.jobId}</code>
-          </div>
-          <div class="grid gap-1">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Source</Label>
             <p class="truncate" title={job.sourcePath}>{job.sourcePath ?? 'source profile'}</p>
           </div>
-          <div class="grid gap-1">
+          <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Destination</Label>
             <p class="truncate" title={job.destPath}>{job.destPath}</p>
-          </div>
-          <div class="grid gap-1">
-            <Label>Fork</Label>
-            <p class="truncate">{job.forkName || 'main'}</p>
           </div>
           <div class="grid gap-1">
             <Label>State</Label>
@@ -653,14 +676,14 @@ Check this when you just want the current backlog cleared and the job to finish 
         {/if}
 
         {#if job.logPath}
-          <div class="grid gap-1">
+          <div class="grid gap-1 min-w-0">
             <Label>Log</Label>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0">
               <code class="min-w-0 flex-1 truncate" title={job.logPath}>{job.logPath}</code>
-              <Button type="button" variant="outline" size="icon" title="Copy log path" aria-label="Copy log path" onclick={() => copyUploadJobLogPath(job)}>
+              <Button type="button" variant="outline" size="icon" class="shrink-0" title="Copy log path" aria-label="Copy log path" onclick={() => copyUploadJobLogPath(job)}>
                 <Copy size={16} aria-hidden="true" />
               </Button>
-              <Button type="button" variant="outline" size="icon" title="Open log" aria-label="Open log" onclick={() => openUploadJobLog(job)}>
+              <Button type="button" variant="outline" size="icon" class="shrink-0" title="Open log" aria-label="Open log" onclick={() => openUploadJobLog(job)}>
                 <ExternalLink size={16} aria-hidden="true" />
               </Button>
             </div>
@@ -668,7 +691,7 @@ Check this when you just want the current backlog cleared and the job to finish 
         {/if}
 
         <div class="grid gap-2">
-          <div class="flex items-center justify-between gap-2 border-b-2 border-primary pb-1.5">
+          <div class="flex items-center justify-between gap-2 border-b-2 border-primary pb-2 mb-2">
             <p class="text-xs font-bold uppercase tracking-wide">Progress</p>
             {#if appState.uploadsLastFetchedAt != null}
               <span

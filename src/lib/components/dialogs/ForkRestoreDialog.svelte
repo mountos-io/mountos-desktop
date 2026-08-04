@@ -19,7 +19,7 @@
           <Dialog.Title class="flex items-center gap-2"><RotateCcw size={20} aria-hidden="true" /> Restore fork</Dialog.Title>
         </Dialog.Header>
         <div class="grid gap-4 py-4">
-          <p>Restores fork "{appState.forkRestorePromptFor.name}" within its grace period.</p>
+          <p class="wrap-anywhere">Restores fork "{appState.forkRestorePromptFor.name}" within its grace period.</p>
           {#if profile.secretRef === 'prompt' || !appState.vaultStatus[profile.id]}
             <div class="grid gap-1.5">
               <Label for="fork-restore-secret">Secret access key</Label>

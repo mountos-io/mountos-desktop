@@ -1,10 +1,12 @@
+import type { SettingsTab } from './app-state.svelte'
+
 export interface Tip {
   title: string
   body: string
   command?: string
-  // DOM id of a Settings section to jump to instead of showing a CLI command,
-  // for tips that are actually app features, not shell invocations.
-  settingsSection?: string
+  // Settings tab to jump to instead of showing a CLI command, for tips that
+  // are actually app features, not shell invocations.
+  settingsTab?: SettingsTab
 }
 
 // Mirrors mountos-servers' get_tips MCP tool (cmd/mfuse/mcp_tools_guidance.go)
@@ -20,5 +22,5 @@ export const TIPS: Tip[] = [
   { title: 'File versions', body: "mountOS keeps one-minute file versions; view a file's history, or use the Versions action in this app.", command: 'mountos version <path>' },
   { title: 'Shell completion', body: 'Enable tab-completion for bash, zsh, fish, or powershell, then source the output.', command: 'mountos completion zsh' },
   { title: 'Man page', body: 'Read the full command reference (pipe to less for paging).', command: 'mountos man' },
-  { title: 'MCP for AI agents', body: 'Register this mountos binary as a read-only MCP server for Claude Desktop, Claude Code, Codex, and Gemini.', settingsSection: 'settings-mcp' },
+  { title: 'MCP for AI agents', body: 'Register this mountos binary as a read-only MCP server for Claude Desktop, Claude Code, Codex, and Gemini.', settingsTab: 'mcp' },
 ]

@@ -39,10 +39,10 @@
     <ChevronLeft size={16} aria-hidden="true" /> Back to profile
   </button>
 
-  <h3 class="flex items-center gap-2"><Recycle size={19} aria-hidden="true" /> {profile.name}: deleted files</h3>
+  <h3 class="flex items-center gap-2 wrap-anywhere"><Recycle size={19} aria-hidden="true" /> {profile.name}: deleted files</h3>
 
   <form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void confirmDeletedView() }}>
-    <p class="max-w-[70ch]">Mounts a flat, read-only listing of deleted files from this profile's volume ("{profile.volume || profile.name}") at a folder you choose. It appears as its own row once ready.</p>
+    <p class="max-w-[70ch] wrap-anywhere">Mounts a flat, read-only listing of deleted files from this profile's volume ("{profile.volume || profile.name}") at a folder you choose. It appears as its own row once ready.</p>
     <div class="grid gap-1.5">
       <Label>Destination folder (optional)</Label>
       <div class="flex gap-2">

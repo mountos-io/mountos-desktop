@@ -118,6 +118,96 @@ export interface DownloadJob {
   totalBytes?: number
 }
 
+// One row from `mountos sink list --json` (src-tauri/src/lib.rs's SinkJob,
+// mirroring mountos-servers cmd_list_sink.go's sinkListEntry). A sink job's
+// live state is rate/lag counters, not a bounded per-status work list, so
+// this is a genuinely different shape from UploadJob/DownloadJob's
+// `counts` map, not a reuse of it. Every counter is 0/absent for a job with
+// neither a live daemon nor cached counters. A stopped job with cached
+// final counters (JobSpec.CachedCounts) reports them too, with lastKnown
+// true -- lagSegments/lagSeconds stay 0 in that case, they describe an
+// active fetch loop that no longer exists, never render them as a real
+// reading when lastKnown is set.
+export interface SinkJob {
+  jobId: string
+  name: string
+  // running | halted | completed | resumable | finished
+  state: string
+  source: string // redacted stream URL
+  sinkTemplate: string
+  fork: string
+  lagSegments?: number
+  lagSeconds?: number
+  walBytes?: number
+  walSegments?: number
+  discontinuities?: number
+  segmentsFetched?: number
+  bytesCommitted?: number
+  fetchErrors?: number
+  commitRetries?: number
+  haltReason?: string
+  pid?: number
+  createdAt?: number
+  completedAt?: number
+  logPath?: string
+  lastKnown?: boolean
+  // Number of destination files this job has produced so far, and the
+  // rendered path of the one currently being written -- absent before the
+  // first file opens, see cmd_list_sink.go's sinkListEntry.FileCount/
+  // .CurrentPath doc comments.
+  fileCount?: number
+  currentPath?: string
+}
+
+// The fuller single-job snapshot from `mountos sink status --job <id>
+// --json` (src-tauri/src/lib.rs's SinkSnapshot, mirroring mountos-servers
+// sink_runner.go's SinkSnapshot). Present for a running job (a live
+// reading) or for a stopped job with cached final counters (SinkStatus.
+// lastKnown true) -- see SinkStatus's own doc comment. lastCommitAt/
+// lastSegmentAt are ISO timestamps, absent (not the Go zero-time string)
+// when nothing has committed/arrived yet this run, and always absent for a
+// cached snapshot: the cache does not persist them.
+export interface SinkSnapshot {
+  state: string
+  lagSegments: number
+  lagSeconds: number
+  walBytes: number
+  walSegments: number
+  discontinuities: number
+  segmentsFetched: number
+  segmentsCommitted: number
+  bytesCommitted: number
+  fileSize: number
+  bitrateObserved: number
+  fetchErrors: number
+  commitRetries: number
+  // Number of destination files opened so far, and the rendered path of the
+  // one currently being written -- neither is omitempty Go-side, see
+  // sink_runner.go's SinkSnapshot.FileCount/.CurrentPath doc comments.
+  fileCount: number
+  currentPath: string
+  lastCommitAt?: string
+  lastSegmentAt?: string
+}
+
+// As returned by the get_sink_status Tauri command (src-tauri/src/lib.rs's
+// SinkStatus, mirroring mountos-servers cmd_sink.go's sinkStatusPayload).
+// lastKnown marks snapshot as job.json's cached final counters rather than
+// a live reading (running false, a stopped job with JobSpec.CachedCounts).
+export interface SinkStatus {
+  jobId: string
+  running: boolean
+  // running | halted | completed | resumable
+  state: string
+  friendlyName?: string
+  source?: string
+  sinkTemplate?: string
+  fork?: string
+  haltReason?: string
+  snapshot?: SinkSnapshot
+  lastKnown?: boolean
+}
+
 // An upload source that's a live running mount instance rather than a
 // saved profile, discoveryUrl/fork/volume/accessKeyId are captured once
 // (via getInstanceConfig) the moment the instance is picked, and reused
@@ -199,6 +289,11 @@ export interface SecretStatus {
   stored: boolean
 }
 
+export interface CliSignatureStatus {
+  verified: boolean
+  detail: string
+}
+
 export interface DesktopSettings {
   defaultBackend: Backend
   // Seeds new profiles' discoveryUrl; each profile can still override it
@@ -232,6 +327,14 @@ export interface DesktopSettings {
   // Offers Force on the unmount prompt. Required (not optional) for the same
   // reason as allowForkForceDelete.
   allowUnmountForce: boolean
+  // User overrides for optional-feature visibility (see $lib/features),
+  // keyed by feature id. Absent id means "use the registry default", not
+  // "off". Local to this install only, never synced anywhere. Required (not
+  // optional): the field is a plain (non-Option) map on the Rust struct, so
+  // it is always present in outgoing JSON; #[serde(default)] only lets a
+  // settings.json written before this field existed still deserialize, to
+  // an empty map, rather than failing.
+  featureOverrides: Record<string, boolean>
 }
 
 export interface ExportedProfile {

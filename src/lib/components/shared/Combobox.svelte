@@ -49,7 +49,11 @@
         {disabled}
         class={cn('w-full justify-between font-normal', !value && 'text-muted-foreground', className)}
       >
-        {selectedLabel || placeholder}
+        <!-- Labels here are profile names and mount paths. The Button base is
+             whitespace-nowrap, so the answer is truncation, not wrapping, and
+             an anonymous text node cannot be truncated: it needs its own
+             element (same shape the Select trigger already uses). -->
+        <span class="truncate">{selectedLabel || placeholder}</span>
         <ChevronsUpDown class="ml-auto h-4 w-4 shrink-0 opacity-50" />
       </Button>
     {/snippet}

@@ -34,7 +34,7 @@
           <Dialog.Title class="flex items-center gap-2"><History size={20} aria-hidden="true" /> Open file-version view</Dialog.Title>
         </Dialog.Header>
         <div class="grid gap-4 py-4">
-          <p>
+          <p class="wrap-anywhere">
             Mounts a read-only timeline of every version of one file from "{appState.externalVersionPromptFor.name || 'this mount'}" at a folder you
             choose. It appears as its own row once ready. This mount has no saved profile, so credentials are re-read from its own live configuration.
           </p>

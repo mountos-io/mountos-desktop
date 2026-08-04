@@ -40,10 +40,10 @@
     <ChevronLeft size={16} aria-hidden="true" /> Back to profile
   </button>
 
-  <h3 class="flex items-center gap-2"><Network size={19} aria-hidden="true" /> {profile.name}: gateway</h3>
+  <h3 class="flex items-center gap-2 wrap-anywhere"><Network size={19} aria-hidden="true" /> {profile.name}: gateway</h3>
 
   <form class="grid gap-4" onsubmit={(event) => { event.preventDefault(); void confirmGatewayView() }}>
-    <p class="max-w-[70ch]">
+    <p class="max-w-[70ch] wrap-anywhere">
       Exposes "{profile.volume || profile.name}" over S3/HDFS.
       {appState.gatewayOnly ? 'Runs without a FUSE mount.' : `Combines with this profile's own mount at ${profile.mountPath}.`}
     </p>
@@ -60,7 +60,7 @@
       <Checkbox bind:checked={appState.gatewayNoLoopback} label="Bind on all interfaces (requires TLS)" />
     </div>
     {#if appState.gatewayNoLoopback}
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div class="grid gap-1.5">
           <Label>TLS certificate</Label>
           <div class="flex gap-2">

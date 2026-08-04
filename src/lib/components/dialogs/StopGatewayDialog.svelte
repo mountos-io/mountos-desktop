@@ -15,7 +15,7 @@
             Stop gateway
           </Dialog.Title>
         </Dialog.Header>
-        <p class="py-4">
+        <p class="py-4 wrap-anywhere">
           Stop "{appState.stopGatewayPromptFor.name || 'this gateway'}"? Anything currently reading or writing through
           {appState.stopGatewayPromptFor.gatewayEndpoints?.length === 1 ? 'its endpoint' : 'its endpoints'} will get a connection error.
         </p>

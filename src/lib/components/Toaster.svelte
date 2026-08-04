@@ -77,7 +77,11 @@
       use:autoDismiss={{ id: item.id, duration: item.duration }}
     >
       <Icon size={17} aria-hidden="true" class="mt-0.5 shrink-0" />
-      <p class="min-w-0 flex-1 text-foreground">{item.message}</p>
+      <!-- Toast copy carries names, mount paths and raw CLI error text, none
+           of which is guaranteed to contain a break opportunity. min-w-0 only
+           lets this column shrink; wrap-anywhere is what lets the token itself
+           break inside it. -->
+      <p class="min-w-0 flex-1 wrap-anywhere text-foreground">{item.message}</p>
       <button
         type="button"
         class="shrink-0 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
