@@ -1,0 +1,22 @@
+# cargo fmt writes LF and format checks compare bytes, while shell scripts and
+# the Makefile must stay LF on macOS/Linux. A CRLF checkout (core.autocrlf=true,
+# the Git for Windows default) breaks both. Pin the sources to LF.
+*.rs     text eol=lf
+*.svelte text eol=lf
+*.ts     text eol=lf
+*.js     text eol=lf
+*.mjs    text eol=lf
+*.css    text eol=lf
+*.html   text eol=lf
+*.json   text eol=lf
+*.toml   text eol=lf
+*.xml    text eol=lf
+*.yml    text eol=lf
+*.md     text eol=lf
+*.sh     text eol=lf
+Makefile text eol=lf
+
+# Assets git must never touch.
+*.png  binary
+*.ico  binary
+*.icns binary
