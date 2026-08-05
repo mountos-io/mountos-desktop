@@ -35,11 +35,25 @@
      as both the fill and the text color. */
   --destructive-foreground: oklch(1 0 0);
   --warning: oklch(0.45 0.16 55);
+  --warning-foreground: var(--foreground);
   --success: oklch(0.49 0.17 155);
+  --success-foreground: oklch(1 0 0);
   --border: oklch(0.88 0 0);
   --input: oklch(0.96 0 0);
   --ring: oklch(0.61 0.14 39);
+  /* This app's sidebar (nav rail) is a separate token from --card so an
+     actual Card/Dialog/Popover surface and the nav rail can differ without
+     either compromising the other's authentic role. */
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--foreground);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--foreground);
   --scrollbar-thumb: var(--primary);
+  --scrollbar-track: var(--background);
   --pastel-mount: oklch(0.75 0.14 90);
   --pastel-mount-text: oklch(0.52 0.14 90);
   --pastel-volume: oklch(0.72 0.15 155);
@@ -80,11 +94,22 @@
   --destructive: oklch(0.59 0.2 21);
   --destructive-foreground: oklch(1 0 0);
   --warning: oklch(0.78 0.15 75);
+  --warning-foreground: var(--background);
   --success: oklch(0.65 0.19 155);
+  --success-foreground: var(--background);
   --border: oklch(0.21 0.008 200);
   --input: oklch(0.09 0.005 200);
   --ring: oklch(0.78 0.13 92);
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--foreground);
+  --sidebar-primary-foreground: var(--background);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--foreground);
   --scrollbar-thumb: var(--primary);
+  --scrollbar-track: var(--background);
   --pastel-mount: oklch(0.73 0.15 90);
   --pastel-mount-text: oklch(0.73 0.15 90);
   --pastel-volume: oklch(0.70 0.16 155);
@@ -106,10 +131,11 @@
    the same "@theme inline" pattern mountos-admin-client uses (identical token
    values, matching DESIGN.md's mirroring claim, which has been verified), so
    new markup can reach for Tailwind utilities without a second, disconnected
-   color system. Only maps
-   tokens that actually exist above; admin-client's sidebar/chart/extra
-   -foreground tokens aren't defined here and are deliberately left out rather
-   than referencing an undefined variable. */
+   color system. Only maps tokens that actually exist above; admin-client's
+   chart tokens aren't defined here and are deliberately left out rather than
+   referencing an undefined variable. The sidebar, warning-foreground,
+   success-foreground, and scrollbar-track tokens are defined above and
+   mapped below, matching admin-client's full token set. */
 @theme inline {
   --text-xs: 1rem;
   --text-xs--line-height: calc(1.5 / 1);
@@ -147,10 +173,20 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }
 
 /* Everything below, through the reduced-motion media query, is wrapped in

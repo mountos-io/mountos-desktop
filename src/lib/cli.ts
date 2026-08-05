@@ -349,6 +349,18 @@ export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchPar
   return argv
 }
 
+// Mirrors uploadjob.LooksLikeURI (mountos-servers): a "scheme://..." shape,
+// requiring at least 2 chars before "://" so a Windows drive-letter path
+// ("C:\...", or even a stray "c://" typo) never misdetects as a URI scheme.
+// Used by the upload form to decide when to show the object-store source
+// fields, and by buildUploadStartArgv's callers to decide whether
+// sourceSecretFile even applies -- never used as a security boundary itself
+// (the CLI's own detection is authoritative; this only drives the UI).
+export function looksLikeSourceUri(source: string): boolean {
+  const idx = source.indexOf('://')
+  return idx >= 2
+}
+
 export interface UploadStartParams {
   once: boolean
   overwrite: boolean
@@ -360,6 +372,17 @@ export interface UploadStartParams {
   exclude: string[]
   followSymlinks: boolean
   createSourceDirectory: boolean
+  // Non-secret identifiers for a URI SOURCE (s3://, az://, azblob://,
+  // gs://). The secret itself is never a field here -- see
+  // buildUploadStartArgv's own sourceSecretFile parameter, which is the
+  // ONLY place a resolved source secret reaches this builder, and only as
+  // a file path already written to disk, matching the mountos CLI's
+  // --source-temporary-secret-file contract exactly.
+  sourceProvider?: string
+  sourceEndpoint?: string
+  sourceRegion?: string
+  sourceAccount?: string
+  sourceAccessKeyId?: string
 }
 
 // Mirrors src-tauri/src/lib.rs's validate_upload_positional. Not itself the
@@ -402,7 +425,13 @@ export function validateGlobPattern(pattern: string): string | null {
 // misparsed as a NEW flag instead of the positional argument it is. "--"
 // unconditionally ends flag parsing, making this the one argv shape that's
 // actually safe for arbitrary user input, not just typical-looking paths.
-export function buildUploadStartArgv(profile: MountProfile, source: string, dest: string, params: UploadStartParams): string[] {
+export function buildUploadStartArgv(
+  profile: MountProfile,
+  source: string,
+  dest: string,
+  params: UploadStartParams,
+  sourceSecretFile?: string,
+): string[] {
   const argv = ['upload']
   if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
   // Fork is always derived from the resolved profile (saved profile or
@@ -422,6 +451,18 @@ export function buildUploadStartArgv(profile: MountProfile, source: string, dest
   }
   if (params.followSymlinks) argv.push('--follow-symlinks')
   if (params.createSourceDirectory) argv.push('--create-source-directory')
+  // Non-secret identifiers for a URI SOURCE; sourceSecretFile is the ONLY
+  // secret-bearing thing this builder ever touches, and only as a path,
+  // never the secret's own content -- mirrors src-tauri's
+  // build_upload_start_argv exactly, including never emitting the
+  // persistent --source-secret-file flag (the desktop app always uses the
+  // single-use --source-temporary-secret-file handoff).
+  if (params.sourceProvider?.trim()) argv.push('--source-provider', params.sourceProvider.trim())
+  if (params.sourceEndpoint?.trim()) argv.push('--source-endpoint', params.sourceEndpoint.trim())
+  if (params.sourceRegion?.trim()) argv.push('--source-region', params.sourceRegion.trim())
+  if (params.sourceAccount?.trim()) argv.push('--source-account', params.sourceAccount.trim())
+  if (params.sourceAccessKeyId?.trim()) argv.push('--source-access-key-id', params.sourceAccessKeyId.trim())
+  if (sourceSecretFile) argv.push('--source-temporary-secret-file', sourceSecretFile)
   pushSatelliteCredentials(argv, profile)
   argv.push('--', source, dest)
   return argv

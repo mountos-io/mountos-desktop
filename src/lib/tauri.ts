@@ -204,9 +204,15 @@ export async function startUpload(
   dest: string,
   params: UploadStartParams,
   secret?: string,
+  // sourceSecret is the resolved secret for a URI SOURCE (S3/Azure/GCS),
+  // never a saved-profile secret -- start_upload_blocking (Rust) writes it
+  // to a private, single-use temp file and passes only that file's PATH to
+  // the mountos CLI (--source-temporary-secret-file), the same "no secret
+  // in argv" contract every other secret in this app already follows.
+  sourceSecret?: string,
 ): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
-  return invoke<string>('start_upload', { profileId, instance, source, dest, params, secret })
+  return invoke<string>('start_upload', { profileId, instance, source, dest, params, secret, sourceSecret })
 }
 
 // Ensures a read-only scratch mount of the upload source's volume exists

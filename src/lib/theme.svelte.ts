@@ -130,7 +130,7 @@ function applySkinPreset() {
     clearSkin()
     if (mode === 'dark') {
       const mountOSDark = findPreset('mountOS Dark')
-      if (mountOSDark) applySkin(mountOSDark.colors, 'dark')
+      if (mountOSDark) applySkin(mountOSDark)
     }
     return
   }
@@ -155,7 +155,7 @@ function applySkinPreset() {
     return
   }
   clearSkin()
-  applySkin(preset.colors, preset.mode)
+  applySkin(preset)
 }
 
 // Reactive across every component in THIS webview (module-level $state is a

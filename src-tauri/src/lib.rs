@@ -381,6 +381,16 @@ struct UploadStartParams {
     exclude: Vec<String>,
     follow_symlinks: bool,
     create_source_directory: bool,
+    // source is a "scheme://bucket/prefix" URI (s3/az/azblob/gs).
+    // The secret pairing with these is NEVER a field here -- see
+    // start_upload's own source_secret parameter and
+    // write_temp_secret_file, which never round-trips through this
+    // Deserialize-derived, frontend-supplied struct.
+    source_provider: Option<String>,
+    source_endpoint: Option<String>,
+    source_region: Option<String>,
+    source_account: Option<String>,
+    source_access_key_id: Option<String>,
 }
 
 // Mirrors mountos-servers' mountListEntry's download-only fields (`mountos
@@ -1655,6 +1665,7 @@ fn build_upload_start_argv(
     source: &str,
     dest: &str,
     params: &UploadStartParams,
+    source_secret_file: Option<&str>,
 ) -> Vec<String> {
     // Every flag first, source/dest last behind a literal "--": pflag scans
     // the whole token stream for anything starting with '-' regardless of
@@ -1719,6 +1730,32 @@ fn build_upload_start_argv(
     }
     if params.create_source_directory {
         argv.push("--create-source-directory".to_string());
+    }
+    // Non-secret identifiers for a URI SOURCE (s3://, az://, azblob://,
+    // gs://) -- the secret itself is never a field on params (see
+    // UploadStartParams's own doc comment); source_secret_file is the ONE
+    // place a resolved source secret reaches this builder, and only as a
+    // file path already written by write_temp_secret_file, matching the
+    // mountos CLI's --source-temporary-secret-file contract exactly.
+    for (flag, value) in [
+        ("--source-provider", params.source_provider.as_deref()),
+        ("--source-endpoint", params.source_endpoint.as_deref()),
+        ("--source-region", params.source_region.as_deref()),
+        ("--source-account", params.source_account.as_deref()),
+        (
+            "--source-access-key-id",
+            params.source_access_key_id.as_deref(),
+        ),
+    ] {
+        if let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) {
+            argv.extend([flag.to_string(), value.to_string()]);
+        }
+    }
+    if let Some(path) = source_secret_file {
+        argv.extend([
+            "--source-temporary-secret-file".to_string(),
+            path.to_string(),
+        ]);
     }
     push_satellite_credentials(&mut argv, profile);
     argv.extend(["--".to_string(), source.to_string(), dest.to_string()]);
@@ -3734,6 +3771,35 @@ fn resolve_satellite_secret(
     }
 }
 
+// write_temp_secret_file writes an external SOURCE's secret to a private,
+// single-use file under this app's runtime dir, for handoff via
+// --source-temporary-secret-file: mountos-servers' own resolveSecret reads
+// it once and unlinks it immediately on a successful read (main.go), so
+// this function's cleanup responsibility ends the moment the child process
+// is spawned -- no Rust-side delete or timer, deliberately: a GUI-side
+// timer can't cover a crash/kill window between spawn and read the way the
+// CLI's own unlink-after-read can (see the plan's Rev 6/7 observability
+// note). Every caller must still treat the returned path as sensitive until
+// the child either reads it (and it vanishes) or fails to start (in which
+// case the OS temp-dir cleanup / next app-cache clear is the only backstop,
+// same residual-file risk as any file-based secret handoff).
+fn write_temp_secret_file(app: &AppHandle, secret: &str) -> Result<PathBuf, DesktopError> {
+    let dir = runtime_dir(app)?;
+    let unique = short_hash(&format!(
+        "{:?}-{}",
+        std::time::SystemTime::now(),
+        std::process::id()
+    ));
+    let path = dir.join(format!("source-secret-{unique}.tmp"));
+    fs::write(&path, secret.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(path)
+}
+
 // Server-side re-check, not just a hidden checkbox, so fork_delete reached by
 // any other in-app code path still honors the same gate as the setting. This
 // is NOT a boundary against a hostile renderer: `allow_fork_force_delete`
@@ -3966,6 +4032,7 @@ async fn list_uploads() -> Result<Vec<UploadJob>, DesktopError> {
         .map_err(|error| DesktopError::Message(format!("list uploads task failed: {error}")))?
 }
 
+#[allow(clippy::too_many_arguments)]
 fn start_upload_blocking(
     app: AppHandle,
     profile_id: Option<String>,
@@ -3974,6 +4041,7 @@ fn start_upload_blocking(
     dest: String,
     params: UploadStartParams,
     secret: Option<String>,
+    source_secret: Option<String>,
 ) -> Result<String, DesktopError> {
     let profile = resolve_upload_source_profile(&app, profile_id.as_deref(), instance.as_ref())?;
     let source = source.trim();
@@ -3988,19 +4056,43 @@ fn start_upload_blocking(
     }
     validate_upload_positional(source, "source")?;
     validate_upload_positional(dest, "destination")?;
-    let argv = build_upload_start_argv(&profile, source, dest, &params);
+    // Written up front, ahead of the dry-run branch too: a URI SOURCE's
+    // dry-run genuinely connects and lists (see mountos-servers'
+    // runUploadDryRun's own doc comment on why that's the one documented
+    // deviation from "no connection, no writes"), so it needs the secret
+    // exactly as much as a real run does.
+    let source_secret_path = source_secret
+        .as_deref()
+        .map(|s| write_temp_secret_file(&app, s))
+        .transpose()?;
+    let source_secret_file = source_secret_path
+        .as_deref()
+        .map(|p| p.to_string_lossy().into_owned());
+    let argv = build_upload_start_argv(
+        &profile,
+        source,
+        dest,
+        &params,
+        source_secret_file.as_deref(),
+    );
     if params.dry_run {
-        // Never connects (runUploadDryRun is checked before credentials are
-        // even resolved server-side) and prints its report to stdout. A
-        // one-shot foreground call, same shape as upload_command_blocking,
-        // captures and returns exactly that report text instead of waiting
-        // on a daemonize confirmation that will never come. Uses
-        // DRY_RUN_TIMEOUT, not FORK_COMMAND_TIMEOUT's 30s, since a dry run walks
-        // the ENTIRE source tree (unlike every other one-shot upload
-        // subcommand, which just touches local job state or a control
-        // socket), and a large/slow-disk source can legitimately take
-        // longer than that.
-        return upload_command_blocking(argv, DRY_RUN_TIMEOUT);
+        // For a folder/profile SOURCE this never connects (runUploadDryRun
+        // is checked before mountOS credentials are even resolved
+        // server-side); for a URI SOURCE it DOES connect and list (the
+        // one documented exception, see runUploadDryRun's own doc comment
+        // server-side) -- source_secret_file above already covers that
+        // case, no separate secret plumbing needed here. Prints its report
+        // to stdout; a one-shot foreground call, same shape as
+        // upload_command_blocking, captures and returns exactly that
+        // report text instead of waiting on a daemonize confirmation that
+        // will never come. Uses DRY_RUN_TIMEOUT, not FORK_COMMAND_TIMEOUT's
+        // 30s, since a dry run walks/lists the ENTIRE source (unlike every
+        // other one-shot upload subcommand, which just touches local job
+        // state or a control socket), and a large/slow source can
+        // legitimately take longer than that.
+        let result = upload_command_blocking(argv, DRY_RUN_TIMEOUT);
+        cleanup_source_secret_file_on_error(&result, source_secret_path.as_deref());
+        return result;
     }
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
     // A single profile can legitimately drive multiple concurrent upload
@@ -4012,7 +4104,7 @@ fn start_upload_blocking(
     let suffix = short_hash(&format!("{source}->{dest}"));
     let stderr_path = runtime_dir(&app)?.join(format!("upload-{}-{suffix}-stderr.log", profile.id));
     let stdout_path = runtime_dir(&app)?.join(format!("upload-{}-{suffix}-stdout.log", profile.id));
-    spawn_daemonizing_upload_and_wait(
+    let result = spawn_daemonizing_upload_and_wait(
         &mountos_path()?,
         &argv,
         resolved_secret.as_deref(),
@@ -4023,11 +4115,31 @@ fn start_upload_blocking(
         } else {
             LAUNCH_TIMEOUT
         },
-    )?;
+    );
+    cleanup_source_secret_file_on_error(&result, source_secret_path.as_deref());
+    result?;
     Ok("upload job started".to_string())
 }
 
+// cleanup_source_secret_file_on_error is a best-effort backstop, not the
+// primary cleanup mechanism: the CLI unlinks source_secret_path itself the
+// moment it successfully reads it (main.go's resolveSecret,
+// mountos-servers), which covers every ordinary run. This only matters when
+// the child never got that far -- spawn failed outright, or exited/timed
+// out before reaching the read -- where the file would otherwise linger
+// until the OS temp-dir / app-cache is next cleared. Never called on the
+// success path; T's Ok/Err doesn't matter beyond that, only whether result
+// is an error at all.
+fn cleanup_source_secret_file_on_error<T>(result: &Result<T, DesktopError>, path: Option<&Path>) {
+    if result.is_err() {
+        if let Some(path) = path {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn start_upload(
     app: AppHandle,
     profile_id: Option<String>,
@@ -4036,9 +4148,19 @@ async fn start_upload(
     dest: String,
     params: UploadStartParams,
     secret: Option<String>,
+    source_secret: Option<String>,
 ) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || {
-        start_upload_blocking(app, profile_id, instance, source, dest, params, secret)
+        start_upload_blocking(
+            app,
+            profile_id,
+            instance,
+            source,
+            dest,
+            params,
+            secret,
+            source_secret,
+        )
     })
     .await
     .map_err(|error| DesktopError::Message(format!("start upload task failed: {error}")))?
@@ -7847,6 +7969,11 @@ mod tests {
             exclude: Vec::new(),
             follow_symlinks: false,
             create_source_directory: false,
+            source_provider: None,
+            source_endpoint: None,
+            source_region: None,
+            source_account: None,
+            source_access_key_id: None,
         }
     }
 
@@ -7857,6 +7984,7 @@ mod tests {
             "/local/photos",
             "/remote/photos",
             &upload_params(),
+            None,
         );
         assert_eq!(argv[0], "upload");
         // Every flag comes before "--", then exactly the two positionals.
@@ -7898,7 +8026,7 @@ mod tests {
         params.follow_symlinks = true;
         params.create_source_directory = true;
 
-        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params);
+        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params, None);
         assert!(argv.windows(2).any(|a| a == ["--fork", "main"]));
         assert!(argv.contains(&"--once".to_string()));
         assert!(argv.contains(&"--overwrite".to_string()));
@@ -7919,8 +8047,64 @@ mod tests {
     fn build_upload_start_argv_omits_bwlimit_when_zero() {
         let mut params = upload_params();
         params.bwlimit = Some(0);
-        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params);
+        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params, None);
         assert!(!argv.contains(&"--bwlimit".to_string()));
+    }
+
+    #[test]
+    fn build_upload_start_argv_emits_source_provider_fields_when_set() {
+        let mut params = upload_params();
+        params.source_provider = Some("s3compatible".to_string());
+        params.source_endpoint = Some(" https://example.com ".to_string());
+        params.source_region = Some("us-east-1".to_string());
+        params.source_account = Some("myaccount".to_string());
+        params.source_access_key_id = Some("AKIA1234567890ABCDEF".to_string());
+        let argv = build_upload_start_argv(&profile(), "s3://bucket/prefix", "/dst", &params, None);
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--source-provider", "s3compatible"]));
+        // Trimmed, same as --rescan-interval/--include/--exclude above.
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--source-endpoint", "https://example.com"]));
+        assert!(argv.windows(2).any(|a| a == ["--source-region", "us-east-1"]));
+        assert!(argv.windows(2).any(|a| a == ["--source-account", "myaccount"]));
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--source-access-key-id", "AKIA1234567890ABCDEF"]));
+    }
+
+    #[test]
+    fn build_upload_start_argv_omits_source_fields_when_unset() {
+        // upload_params() leaves every source_* field None -- a folder/
+        // profile SOURCE must never see any of these flags.
+        let argv = build_upload_start_argv(&profile(), "/src", "/dst", &upload_params(), None);
+        for flag in [
+            "--source-provider",
+            "--source-endpoint",
+            "--source-region",
+            "--source-account",
+            "--source-access-key-id",
+            "--source-temporary-secret-file",
+        ] {
+            assert!(!argv.contains(&flag.to_string()), "argv should not contain {flag}");
+        }
+    }
+
+    #[test]
+    fn build_upload_start_argv_emits_source_temporary_secret_file_when_provided() {
+        let argv = build_upload_start_argv(
+            &profile(),
+            "s3://bucket/prefix",
+            "/dst",
+            &upload_params(),
+            Some("/tmp/source-secret-abc.tmp"),
+        );
+        assert!(argv.windows(2).any(|a| a
+            == ["--source-temporary-secret-file", "/tmp/source-secret-abc.tmp"]));
+        // Never the plain --source-secret-file (persistent) flag for this
+        // handoff -- the desktop app always uses the single-use one.
+        assert!(!argv.contains(&"--source-secret-file".to_string()));
     }
 
     #[test]

@@ -280,7 +280,7 @@
           <button
             type="button"
             class="skin-swatch {active ? 'ring-2 ring-primary' : ''}"
-            style="--sw-bg: {preset.colors.background}; --sw-fg: {preset.colors.primary};"
+            style="--sw-bg: {preset.color('background')}; --sw-fg: {preset.color('primary')};"
             onclick={() => setSkin(isDefault ? '' : preset.name)}
             aria-pressed={active}
             title={isDefault ? 'mountOS (default)' : preset.name}

@@ -31,6 +31,7 @@ import {
   classifyMountError,
   isAbsolutePath,
   isValidFolderName,
+  looksLikeSourceUri,
   parseArgvInput,
   validateExtraArgs,
   validateGlobPattern,
@@ -393,6 +394,55 @@ describe('cli helpers', () => {
   it('omits --bwlimit when zero', () => {
     const argv = buildUploadStartArgv(profile, '/src', '/dst', { ...uploadParams(), bwlimit: 0 })
     expect(argv).not.toContain('--bwlimit')
+  })
+
+  it('emits source-provider fields for a URI source when set, trimmed', () => {
+    const params: UploadStartParams = {
+      ...uploadParams(),
+      sourceProvider: 's3compatible',
+      sourceEndpoint: ' https://example.com ',
+      sourceRegion: 'us-east-1',
+      sourceAccount: 'myaccount',
+      sourceAccessKeyId: 'AKIA1234567890ABCDEF',
+    }
+    const argv = buildUploadStartArgv(profile, 's3://bucket/prefix', '/dst', params)
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        '--source-provider', 's3compatible',
+        '--source-endpoint', 'https://example.com',
+        '--source-region', 'us-east-1',
+        '--source-account', 'myaccount',
+        '--source-access-key-id', 'AKIA1234567890ABCDEF',
+      ]),
+    )
+  })
+
+  it('omits every source field for a folder source', () => {
+    const argv = buildUploadStartArgv(profile, '/src', '/dst', uploadParams())
+    for (const flag of [
+      '--source-provider',
+      '--source-endpoint',
+      '--source-region',
+      '--source-account',
+      '--source-access-key-id',
+      '--source-temporary-secret-file',
+    ]) {
+      expect(argv).not.toContain(flag)
+    }
+  })
+
+  it('emits --source-temporary-secret-file, never --source-secret-file, when a secret path is given', () => {
+    const argv = buildUploadStartArgv(profile, 's3://bucket/prefix', '/dst', uploadParams(), '/tmp/source-secret-abc.tmp')
+    expect(argv).toEqual(expect.arrayContaining(['--source-temporary-secret-file', '/tmp/source-secret-abc.tmp']))
+    expect(argv).not.toContain('--source-secret-file')
+  })
+
+  it('detects a URI source the same way the CLI does (looksLikeSourceUri)', () => {
+    expect(looksLikeSourceUri('s3://bucket/prefix')).toBe(true)
+    expect(looksLikeSourceUri('azblob://container/path')).toBe(true)
+    expect(looksLikeSourceUri('/local/absolute/path')).toBe(false)
+    expect(looksLikeSourceUri('relative/path')).toBe(false)
+    expect(looksLikeSourceUri('C:\\windows\\path')).toBe(false)
   })
 
   it('gives upload resume a smaller flag surface than start', () => {

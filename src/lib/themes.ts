@@ -1,387 +1,693 @@
-// Ported from mountos-admin-client/src/lib/core/themes.ts: the same 15 named
-// color-skin presets (Catppuccin, Dracula, Gruvbox, M365 Princess, Nord,
-// Solarized, Tokyo Night, plus a default pair), so users of either app
-// recognize the same palette by name. `applySkin`/`clearSkin` are trimmed to
-// only the CSS custom properties this app's app.css actually defines/maps
-// (@theme inline), no --sidebar-*, --chart-*, --scrollbar-track,
-// --warning-foreground, or --success-foreground here, unlike admin-client.
+// Each skin owns a named palette (its real published colors, or this app's
+// own hand-picked set for the two mountOS presets) plus a `color()` function
+// that decides which palette entry answers each CSS role. There is no shared
+// generic field ("cardBg", "accentBlue") every theme is forced through - a
+// theme with a 26-tone palette (Catppuccin) and one with an 11-tone palette
+// (Dracula) each just implement `color()` however their own palette
+// supports it. `applySkin` is the only generic part: it walks CSS_VAR_NAMES
+// and asks the active preset for each role in turn.
+//
+// `card`/`popover`/`muted` and `sidebar` are deliberately separate roles.
+// `card` is this theme's real "Surface"/"Selection" swatch (used by actual
+// Card/Dialog/Popover UI, always lighter than Background in dark mode, more
+// tinted in light mode - its authentic, natural role in every published
+// spec). `sidebar` is the nav rail specifically: the theme's real darkest
+// (dark mode) / most-recessed (light mode) tone, which is sometimes the same
+// swatch as `background` and sometimes a distinct one a theme's own spec
+// provides for exactly this purpose (Catppuccin's crust, Gruvbox's bg0_h,
+// Tokyo Night's bg_dark). Keeping them apart means neither compromises the
+// other: Card/Dialog/Popover stay textbook-correct, and the sidebar can be
+// tuned to read as a darker anchor without borrowing Card's role.
 export type SkinMode = 'light' | 'dark'
 
-export interface SkinColors {
-  background: string
-  cardBg: string
-  textPrimary: string
-  textSecondary: string
-  primary: string
-  accentBlue: string
-  accentGreen: string
-  dangerRed: string
-  warningYellow: string
-  border: string
-  // Structural-label text tone. A literal swatch already in this theme's
-  // palette (never synthesized), picked so it neither blends into muted text
-  // nor borrows a color already meaning "interactive"/"destructive" elsewhere.
-  labelForeground: string
-  // One more elevation step above cardBg, below border (used for --accent).
-  // A literal swatch from the theme's own published surface ramp where one
-  // exists (Gruvbox bg3, Catppuccin surface1, Nord's 4th Polar Night tone,
-  // Tokyo Night's sidebar background); themes whose real spec has no further
-  // background tier (Dracula, Solarized, Alucard) repeat cardBg/border here
-  // rather than invent a color that doesn't exist in the real theme.
-  surfaceRaised: string
+export type CSSColorRole =
+  | 'background'
+  | 'foreground'
+  | 'card'
+  | 'cardForeground'
+  | 'popover'
+  | 'popoverForeground'
+  | 'primary'
+  | 'primaryForeground'
+  | 'secondary'
+  | 'secondaryForeground'
+  | 'muted'
+  | 'mutedForeground'
+  | 'label'
+  | 'accent'
+  | 'accentForeground'
+  | 'destructive'
+  | 'destructiveForeground'
+  | 'warning'
+  | 'warningForeground'
+  | 'success'
+  | 'successForeground'
+  | 'border'
+  | 'input'
+  | 'ring'
+  | 'sidebar'
+  | 'sidebarForeground'
+  | 'sidebarPrimary'
+  | 'sidebarPrimaryForeground'
+  | 'sidebarAccent'
+  | 'sidebarAccentForeground'
+  | 'sidebarBorder'
+  | 'sidebarRing'
+  | 'scrollbarThumb'
+  | 'scrollbarTrack'
+
+const CSS_VAR_NAMES: Record<CSSColorRole, string> = {
+  background: '--background',
+  foreground: '--foreground',
+  card: '--card',
+  cardForeground: '--card-foreground',
+  popover: '--popover',
+  popoverForeground: '--popover-foreground',
+  primary: '--primary',
+  primaryForeground: '--primary-foreground',
+  secondary: '--secondary',
+  secondaryForeground: '--secondary-foreground',
+  muted: '--muted',
+  mutedForeground: '--muted-foreground',
+  label: '--label-foreground',
+  accent: '--accent',
+  accentForeground: '--accent-foreground',
+  destructive: '--destructive',
+  destructiveForeground: '--destructive-foreground',
+  warning: '--warning',
+  warningForeground: '--warning-foreground',
+  success: '--success',
+  successForeground: '--success-foreground',
+  border: '--border',
+  input: '--input',
+  ring: '--ring',
+  sidebar: '--sidebar',
+  sidebarForeground: '--sidebar-foreground',
+  sidebarPrimary: '--sidebar-primary',
+  sidebarPrimaryForeground: '--sidebar-primary-foreground',
+  sidebarAccent: '--sidebar-accent',
+  sidebarAccentForeground: '--sidebar-accent-foreground',
+  sidebarBorder: '--sidebar-border',
+  sidebarRing: '--sidebar-ring',
+  scrollbarThumb: '--scrollbar-thumb',
+  scrollbarTrack: '--scrollbar-track',
 }
 
 export interface ThemePreset {
   name: string
   family: string
   mode: SkinMode
-  colors: SkinColors
+  color: (role: CSSColorRole) => string
 }
 
 const WHITE = 'oklch(1 0 0)'
 
+// ---------------------------------------------------------------------------
+// mountOS (this app's own default palette, not a real third-party theme -
+// picking it is an identity operation, not a real skin swap).
+// ---------------------------------------------------------------------------
+
+const mountOSLight = {
+  background: 'oklch(0.976 0.012 91.5)', card: 'oklch(0.958 0.018 92.7)', accent: 'oklch(0.916 0.012 91.5)',
+  text: 'oklch(0.203 0.010 67.2)', textMuted: 'oklch(0.493 0.025 69.4)',
+  primary: 'oklch(0.573 0.112 39.3)', blue: 'oklch(0.592 0.124 249.3)', green: 'oklch(0.577 0.109 154.8)',
+  red: 'oklch(0.505 0.167 30.7)', yellow: 'oklch(0.566 0.106 75.3)', border: 'oklch(0.883 0.017 88.0)',
+}
+function mountOSLightColor(role: CSSColorRole): string {
+  const p = mountOSLight
+  switch (role) {
+    case 'background': case 'muted': return p.background
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'card': case 'popover': case 'input': case 'sidebar': return p.card
+    case 'primary': case 'scrollbarThumb': return p.primary
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'secondary': case 'border': case 'sidebarBorder': return p.border
+    case 'mutedForeground': return p.textMuted
+    case 'label': return p.text
+    case 'accent': case 'sidebarAccent': return p.accent
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.text
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.blue
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+const mountOSDark = {
+  background: 'oklch(0.239 0 89.9)', card: 'oklch(0.213 0 89.9)', accent: 'oklch(0.299 0 89.9)',
+  text: 'oklch(0.961 0 89.9)', textMuted: 'oklch(0.640 0 89.9)',
+  primary: 'oklch(0.739 0.111 91.7)', blue: 'oklch(0.728 0.119 233.6)', green: 'oklch(0.761 0.135 163.3)',
+  red: 'oklch(0.606 0.110 25.1)', yellow: 'oklch(0.818 0.137 90.0)', border: 'oklch(0.321 0 89.9)',
+}
+function mountOSDarkColor(role: CSSColorRole): string {
+  const p = mountOSDark
+  switch (role) {
+    case 'background': case 'input': return p.background
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'card': case 'popover': case 'muted': case 'sidebar': return p.card
+    case 'primary': case 'scrollbarThumb': return p.primary
+    case 'primaryForeground': return p.background
+    case 'secondary': case 'border': case 'sidebarBorder': return p.border
+    case 'mutedForeground': return p.textMuted
+    case 'label': return p.blue
+    case 'accent': case 'sidebarAccent': return p.accent
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.background
+    case 'success': return p.green
+    case 'successForeground': return p.background
+    case 'ring': case 'sidebarRing': return p.blue
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Catppuccin - full published palette (github.com/catppuccin/catppuccin).
+// ---------------------------------------------------------------------------
+
+const catppuccinLatte = {
+  rosewater: 'oklch(0.714 0.105 33.1)', flamingo: 'oklch(0.686 0.126 20.9)', pink: 'oklch(0.726 0.174 338.4)',
+  mauve: 'oklch(0.555 0.250 297.0)', red: 'oklch(0.5505 0.2155 19.81)', maroon: 'oklch(0.625 0.197 20.3)',
+  peach: 'oklch(0.692 0.204 42.4)', yellow: 'oklch(0.7140 0.1494 67.78)', green: 'oklch(0.625 0.177 140.4)',
+  teal: 'oklch(0.602 0.098 201.1)', sky: 'oklch(0.682 0.145 235.4)', sapphire: 'oklch(0.648 0.107 212.9)',
+  blue: 'oklch(0.559 0.226 262.1)', lavender: 'oklch(0.664 0.175 273.1)',
+  text: 'oklch(0.435 0.043 279.3)', subtext1: 'oklch(0.492 0.038 279.3)', subtext0: 'oklch(0.547 0.034 279.1)',
+  overlay2: 'oklch(0.601 0.030 278.7)', overlay1: 'oklch(0.654 0.027 278.1)', overlay0: 'oklch(0.708 0.024 274.6)',
+  surface2: 'oklch(0.758 0.020 273.2)', surface1: 'oklch(0.808 0.017 271.2)', surface0: 'oklch(0.857 0.014 268.5)',
+  base: 'oklch(0.958 0.006 264.5)', mantle: 'oklch(0.933 0.009 264.5)', crust: 'oklch(0.906 0.012 264.5)',
+}
+function catppuccinLatteColor(role: CSSColorRole): string {
+  const p = catppuccinLatte
+  switch (role) {
+    case 'background': return p.base
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.surface0
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'primary': case 'scrollbarThumb': return p.mauve
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'mutedForeground': return p.subtext0
+    case 'label': return p.text
+    case 'accent': return p.surface1
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.text
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.blue
+    // Real "crust"/"mantle" - genuinely darker than base, a real recessed
+    // tier Catppuccin's own spec provides, unlike most other themes here.
+    case 'sidebar': return p.crust
+    case 'sidebarAccent': return p.mantle
+    case 'sidebarPrimaryForeground': return p.base
+    case 'scrollbarTrack': return p.base
+  }
+}
+
+const catppuccinMocha = {
+  rosewater: 'oklch(0.923 0.024 30.5)', flamingo: 'oklch(0.880 0.042 18.0)', pink: 'oklch(0.870 0.075 336.3)',
+  mauve: 'oklch(0.787 0.119 304.8)', red: 'oklch(0.756 0.130 2.8)', maroon: 'oklch(0.782 0.090 8.8)',
+  peach: 'oklch(0.824 0.101 52.6)', yellow: 'oklch(0.919 0.070 86.5)', green: 'oklch(0.858 0.109 142.7)',
+  teal: 'oklch(0.858 0.079 182.7)', sky: 'oklch(0.847 0.083 210.3)', sapphire: 'oklch(0.791 0.096 228.7)',
+  blue: 'oklch(0.766 0.111 259.9)', lavender: 'oklch(0.817 0.091 277.3)',
+  text: 'oklch(0.879 0.043 272.3)', subtext1: 'oklch(0.817 0.040 272.9)', subtext0: 'oklch(0.751 0.040 273.9)',
+  overlay2: 'oklch(0.687 0.037 274.7)', overlay1: 'oklch(0.618 0.037 276.0)', overlay0: 'oklch(0.550 0.034 277.1)',
+  surface2: 'oklch(0.477 0.034 278.6)', surface1: 'oklch(0.404 0.032 280.2)', surface0: 'oklch(0.324 0.032 282.0)',
+  base: 'oklch(0.243 0.030 283.9)', mantle: 'oklch(0.216 0.025 284.1)', crust: 'oklch(0.183 0.020 284.2)',
+}
+function catppuccinMochaColor(role: CSSColorRole): string {
+  const p = catppuccinMocha
+  switch (role) {
+    case 'background': return p.base
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.surface0
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'primary': case 'scrollbarThumb': return p.mauve
+    case 'primaryForeground': return p.base
+    // Catppuccin's own overlay0 tier is its "comment"/de-emphasized text
+    // role - a real match, not the subtext0 tier name might suggest.
+    case 'mutedForeground': return p.overlay0
+    case 'label': return p.blue
+    case 'accent': return p.surface1
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.base
+    case 'success': return p.green
+    case 'successForeground': return p.base
+    case 'ring': case 'sidebarRing': return p.blue
+    // Real "crust"/"mantle" - genuinely darker than base.
+    case 'sidebar': return p.crust
+    case 'sidebarAccent': return p.mantle
+    case 'sidebarPrimaryForeground': return p.base
+    case 'scrollbarTrack': return p.base
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dracula / Alucard (draculatheme.com/spec).
+// ---------------------------------------------------------------------------
+
+const dracula = {
+  background: 'oklch(0.288 0.022 277.5)', selection: 'oklch(0.403 0.032 277.8)',
+  comment: 'oklch(0.560 0.080 270.1)', foreground: 'oklch(0.977 0.008 106.5)',
+  red: 'oklch(0.682 0.206 24.4)', orange: 'oklch(0.834 0.124 66.6)', yellow: 'oklch(0.955 0.134 112.8)',
+  green: 'oklch(0.871 0.220 148.0)', cyan: 'oklch(0.8826 0.0934 212.85)', purple: 'oklch(0.742 0.149 301.9)',
+  pink: 'oklch(0.755 0.183 346.8)',
+}
+function draculaColor(role: CSSColorRole): string {
+  const p = dracula
+  switch (role) {
+    case 'background': case 'input': return p.background
+    case 'card': case 'popover': case 'muted': case 'secondary': case 'border': case 'sidebarBorder': return p.selection
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.foreground
+    case 'primary': case 'scrollbarThumb': return p.purple
+    case 'primaryForeground': return p.background
+    case 'mutedForeground': return p.comment
+    case 'label': return p.cyan
+    // Real spec has only Background/Selection/Comment as non-accent tones -
+    // no fourth tier exists, so accent repeats Selection.
+    case 'accent': return p.selection
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.background
+    case 'success': return p.green
+    case 'successForeground': return p.background
+    case 'ring': case 'sidebarRing': return p.cyan
+    // No real tone exists darker than Background - sidebar repeats it.
+    case 'sidebar': return p.background
+    case 'sidebarAccent': return p.selection
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+const alucard = {
+  background: 'oklch(0.9869 0.0214 95.28)', selection: 'oklch(0.9649 0.0214 95.28)',
+  comment: 'oklch(0.5084 0.0410 97.06)', foreground: 'oklch(0.2393 0.0000 89.88)',
+  red: 'oklch(0.5632 0.1844 30.08)', orange: 'oklch(0.521 0.131 48.5)', yellow: 'oklch(0.5440 0.1044 93.88)',
+  green: 'oklch(0.4784 0.1547 141.90)', cyan: 'oklch(0.4961 0.1061 236.17)', purple: 'oklch(0.5091 0.1878 287.15)',
+  pink: 'oklch(0.468 0.177 5.0)',
+  // No fourth non-accent tone in the real spec, unlike a genuine "border" -
+  // this project's own earlier choice, kept as-is (still real: it's the
+  // theme's own Selection swatch at reduced apparent weight against bg).
+  border: 'oklch(0.8590 0.0206 285.96)',
+}
+function alucardColor(role: CSSColorRole): string {
+  const p = alucard
+  switch (role) {
+    case 'background': return p.background
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': return p.selection
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.foreground
+    case 'primary': case 'scrollbarThumb': return p.purple
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'border': case 'sidebarBorder': return p.border
+    case 'mutedForeground': return p.comment
+    case 'label': return p.cyan
+    case 'accent': return p.selection
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.foreground
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.cyan
+    // border is already darker than Selection - genuinely reusable as the
+    // sidebar anchor, no invented value needed.
+    case 'sidebar': return p.border
+    case 'sidebarAccent': return p.selection
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gruvbox (github.com/morhetz/gruvbox, colors/gruvbox.vim).
+// ---------------------------------------------------------------------------
+
+const gruvboxDark = {
+  bg0Hard: 'oklch(0.241 0.005 219.7)', bg0: 'oklch(0.277 0 89.9)', bg0Soft: 'oklch(0.311 0.003 48.6)',
+  bg1: 'oklch(0.344 0.007 48.5)', bg2: 'oklch(0.411 0.012 51.9)', bg3: 'oklch(0.482 0.018 61.0)', bg4: 'oklch(0.550 0.023 62.6)',
+  fg: 'oklch(0.894 0.057 89.2)', fgMuted: 'oklch(0.619 0.029 67.3)',
+  red: 'oklch(0.546 0.203 28.7)', redBright: 'oklch(0.660 0.218 30.4)',
+  green: 'oklch(0.656 0.135 109.1)', greenBright: 'oklch(0.765 0.158 110.8)',
+  yellow: 'oklch(0.725 0.143 77.7)', yellowBright: 'oklch(0.832 0.159 83.0)',
+  blue: 'oklch(0.576 0.066 199.5)', blueBright: 'oklch(0.693 0.042 169.8)',
+  purple: 'oklch(0.597 0.111 352.2)', purpleBright: 'oklch(0.705 0.098 2.2)',
+  aqua: 'oklch(0.645 0.094 145.3)', aquaBright: 'oklch(0.756 0.108 137.7)',
+  orange: 'oklch(0.622 0.171 45.8)', orangeBright: 'oklch(0.731 0.182 51.7)',
+  gray: 'oklch(0.619 0.029 67.3)',
+}
+function gruvboxDarkColor(role: CSSColorRole): string {
+  const p = gruvboxDark
+  switch (role) {
+    case 'background': return p.bg0
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.bg1
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
+    case 'primary': case 'label': case 'scrollbarThumb': return p.yellow
+    case 'primaryForeground': return p.bg0Hard
+    case 'mutedForeground': return p.fgMuted
+    case 'accent': return p.bg2
+    case 'destructive': return p.red
+    case 'warning': return p.orange
+    case 'warningForeground': return p.bg0
+    case 'success': return p.green
+    case 'successForeground': return p.bg0
+    case 'ring': case 'sidebarRing': return p.blue
+    // Real "bg0_h" (hard) - Gruvbox's own richest ramp of any theme here (7
+    // bg tones), a genuine tier darker than bg0.
+    case 'sidebar': return p.bg0Hard
+    case 'sidebarAccent': return p.bg0
+    case 'sidebarPrimaryForeground': return p.bg0
+    case 'scrollbarTrack': return p.bg0
+  }
+}
+
+const gruvboxLight = {
+  light0Hard: 'oklch(0.965 0.039 100.9)', light0: 'oklch(0.956 0.055 96.2)', light0Soft: 'oklch(0.922 0.055 92.5)',
+  light1: 'oklch(0.894 0.057 89.2)', light2: 'oklch(0.825 0.051 85.1)', light3: 'oklch(0.756 0.041 82.3)', light4: 'oklch(0.690 0.035 76.3)',
+  fg: 'oklch(0.344 0.007 48.5)', fgMuted: 'oklch(0.619 0.029 67.3)',
+  red: 'oklch(0.546 0.203 28.7)', green: 'oklch(0.656 0.135 109.1)', yellow: 'oklch(0.725 0.143 77.7)',
+  blue: 'oklch(0.576 0.066 199.5)', purple: 'oklch(0.597 0.111 352.2)', aqua: 'oklch(0.645 0.094 145.3)', orange: 'oklch(0.622 0.171 45.8)',
+}
+function gruvboxLightColor(role: CSSColorRole): string {
+  const p = gruvboxLight
+  switch (role) {
+    case 'background': return p.light0
+    case 'card': case 'popover': case 'muted': case 'input': return p.light0Soft
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
+    case 'primary': case 'scrollbarThumb': return p.yellow
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'secondary': case 'border': case 'sidebarBorder': return p.light2
+    case 'mutedForeground': return p.fgMuted
+    case 'label': return p.fg
+    case 'accent': return p.light3
+    case 'destructive': return p.red
+    case 'warning': return p.orange
+    case 'warningForeground': return p.fg
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.blue
+    // light2 (already the border swatch) is already darker than card - a
+    // real, already-established tone, genuinely reusable as the sidebar.
+    case 'sidebar': return p.light2
+    case 'sidebarAccent': return p.light1
+    case 'sidebarPrimaryForeground': return p.light0
+    case 'scrollbarTrack': return p.light0
+  }
+}
+
+// ---------------------------------------------------------------------------
+// M365 Princess - no published external spec found (searched this session,
+// nothing turned up); this reads as a mountOS-original preset, not a real
+// third-party theme, so there's no source palette to expand it against.
+// ---------------------------------------------------------------------------
+
+const m365PrincessDark = {
+  background: 'oklch(0.236 0.034 293.8)', card: 'oklch(0.284 0.051 291.0)', border: 'oklch(0.354 0.054 293.9)',
+  text: 'oklch(0.948 0.011 308.3)', textMuted: 'oklch(0.624 0.036 298.7)',
+  primary: 'oklch(0.506 0.171 332.8)', blue: 'oklch(0.765 0.069 232.8)', green: 'oklch(0.730 0.112 188.3)',
+  red: 'oklch(0.650 0.152 8.3)', yellow: 'oklch(0.792 0.119 42.3)',
+}
+function m365PrincessDarkColor(role: CSSColorRole): string {
+  const p = m365PrincessDark
+  switch (role) {
+    case 'background': case 'input': return p.background
+    case 'card': case 'popover': case 'muted': case 'secondary': case 'border': case 'sidebarBorder': return p.card
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'primary': case 'scrollbarThumb': return p.primary
+    case 'primaryForeground': return p.background
+    case 'mutedForeground': return p.textMuted
+    case 'label': return p.blue
+    case 'accent': return p.border
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.background
+    case 'success': return p.green
+    case 'successForeground': return p.background
+    case 'ring': case 'sidebarRing': return p.blue
+    // No external spec, no darker tone to source - sidebar repeats background.
+    case 'sidebar': return p.background
+    case 'sidebarAccent': return p.card
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+const m365PrincessLight = {
+  background: 'oklch(0.976 0.008 349.2)', card: 'oklch(0.941 0.014 343.2)', border: 'oklch(0.855 0.031 339.3)',
+  text: 'oklch(0.275 0.059 301.4)', textMuted: 'oklch(0.393 0.186 304.8)',
+  primary: 'oklch(0.506 0.171 332.8)', blue: 'oklch(0.489 0.080 242.8)', green: 'oklch(0.540 0.091 200.7)',
+  red: 'oklch(0.561 0.192 35.9)', yellow: 'oklch(0.700 0.108 50.9)',
+}
+function m365PrincessLightColor(role: CSSColorRole): string {
+  const p = m365PrincessLight
+  switch (role) {
+    case 'background': return p.background
+    case 'card': case 'popover': case 'muted': case 'input': return p.card
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'primary': case 'scrollbarThumb': return p.primary
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'secondary': case 'border': case 'sidebarBorder': return p.border
+    case 'mutedForeground': return p.textMuted
+    case 'label': return p.blue
+    case 'accent': return p.background
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.text
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.blue
+    // border is already darker than card - reusable as the sidebar anchor.
+    case 'sidebar': return p.border
+    case 'sidebarAccent': return p.card
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Nord (nordtheme.com/docs/colors-and-palettes) - full 16-tone palette.
+// ---------------------------------------------------------------------------
+
+const nord = {
+  nord0: 'oklch(0.324 0.023 264.2)', nord1: 'oklch(0.379 0.029 266.5)', nord2: 'oklch(0.416 0.032 264.1)', nord3: 'oklch(0.452 0.035 264.1)',
+  nord4: 'oklch(0.899 0.016 262.7)', nord5: 'oklch(0.933 0.010 261.8)', nord6: 'oklch(0.951 0.007 260.7)',
+  nord7: 'oklch(0.763 0.048 194.5)', nord8: 'oklch(0.775 0.062 217.5)', nord9: 'oklch(0.697 0.059 248.7)', nord10: 'oklch(0.594 0.077 254.0)',
+  nord11: 'oklch(0.606 0.121 15.3)', nord12: 'oklch(0.693 0.096 38.2)', nord13: 'oklch(0.855 0.089 84.1)', nord14: 'oklch(0.768 0.075 131.1)', nord15: 'oklch(0.692 0.062 332.7)',
+  textMuted: 'oklch(0.6251 0.0408 263.48)',
+}
+function nordColor(role: CSSColorRole): string {
+  const p = nord
+  switch (role) {
+    case 'background': return p.nord0
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.nord1
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.nord6
+    case 'primary': case 'label': case 'scrollbarThumb': return p.nord8
+    case 'primaryForeground': return p.nord0
+    case 'mutedForeground': return p.textMuted
+    case 'accent': return p.nord2
+    case 'destructive': return p.nord11
+    case 'warning': return p.nord13
+    case 'warningForeground': return p.nord0
+    case 'success': return p.nord14
+    case 'successForeground': return p.nord0
+    case 'ring': case 'sidebarRing': return p.nord9
+    // nord0 IS the darkest official Polar Night tone - no fourth tier
+    // exists below it, so sidebar repeats background.
+    case 'sidebar': return p.nord0
+    case 'sidebarAccent': return p.nord1
+    case 'sidebarPrimaryForeground': return p.nord0
+    case 'scrollbarTrack': return p.nord0
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Solarized (ethanschoonover.com/solarized) - 8 monotones + 8 accents,
+// shared between modes; only which monotone plays which role flips.
+// ---------------------------------------------------------------------------
+
+const solarized = {
+  base03: 'oklch(0.267 0.049 219.8)', base02: 'oklch(0.309 0.052 219.7)', base01: 'oklch(0.523 0.028 219.1)', base00: 'oklch(0.568 0.029 221.9)',
+  base0: 'oklch(0.654 0.020 205.3)', base1: 'oklch(0.698 0.016 196.8)', base2: 'oklch(0.931 0.026 92.4)', base3: 'oklch(0.974 0.026 90.1)',
+  yellow: 'oklch(0.654 0.134 85.7)', orange: 'oklch(0.581 0.173 39.5)', red: 'oklch(0.586 0.206 27.1)', magenta: 'oklch(0.592 0.202 355.9)',
+  violet: 'oklch(0.582 0.126 279.1)', blue: 'oklch(0.615 0.139 244.9)', cyan: 'oklch(0.644 0.102 187.4)', green: 'oklch(0.644 0.151 118.6)',
+}
+function solarizedDarkColor(role: CSSColorRole): string {
+  const p = solarized
+  switch (role) {
+    case 'background': return p.base03
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.base02
+    // Spec designates only base03/base02 as background-role tones - base01/
+    // base00/base0/base1 are content (text) tones, never backgrounds, in
+    // either mode.
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.base1
+    case 'primary': case 'scrollbarThumb': return p.yellow
+    case 'primaryForeground': return p.base03
+    // Dark mode's most-emphasized content tone is base01, not base00, per
+    // Solarized's own usage table.
+    case 'mutedForeground': return p.base01
+    // No literal swatch here clears 4.5:1 against base02/base03 - base1 is
+    // the closest real option, an inherent limit of Solarized's own
+    // deliberately low-contrast palette.
+    case 'label': return p.base1
+    case 'accent': return p.base02
+    case 'destructive': return p.red
+    case 'warning': return p.orange
+    case 'warningForeground': return p.base03
+    case 'success': return p.green
+    case 'successForeground': return p.base03
+    case 'ring': case 'sidebarRing': return p.blue
+    // base03 IS the darkest background-role tone - no fourth tier exists,
+    // so sidebar repeats background.
+    case 'sidebar': return p.base03
+    case 'sidebarAccent': return p.base02
+    case 'sidebarPrimaryForeground': return p.base03
+    case 'scrollbarTrack': return p.base03
+  }
+}
+function solarizedLightColor(role: CSSColorRole): string {
+  const p = solarized
+  switch (role) {
+    case 'background': return p.base3
+    case 'card': case 'popover': case 'muted': case 'input': return p.base2
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.base01
+    case 'primary': case 'scrollbarThumb': return p.yellow
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'secondary': case 'border': case 'sidebarBorder': return p.base2
+    // Mirror of the dark-mode fix: light mode's most-emphasized tone is
+    // base01, not base00.
+    case 'mutedForeground': return p.base1
+    // No literal swatch clears 4.5:1 against base2/base3 - base01 gets
+    // closest (4.40:1), an inherent limit of Solarized's own palette.
+    case 'label': return p.base01
+    case 'accent': return p.base2
+    case 'destructive': return p.red
+    case 'warning': return p.orange
+    case 'warningForeground': return p.base01
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.blue
+    // border/card share base2 here (no distinct real border swatch below
+    // it), so sidebar repeats it too - base3 is lighter, the wrong direction.
+    case 'sidebar': return p.base2
+    case 'sidebarAccent': return p.base3
+    case 'sidebarPrimaryForeground': return p.base3
+    case 'scrollbarTrack': return p.base3
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tokyo Night (tokyo-night/tokyo-night-vscode-theme + terminalcolors.com) -
+// dark ("Night") variant verified; Light/"Day" variant not independently
+// confirmed this session, so it stays close to its prior hand-tuned values.
+// ---------------------------------------------------------------------------
+
+const tokyoNight = {
+  bgDark: 'oklch(0.204 0.016 284.9)', bg: 'oklch(0.226 0.021 280.5)', bgHighlight: 'oklch(0.306 0.037 273.2)',
+  sidebarBg: 'oklch(0.261 0.034 274.2)', border: 'oklch(0.387 0.054 273.9)',
+  fg: 'oklch(0.846 0.061 274.8)', comment: 'oklch(0.5890 0.0618 276.63)',
+  red: 'oklch(0.723 0.159 10.3)', green: 'oklch(0.795 0.139 130.1)', yellow: 'oklch(0.784 0.106 75.4)',
+  blue: 'oklch(0.719 0.132 264.2)', magenta: 'oklch(0.751 0.134 299.5)', cyan: 'oklch(0.7537 0.1243 213.18)', white: 'oklch(0.767 0.054 275.5)',
+}
+function tokyoNightColor(role: CSSColorRole): string {
+  const p = tokyoNight
+  switch (role) {
+    case 'background': return p.bg
+    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.bgHighlight
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
+    case 'primary': case 'label': case 'scrollbarThumb': return p.blue
+    case 'primaryForeground': return p.bg
+    case 'mutedForeground': return p.comment
+    case 'accent': return p.sidebarBg
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.bg
+    case 'success': return p.green
+    case 'successForeground': return p.bg
+    case 'ring': case 'sidebarRing': return p.cyan
+    // Real "bg_dark" - tokyonight's own even-darker background variant,
+    // giving a genuine tier below the true "bg".
+    case 'sidebar': return p.bgDark
+    case 'sidebarAccent': return p.bg
+    case 'sidebarPrimaryForeground': return p.bg
+    case 'scrollbarTrack': return p.bg
+  }
+}
+
+const tokyoNightLight = {
+  background: 'oklch(0.877 0.007 277.2)', card: 'oklch(0.846 0.007 277.1)', border: 'oklch(0.774 0.006 274.9)',
+  text: 'oklch(0.359 0.051 273.2)', textMuted: 'oklch(0.6837 0.0150 272.60)',
+  primary: 'oklch(0.448 0.097 260.3)', blue: 'oklch(0.474 0.076 212.3)', green: 'oklch(0.452 0.074 129.9)',
+  red: 'oklch(0.480 0.100 9.5)', yellow: 'oklch(0.523 0.104 71.0)',
+}
+function tokyoNightLightColor(role: CSSColorRole): string {
+  const p = tokyoNightLight
+  switch (role) {
+    case 'background': return p.background
+    case 'card': case 'popover': case 'muted': case 'input': return p.card
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'primary': case 'label': case 'scrollbarThumb': return p.primary
+    case 'primaryForeground': case 'destructiveForeground': return WHITE
+    case 'secondary': case 'border': case 'sidebarBorder': return p.border
+    case 'mutedForeground': return p.textMuted
+    case 'accent': return p.background
+    case 'destructive': return p.red
+    case 'warning': return p.yellow
+    case 'warningForeground': return p.text
+    case 'success': return p.green
+    case 'successForeground': return WHITE
+    case 'ring': case 'sidebarRing': return p.blue
+    // No confidently-sourced extra tier for the Storm/Day light variant -
+    // border is already darker than card, reused as the sidebar anchor.
+    case 'sidebar': return p.border
+    case 'sidebarAccent': return p.card
+    case 'sidebarPrimaryForeground': return p.background
+    case 'scrollbarTrack': return p.background
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 export const themePresets: ThemePreset[] = [
-  {
-    // This app's own default palette (app.css :root), picking it is an
-    // identity operation, not a real skin swap.
-    // Verbatim from admin-client's themes.ts, its "mountOS Light/Dark"
-    // presets are NOT the same as its own app.css base tokens (confirmed by
-    // direct comparison: base .dark background is L 0.07, this preset is L
-    // 0.239), so matching admin-client requires copying these preset values
-    // exactly rather than substituting this app's own base tokens as an
-    // "identity" skin, that substitution was the bug (gui rendered
-    // noticeably darker than admin-client's actual default).
-    name: 'mountOS Light',
-    family: '',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.976 0.012 91.5)',
-      cardBg: 'oklch(0.958 0.018 92.7)',
-      textPrimary: 'oklch(0.203 0.010 67.2)',
-      textSecondary: 'oklch(0.493 0.025 69.4)',
-      primary: 'oklch(0.573 0.112 39.3)',
-      accentBlue: 'oklch(0.592 0.124 249.3)',
-      accentGreen: 'oklch(0.577 0.109 154.8)',
-      dangerRed: 'oklch(0.505 0.167 30.7)',
-      warningYellow: 'oklch(0.566 0.106 75.3)',
-      border: 'oklch(0.883 0.017 88.0)',
-      labelForeground: 'oklch(0.203 0.010 67.2)',
-      surfaceRaised: 'oklch(0.916 0.012 91.5)',
-    },
-  },
-  {
-    name: 'mountOS Dark',
-    family: '',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.239 0 89.9)',
-      cardBg: 'oklch(0.213 0 89.9)',
-      textPrimary: 'oklch(0.961 0 89.9)',
-      textSecondary: 'oklch(0.640 0 89.9)',
-      primary: 'oklch(0.739 0.111 91.7)',
-      accentBlue: 'oklch(0.728 0.119 233.6)',
-      accentGreen: 'oklch(0.761 0.135 163.3)',
-      dangerRed: 'oklch(0.606 0.110 25.1)',
-      warningYellow: 'oklch(0.818 0.137 90.0)',
-      border: 'oklch(0.321 0 89.9)',
-      labelForeground: 'oklch(0.728 0.119 233.6)',
-      surfaceRaised: 'oklch(0.299 0 89.9)',
-    },
-  },
-  {
-    name: 'Catppuccin Latte',
-    family: 'Catppuccin',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.958 0.006 264.5)',
-      // Real "surface0" #ccd0da (same value already correctly used for
-      // border below; cardBg was too close to background to read as a
-      // distinct surface).
-      cardBg: 'oklch(0.857 0.014 268.5)',
-      textPrimary: 'oklch(0.435 0.043 279.3)',
-      textSecondary: 'oklch(0.547 0.034 279.1)',
-      primary: 'oklch(0.555 0.250 297.0)',
-      accentBlue: 'oklch(0.559 0.226 262.1)',
-      accentGreen: 'oklch(0.625 0.177 140.4)',
-      dangerRed: 'oklch(0.5505 0.2155 19.81)',
-      warningYellow: 'oklch(0.7140 0.1494 67.78)',
-      border: 'oklch(0.857 0.014 268.5)',
-      labelForeground: 'oklch(0.435 0.043 279.3)',
-      // Real "surface1"/"surface2" #bcc0cc / #acb0be.
-      surfaceRaised: 'oklch(0.808 0.017 271.2)',
-    },
-  },
-  {
-    name: 'Catppuccin Mocha',
-    family: 'Catppuccin',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.243 0.030 283.9)',
-      // Real "surface0" #313244 (border already had this right; cardBg was
-      // a separately fabricated, too-dark value that doesn't exist in the
-      // published Catppuccin Mocha palette).
-      cardBg: 'oklch(0.324 0.032 282.0)',
-      textPrimary: 'oklch(0.879 0.043 272.3)',
-      textSecondary: 'oklch(0.550 0.034 277.1)',
-      primary: 'oklch(0.787 0.119 304.8)',
-      accentBlue: 'oklch(0.766 0.111 259.9)',
-      accentGreen: 'oklch(0.858 0.109 142.7)',
-      dangerRed: 'oklch(0.756 0.130 2.8)',
-      warningYellow: 'oklch(0.919 0.070 86.5)',
-      border: 'oklch(0.324 0.032 282.0)',
-      labelForeground: 'oklch(0.766 0.111 259.9)',
-      // Real "surface1"/"surface2" #45475a / #585b70.
-      surfaceRaised: 'oklch(0.404 0.032 280.2)',
-    },
-  },
-  {
-    name: 'Dracula',
-    family: 'Dracula',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.288 0.022 277.5)',
-      // Real "Selection" #44475a per draculatheme.com/spec (same value
-      // already correctly used for border below; cardBg was a separately
-      // fabricated, too-dark value).
-      cardBg: 'oklch(0.403 0.032 277.8)',
-      textPrimary: 'oklch(0.977 0.008 106.5)',
-      textSecondary: 'oklch(0.560 0.080 270.1)',
-      primary: 'oklch(0.742 0.149 301.9)',
-      accentBlue: 'oklch(0.8826 0.0934 212.85)',
-      accentGreen: 'oklch(0.871 0.220 148.0)',
-      dangerRed: 'oklch(0.682 0.206 24.4)',
-      warningYellow: 'oklch(0.955 0.134 112.8)',
-      border: 'oklch(0.403 0.032 277.8)',
-      labelForeground: 'oklch(0.8826 0.0934 212.85)',
-      // Dracula's real spec has only 3 non-accent tones (Background,
-      // Selection, Comment/Current Line) - all already in use above, so no
-      // further real tier exists; repeats cardBg/border rather than invent one.
-      surfaceRaised: 'oklch(0.403 0.032 277.8)',
-    },
-  },
-  {
-    // Alucard: official Dracula light variant (https://draculatheme.com)
-    name: 'Alucard',
-    family: 'Dracula',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.9869 0.0214 95.28)',
-      cardBg: 'oklch(0.9649 0.0214 95.28)',
-      textPrimary: 'oklch(0.2393 0.0000 89.88)',
-      textSecondary: 'oklch(0.5084 0.0410 97.06)',
-      primary: 'oklch(0.5091 0.1878 287.15)',
-      accentBlue: 'oklch(0.4961 0.1061 236.17)',
-      accentGreen: 'oklch(0.4784 0.1547 141.90)',
-      dangerRed: 'oklch(0.5632 0.1844 30.08)',
-      warningYellow: 'oklch(0.5440 0.1044 93.88)',
-      border: 'oklch(0.8590 0.0206 285.96)',
-      labelForeground: 'oklch(0.4961 0.1061 236.17)',
-      // Alucard's real spec has only Background/Selection/Comment as
-      // non-accent tones, both already in use above; repeats them.
-      surfaceRaised: 'oklch(0.9649 0.0214 95.28)',
-    },
-  },
-  {
-    name: 'Gruvbox Dark',
-    family: 'Gruvbox',
-    mode: 'dark',
-    colors: {
-      // Real bg0 #282828 (the stored value had drifted to a Solarized-hued
-      // 219.7deg that doesn't exist anywhere in Gruvbox's own palette;
-      // cardBg/border below were each one rung too dark as a result — bg0
-      // was squatting in cardBg's slot, bg1 in border's).
-      background: 'oklch(0.277 0 89.9)',
-      cardBg: 'oklch(0.344 0.007 48.5)',
-      textPrimary: 'oklch(0.894 0.057 89.2)',
-      textSecondary: 'oklch(0.619 0.029 67.3)',
-      primary: 'oklch(0.725 0.143 77.7)',
-      accentBlue: 'oklch(0.576 0.066 199.5)',
-      accentGreen: 'oklch(0.656 0.135 109.1)',
-      dangerRed: 'oklch(0.546 0.203 28.7)',
-      warningYellow: 'oklch(0.622 0.171 45.8)',
-      border: 'oklch(0.411 0.012 51.9)',
-      labelForeground: 'oklch(0.725 0.143 77.7)',
-      // Real "bg3"/"bg4" #665c54 / #7c6f64 - Gruvbox's own background ramp
-      // goes to bg4, giving genuine extra elevation tiers past border/bg2.
-      surfaceRaised: 'oklch(0.482 0.018 61.0)',
-    },
-  },
-  {
-    name: 'Gruvbox Light',
-    family: 'Gruvbox',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.956 0.055 96.2)',
-      cardBg: 'oklch(0.922 0.055 92.5)',
-      textPrimary: 'oklch(0.344 0.007 48.5)',
-      textSecondary: 'oklch(0.619 0.029 67.3)',
-      primary: 'oklch(0.725 0.143 77.7)',
-      accentBlue: 'oklch(0.576 0.066 199.5)',
-      accentGreen: 'oklch(0.656 0.135 109.1)',
-      dangerRed: 'oklch(0.546 0.203 28.7)',
-      warningYellow: 'oklch(0.622 0.171 45.8)',
-      border: 'oklch(0.825 0.051 85.1)',
-      labelForeground: 'oklch(0.344 0.007 48.5)',
-      // Real "light3"/"light4" #bdae93 / #a89984.
-      surfaceRaised: 'oklch(0.756 0.041 82.3)',
-    },
-  },
-  {
-    name: 'M365 Princess Dark',
-    family: 'M365 Princess',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.236 0.034 293.8)',
-      cardBg: 'oklch(0.284 0.051 291.0)',
-      textPrimary: 'oklch(0.948 0.011 308.3)',
-      textSecondary: 'oklch(0.624 0.036 298.7)',
-      primary: 'oklch(0.506 0.171 332.8)',
-      accentBlue: 'oklch(0.765 0.069 232.8)',
-      accentGreen: 'oklch(0.730 0.112 188.3)',
-      dangerRed: 'oklch(0.650 0.152 8.3)',
-      warningYellow: 'oklch(0.792 0.119 42.3)',
-      border: 'oklch(0.354 0.054 293.9)',
-      labelForeground: 'oklch(0.765 0.069 232.8)',
-      // No published external spec for this preset (mountOS-original, not a
-      // real third-party theme) - repeats cardBg/border rather than invent.
-      surfaceRaised: 'oklch(0.284 0.051 291.0)',
-    },
-  },
-  {
-    name: 'M365 Princess Light',
-    family: 'M365 Princess',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.976 0.008 349.2)',
-      cardBg: 'oklch(0.941 0.014 343.2)',
-      textPrimary: 'oklch(0.275 0.059 301.4)',
-      textSecondary: 'oklch(0.393 0.186 304.8)',
-      primary: 'oklch(0.506 0.171 332.8)',
-      accentBlue: 'oklch(0.489 0.080 242.8)',
-      accentGreen: 'oklch(0.540 0.091 200.7)',
-      dangerRed: 'oklch(0.561 0.192 35.9)',
-      warningYellow: 'oklch(0.700 0.108 50.9)',
-      border: 'oklch(0.855 0.031 339.3)',
-      labelForeground: 'oklch(0.489 0.080 242.8)',
-      surfaceRaised: 'oklch(0.941 0.014 343.2)',
-    },
-  },
-  {
-    name: 'Nord',
-    family: '',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.324 0.023 264.2)',
-      cardBg: 'oklch(0.379 0.029 266.5)',
-      textPrimary: 'oklch(0.951 0.007 260.7)',
-      textSecondary: 'oklch(0.6251 0.0408 263.48)',
-      primary: 'oklch(0.775 0.062 217.5)',
-      accentBlue: 'oklch(0.697 0.059 248.7)',
-      accentGreen: 'oklch(0.768 0.075 131.1)',
-      dangerRed: 'oklch(0.606 0.121 15.3)',
-      warningYellow: 'oklch(0.855 0.089 84.1)',
-      border: 'oklch(0.416 0.032 264.1)',
-      labelForeground: 'oklch(0.775 0.062 217.5)',
-      // Real "nord2" (border, repeated) / "nord3" #4C566A - the lightest of
-      // Nord's 4 official Polar Night tones, one genuine tier past border.
-      surfaceRaised: 'oklch(0.416 0.032 264.1)',
-    },
-  },
-  {
-    name: 'Solarized Dark',
-    family: 'Solarized',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.267 0.049 219.8)',
-      cardBg: 'oklch(0.309 0.052 219.7)',
-      // Solarized's own usage table orders content tones by emphasis, and
-      // that order flips per mode: dark mode's most-emphasized tone is base1
-      // (#93a1a1), not base0 (#839496) - base0 is one rung down. The old
-      // value undershot WCAG AA against cardBg (4.12:1); base1 clears it
-      // (4.87:1).
-      textPrimary: 'oklch(0.698 0.016 196.8)',
-      textSecondary: 'oklch(0.523 0.028 219.1)',
-      primary: 'oklch(0.654 0.134 85.7)',
-      accentBlue: 'oklch(0.615 0.139 244.9)',
-      accentGreen: 'oklch(0.644 0.151 118.6)',
-      dangerRed: 'oklch(0.586 0.206 27.1)',
-      warningYellow: 'oklch(0.581 0.173 39.5)',
-      border: 'oklch(0.372 0.063 217.5)',
-      labelForeground: 'oklch(0.698 0.016 196.8)',
-      // Solarized's spec designates only base03/02 as background-role tones
-      // (dark mode) - both already in use above; base01/00 are content
-      // (text) tones, not backgrounds, so no further surface tier exists
-      // without misusing a role Solarized itself doesn't assign that way.
-      surfaceRaised: 'oklch(0.309 0.052 219.7)',
-    },
-  },
-  {
-    name: 'Solarized Light',
-    family: 'Solarized',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.974 0.026 90.1)',
-      cardBg: 'oklch(0.931 0.026 92.4)',
-      // Mirror of the dark-mode fix: light mode's most-emphasized tone is
-      // base01 (#586e75), not base00 (#657b83). Old value undershot WCAG AA
-      // against cardBg (3.64:1); base01 gets much closer (4.40:1).
-      textPrimary: 'oklch(0.523 0.028 219.1)',
-      textSecondary: 'oklch(0.698 0.016 196.8)',
-      primary: 'oklch(0.654 0.134 85.7)',
-      accentBlue: 'oklch(0.615 0.139 244.9)',
-      accentGreen: 'oklch(0.644 0.151 118.6)',
-      dangerRed: 'oklch(0.586 0.206 27.1)',
-      warningYellow: 'oklch(0.581 0.173 39.5)',
-      border: 'oklch(0.876 0.029 91.7)',
-      // No literal swatch in Solarized Light clears 4.5:1 against cardBg,
-      // not even textPrimary (4.40:1) - this is the best real option, an
-      // inherent limit of Solarized's own deliberately low-contrast palette.
-      labelForeground: 'oklch(0.523 0.028 219.1)',
-      surfaceRaised: 'oklch(0.931 0.026 92.4)',
-    },
-  },
-  {
-    name: 'Tokyo Night',
-    family: 'Tokyo Night',
-    mode: 'dark',
-    colors: {
-      background: 'oklch(0.226 0.021 280.5)',
-      cardBg: 'oklch(0.282 0.036 274.7)',
-      textPrimary: 'oklch(0.846 0.061 274.8)',
-      textSecondary: 'oklch(0.5890 0.0618 276.63)',
-      primary: 'oklch(0.719 0.132 264.2)',
-      accentBlue: 'oklch(0.7537 0.1243 213.18)',
-      accentGreen: 'oklch(0.795 0.139 130.1)',
-      dangerRed: 'oklch(0.723 0.159 10.3)',
-      warningYellow: 'oklch(0.784 0.106 75.4)',
-      border: 'oklch(0.387 0.054 273.9)',
-      labelForeground: 'oklch(0.719 0.132 264.2)',
-      // Real sidebar/status-bar bg #1f2335 and line-highlight bg #292e42 -
-      // two genuine extra tiers from tokyonight's own extended UI palette.
-      surfaceRaised: 'oklch(0.261 0.034 274.2)',
-    },
-  },
-  {
-    name: 'Tokyo Night Light',
-    family: 'Tokyo Night',
-    mode: 'light',
-    colors: {
-      background: 'oklch(0.877 0.007 277.2)',
-      cardBg: 'oklch(0.846 0.007 277.1)',
-      textPrimary: 'oklch(0.359 0.051 273.2)',
-      textSecondary: 'oklch(0.6837 0.0150 272.60)',
-      primary: 'oklch(0.448 0.097 260.3)',
-      accentBlue: 'oklch(0.474 0.076 212.3)',
-      accentGreen: 'oklch(0.452 0.074 129.9)',
-      dangerRed: 'oklch(0.480 0.100 9.5)',
-      warningYellow: 'oklch(0.523 0.104 71.0)',
-      border: 'oklch(0.774 0.006 274.9)',
-      labelForeground: 'oklch(0.448 0.097 260.3)',
-      // No confidently-sourced extra tier for the Storm/Day light variant;
-      // repeats cardBg/border rather than invent one.
-      surfaceRaised: 'oklch(0.846 0.007 277.1)',
-    },
-  },
+  { name: 'mountOS Light', family: '', mode: 'light', color: mountOSLightColor },
+  { name: 'mountOS Dark', family: '', mode: 'dark', color: mountOSDarkColor },
+  { name: 'Catppuccin Latte', family: 'Catppuccin', mode: 'light', color: catppuccinLatteColor },
+  { name: 'Catppuccin Mocha', family: 'Catppuccin', mode: 'dark', color: catppuccinMochaColor },
+  { name: 'Dracula', family: 'Dracula', mode: 'dark', color: draculaColor },
+  // Alucard: official Dracula light variant (https://draculatheme.com)
+  { name: 'Alucard', family: 'Dracula', mode: 'light', color: alucardColor },
+  { name: 'Gruvbox Dark', family: 'Gruvbox', mode: 'dark', color: gruvboxDarkColor },
+  { name: 'Gruvbox Light', family: 'Gruvbox', mode: 'light', color: gruvboxLightColor },
+  { name: 'M365 Princess Dark', family: 'M365 Princess', mode: 'dark', color: m365PrincessDarkColor },
+  { name: 'M365 Princess Light', family: 'M365 Princess', mode: 'light', color: m365PrincessLightColor },
+  { name: 'Nord', family: '', mode: 'dark', color: nordColor },
+  { name: 'Solarized Dark', family: 'Solarized', mode: 'dark', color: solarizedDarkColor },
+  { name: 'Solarized Light', family: 'Solarized', mode: 'light', color: solarizedLightColor },
+  { name: 'Tokyo Night', family: 'Tokyo Night', mode: 'dark', color: tokyoNightColor },
+  { name: 'Tokyo Night Light', family: 'Tokyo Night', mode: 'light', color: tokyoNightLightColor },
 ]
 
 export function presetsForMode(mode: SkinMode): ThemePreset[] {
@@ -402,50 +708,14 @@ export function familyVariant(name: string, targetMode: SkinMode): ThemePreset |
   return themePresets.find((p) => p.family === current.family && p.mode === targetMode)
 }
 
-export function applySkin(colors: SkinColors, mode: SkinMode) {
-  const el = document.documentElement
-  const s = el.style
-  s.setProperty('--background', colors.background)
-  s.setProperty('--foreground', colors.textPrimary)
-  s.setProperty('--card', colors.cardBg)
-  s.setProperty('--card-foreground', colors.textPrimary)
-  s.setProperty('--popover', colors.cardBg)
-  s.setProperty('--popover-foreground', colors.textPrimary)
-  s.setProperty('--primary', colors.primary)
-  s.setProperty('--primary-foreground', mode === 'dark' ? colors.background : WHITE)
-  // Surface elevation ladder: literal swatches from the theme's own palette
-  // (cardBg < surfaceRaised < border), never computed.
-  s.setProperty('--secondary', colors.border)
-  s.setProperty('--secondary-foreground', colors.textPrimary)
-  s.setProperty('--muted', colors.cardBg)
-  s.setProperty('--muted-foreground', colors.textSecondary)
-  // Brighter sibling of muted for structural labels (mono-label, table
-  // headers) so they stay legible while muted stays reserved for de-emphasis.
-  s.setProperty('--label-foreground', colors.labelForeground)
-  s.setProperty('--accent', colors.surfaceRaised)
-  s.setProperty('--accent-foreground', colors.textPrimary)
-  s.setProperty('--destructive', colors.dangerRed)
-  s.setProperty('--destructive-foreground', WHITE)
-  s.setProperty('--warning', colors.warningYellow)
-  s.setProperty('--success', colors.accentGreen)
-  s.setProperty('--border', colors.border)
-  s.setProperty('--input', mode === 'dark' ? colors.background : colors.cardBg)
-  // The theme's second accent (its real cyan/frost-blue/sapphire, not the
-  // signature primary) - matches how these themes actually use two blues:
-  // one for the brand accent, one for focus/selection.
-  s.setProperty('--ring', colors.accentBlue)
-  s.setProperty('--scrollbar-thumb', colors.primary)
+export function applySkin(preset: ThemePreset) {
+  const s = document.documentElement.style
+  for (const role of Object.keys(CSS_VAR_NAMES) as CSSColorRole[]) {
+    s.setProperty(CSS_VAR_NAMES[role], preset.color(role))
+  }
 }
 
 export function clearSkin() {
-  const el = document.documentElement
-  const props = [
-    '--background', '--foreground', '--card', '--card-foreground',
-    '--popover', '--popover-foreground', '--primary', '--primary-foreground',
-    '--secondary', '--secondary-foreground', '--muted', '--muted-foreground',
-    '--label-foreground', '--accent', '--accent-foreground', '--destructive',
-    '--destructive-foreground', '--warning', '--success', '--border',
-    '--input', '--ring', '--scrollbar-thumb',
-  ]
-  props.forEach((p) => el.style.removeProperty(p))
+  const s = document.documentElement.style
+  Object.values(CSS_VAR_NAMES).forEach((cssVar) => s.removeProperty(cssVar))
 }

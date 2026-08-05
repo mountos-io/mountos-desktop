@@ -43,6 +43,7 @@
     copyUploadJobLogPath,
     enterUploadCreate,
     exitUploadCreate,
+    isExternalUploadSource,
     openUploadJobLog,
     requestUploadPrune,
     requestUploadResume,
@@ -244,8 +245,13 @@
         <div class="grid gap-1.5">
           <Label for="upload-source">Source folder</Label>
           <div class="flex gap-2">
-            <Input id="upload-source" bind:value={appState.uploadSource} placeholder="/local/photos" class="flex-1" />
-            <Button type="button" onclick={browseUploadSource} disabled={appState.uploadsBusy} class="shrink-0">
+            <Input
+              id="upload-source"
+              bind:value={appState.uploadSource}
+              placeholder="/local/photos or s3://bucket/prefix"
+              class="flex-1"
+            />
+            <Button type="button" onclick={browseUploadSource} disabled={appState.uploadsBusy || isExternalUploadSource()} class="shrink-0">
               <FolderOpen size={16} aria-hidden="true" /> Browse
             </Button>
           </div>
@@ -253,6 +259,57 @@
             <small class="text-destructive text-sm">{appState.uploadSourceError}</small>
           {/if}
         </div>
+
+        {#if isExternalUploadSource()}
+          <div class="grid gap-3 border border-border/40 p-3">
+            <p class="text-muted-foreground text-sm">
+              Object storage source (<code>s3://</code>, <code>az://</code>/<code>azblob://</code>, or
+              <code>gs://</code>) -- credentials below are never written to the command line.
+            </p>
+            <div class="grid gap-1.5">
+              <Label for="upload-source-provider">Provider</Label>
+              <Input
+                id="upload-source-provider"
+                bind:value={appState.uploadSourceProvider}
+                placeholder="s3, s3compatible, backblaze, wasabi, cloudflare, azure, gcs, ..."
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="grid gap-1.5">
+                <Label for="upload-source-endpoint">Endpoint</Label>
+                <Input id="upload-source-endpoint" bind:value={appState.uploadSourceEndpoint} placeholder="required for s3compatible" />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="upload-source-region">Region</Label>
+                <Input id="upload-source-region" bind:value={appState.uploadSourceRegion} />
+              </div>
+            </div>
+            {#if appState.uploadSourceProvider.trim() === 'azure'}
+              <div class="grid gap-1.5">
+                <Label for="upload-source-account">Storage account name</Label>
+                <Input id="upload-source-account" bind:value={appState.uploadSourceAccount} />
+              </div>
+            {:else}
+              <div class="grid gap-1.5">
+                <Label for="upload-source-access-key-id">Access key id</Label>
+                <Input id="upload-source-access-key-id" bind:value={appState.uploadSourceAccessKeyId} autocomplete="off" />
+              </div>
+            {/if}
+            <div class="grid gap-1.5">
+              <Label for="upload-source-secret">
+                {appState.uploadSourceProvider.trim() === 'gcs' ? 'Service-account key (JSON)' : 'Secret access key'}
+              </Label>
+              {#if appState.uploadSourceProvider.trim() === 'gcs'}
+                <Textarea id="upload-source-secret" bind:value={appState.uploadSourceSecretValue} rows={4} placeholder={'{"type": "service_account", ...}'} />
+              {:else}
+                <Input id="upload-source-secret" type="password" bind:value={appState.uploadSourceSecretValue} autocomplete="off" />
+              {/if}
+              <small class="text-muted-foreground text-xs">
+                Written to a private, single-use file the mountos CLI reads once and deletes immediately -- never passed as a command-line value.
+              </small>
+            </div>
+          </div>
+        {/if}
 
         <div class="grid gap-1.5">
           <Label for="upload-dest">Destination path</Label>

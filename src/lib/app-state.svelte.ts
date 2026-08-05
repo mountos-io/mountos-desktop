@@ -29,6 +29,7 @@ import {
   errorClassLabel,
   isAbsolutePath,
   isValidFolderName,
+  looksLikeSourceUri,
   parseArgvInput,
   validateExtraArgs,
   validateGlobPattern,
@@ -400,6 +401,20 @@ const state = $state({
   uploadExcludeText: '',
   uploadFollowSymlinks: false,
   uploadCreateSourceDirectory: false,
+  // Shown only when uploadSource looks like an object-store URI (isExternalUploadSource
+  // below) -- the mountos CLI auto-detects the same way from the SOURCE
+  // argument's scheme, this just mirrors that detection in the form instead
+  // of a separate source-kind toggle. uploadSourceSecretValue is a
+  // plaintext secret held only in memory for the duration of this start
+  // call (see runUploadStart: passed straight to startUpload, never
+  // persisted, never logged) -- Rust writes it to a private temp file and
+  // the CLI unlinks that file itself immediately after reading it.
+  uploadSourceProvider: '',
+  uploadSourceEndpoint: '',
+  uploadSourceRegion: '',
+  uploadSourceAccount: '',
+  uploadSourceAccessKeyId: '',
+  uploadSourceSecretValue: '',
   uploadStartSecretValue: '',
   uploadStartError: '',
   uploadBrowseError: '',
@@ -873,10 +888,24 @@ const uploadPreviewProfile = $derived.by((): MountProfile | null => {
   }
 })
 
+// isExternalUploadSource mirrors the mountos CLI's own SOURCE auto-detection
+// (looksLikeSourceUri === uploadjob.LooksLikeURI server-side): the object-
+// store fields only make sense, and only render, when the typed/pasted
+// Source looks like a "scheme://..." URI.
+export function isExternalUploadSource(): boolean {
+  return looksLikeSourceUri(state.uploadSource.trim())
+}
+
 const uploadCommandText = $derived.by(() => {
   const profile = uploadPreviewProfile
   if (!profile || !state.uploadSource.trim() || !state.uploadDest.trim()) return ''
-  return `mountos ${buildUploadStartArgv(profile, state.uploadSource.trim(), state.uploadDest.trim(), uploadStartParams()).join(' ')}`
+  // A real secret is never written to a temp file just to render this
+  // preview -- the placeholder makes clear a real run substitutes an actual
+  // path, matching this app's existing "show the exact command, never a
+  // secret value" convention (see cli.ts's own doc comments elsewhere on
+  // never letting secrets reach argv/preview text).
+  const sourceSecretFile = isExternalUploadSource() && state.uploadSourceSecretValue ? '<temp-file-written-at-start>' : undefined
+  return `mountos ${buildUploadStartArgv(profile, state.uploadSource.trim(), state.uploadDest.trim(), uploadStartParams(), sourceSecretFile).join(' ')}`
 })
 
 // Sidebar badge count, lazily updated (whatever `uploads` last held from
@@ -1788,6 +1817,15 @@ export function uploadStartParams(): UploadStartParams {
     exclude: splitGlobLines(state.uploadExcludeText),
     followSymlinks: state.uploadFollowSymlinks,
     createSourceDirectory: state.uploadCreateSourceDirectory,
+    // Only meaningful (and only rendered in the form) for a URI Source --
+    // isExternalUploadSource gates whether these are ever non-empty in
+    // practice, but they're harmless to include unconditionally since
+    // buildUploadStartArgv already skips blank values.
+    sourceProvider: state.uploadSourceProvider.trim() || undefined,
+    sourceEndpoint: state.uploadSourceEndpoint.trim() || undefined,
+    sourceRegion: state.uploadSourceRegion.trim() || undefined,
+    sourceAccount: state.uploadSourceAccount.trim() || undefined,
+    sourceAccessKeyId: state.uploadSourceAccessKeyId.trim() || undefined,
   }
 }
 
@@ -1818,11 +1856,21 @@ export async function runUploadStart() {
     state.uploadStartError = globError
     return
   }
+  // gcs mirrors the CLI's own gate (resolveSourceCredential, mountos-
+  // servers): its service-account key is a JSON blob, never something to
+  // type into a password field, so this app only ever supplies it via the
+  // temp-file handoff -- caught here with an actionable message instead of
+  // a cryptic CLI failure after the process has already been spawned.
+  if (isExternalUploadSource() && state.uploadSourceProvider.trim() === 'gcs' && !state.uploadSourceSecretValue) {
+    state.uploadStartError = 'gcs requires a service-account key file -- paste its JSON content into the source secret field'
+    return
+  }
   state.uploadsBusy = true
   state.uploadStartError = ''
   state.uploadDryRunReport = ''
   try {
-    const result = await startUpload(profileId, instance, source, dest, uploadStartParams(), state.uploadStartSecretValue || undefined)
+    const sourceSecret = isExternalUploadSource() ? state.uploadSourceSecretValue || undefined : undefined
+    const result = await startUpload(profileId, instance, source, dest, uploadStartParams(), state.uploadStartSecretValue || undefined, sourceSecret)
     if (state.uploadDryRun) {
       state.uploadDryRunReport = result
     } else {

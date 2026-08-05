@@ -227,7 +227,7 @@
   class="grid h-full bg-background text-foreground transition-[grid-template-columns] duration-200 ease-out"
   style:grid-template-columns={appState.sidebarCollapsed ? '4.5rem minmax(0,1fr)' : '14.5rem minmax(0,1fr)'}
 >
-  <aside class="flex min-h-full flex-col overflow-hidden border-r border-border bg-card">
+  <aside class="flex min-h-full flex-col overflow-hidden border-r border-sidebar-border bg-sidebar">
     <div
       class={cn(
         'relative flex items-center gap-3 px-4 pb-4.5',
@@ -249,9 +249,9 @@
       {#each visibleNavItems as item}
         <button
           class={cn(
-            'flex items-center gap-2.5 border border-transparent px-3 py-2 text-left text-foreground/80 outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+            'flex items-center gap-2.5 border border-transparent px-3 py-2 text-left text-sidebar-foreground/80 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring',
             appState.sidebarCollapsed && 'justify-center px-0',
-            appState.view === item.id && 'bg-accent text-foreground',
+            appState.view === item.id && 'bg-sidebar-accent text-sidebar-accent-foreground',
           )}
           type="button"
           title={appState.sidebarCollapsed ? item.label : undefined}
@@ -292,7 +292,7 @@
 
     <button
       class={cn(
-        'mt-auto flex items-center gap-2.5 border-t border-border px-4 py-3 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
+        'mt-auto flex items-center gap-2.5 border-t border-sidebar-border px-4 py-3 text-left text-sidebar-foreground outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring',
         appState.sidebarCollapsed && 'justify-center px-0',
       )}
       type="button"
