@@ -180,31 +180,38 @@ const catppuccinLatte = {
   blue: 'oklch(0.559 0.226 262.1)', lavender: 'oklch(0.664 0.175 273.1)',
   text: 'oklch(0.435 0.043 279.3)', subtext1: 'oklch(0.492 0.038 279.3)', subtext0: 'oklch(0.547 0.034 279.1)',
   overlay2: 'oklch(0.601 0.030 278.7)', overlay1: 'oklch(0.654 0.027 278.1)', overlay0: 'oklch(0.708 0.024 274.6)',
-  surface2: 'oklch(0.758 0.020 273.2)', surface1: 'oklch(0.808 0.017 271.2)', surface0: 'oklch(0.857 0.014 268.5)',
+  surface2: 'oklch(0.81 0.02 273.2)', surface1: 'oklch(0.808 0.017 271.2)', surface0: 'oklch(0.91 0.01 268.5)',
   base: 'oklch(0.958 0.006 264.5)', mantle: 'oklch(0.933 0.009 264.5)', crust: 'oklch(0.906 0.012 264.5)',
 }
 function catppuccinLatteColor(role: CSSColorRole): string {
   const p = catppuccinLatte
   switch (role) {
     case 'background': return p.base
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.surface0
+    case 'card': case 'popover': case 'muted': case 'input': return p.surface0
+    // Real surface1 - genuinely one tier darker than surface0/card, so the
+    // border reads as a distinct line instead of colliding with card's own
+    // fill (both were surface0 before).
+    case 'secondary': case 'border': case 'sidebarBorder': return p.surface1
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
     case 'primary': case 'scrollbarThumb': return p.mauve
     case 'primaryForeground': case 'destructiveForeground': return WHITE
     case 'mutedForeground': return p.subtext0
     case 'label': return p.text
-    case 'accent': return p.surface1
+    case 'accent': return p.surface2
     case 'destructive': return p.red
     case 'warning': return p.yellow
     case 'warningForeground': return p.text
     case 'success': return p.green
     case 'successForeground': return WHITE
     case 'ring': case 'sidebarRing': return p.blue
-    // Real "crust"/"mantle" - genuinely darker than base, a real recessed
-    // tier Catppuccin's own spec provides, unlike most other themes here.
+    // Real "crust" - genuinely darker than base, a real recessed tier
+    // Catppuccin's own spec provides, unlike most other themes here.
+    // sidebarAccent uses base (not the neighboring mantle, only 0.027
+    // apart from crust) so the active/hover state reads as clearly
+    // distinct rather than a barely-perceptible shift.
     case 'sidebar': return p.crust
-    case 'sidebarAccent': return p.mantle
+    case 'sidebarAccent': return p.base
     case 'sidebarPrimaryForeground': return p.base
     case 'scrollbarTrack': return p.base
   }
@@ -225,7 +232,11 @@ function catppuccinMochaColor(role: CSSColorRole): string {
   const p = catppuccinMocha
   switch (role) {
     case 'background': return p.base
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.surface0
+    // Real surface0 is authentically lighter than base, but filling actual
+    // panel/card surfaces with it read too bright next to a dark sidebar -
+    // card/popover/muted stay on base; surface0 becomes the divider instead.
+    case 'card': case 'popover': case 'muted': case 'input': return p.base
+    case 'secondary': case 'border': case 'sidebarBorder': return p.surface0
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
     case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
@@ -242,9 +253,11 @@ function catppuccinMochaColor(role: CSSColorRole): string {
     case 'success': return p.green
     case 'successForeground': return p.base
     case 'ring': case 'sidebarRing': return p.blue
-    // Real "crust"/"mantle" - genuinely darker than base.
+    // Real "crust" - genuinely darker than base. sidebarAccent uses base
+    // (not the neighboring mantle, only 0.033 apart from crust) so the
+    // active/hover state reads as clearly distinct.
     case 'sidebar': return p.crust
-    case 'sidebarAccent': return p.mantle
+    case 'sidebarAccent': return p.base
     case 'sidebarPrimaryForeground': return p.base
     case 'scrollbarTrack': return p.base
   }
@@ -265,7 +278,12 @@ function draculaColor(role: CSSColorRole): string {
   const p = dracula
   switch (role) {
     case 'background': case 'input': return p.background
-    case 'card': case 'popover': case 'muted': case 'secondary': case 'border': case 'sidebarBorder': return p.selection
+    // Real Selection is authentically lighter than Background, but filling
+    // actual panel/card surfaces with it read too bright next to a dark
+    // sidebar - card/popover/muted stay on Background; Selection becomes
+    // the divider instead.
+    case 'card': case 'popover': case 'muted': return p.background
+    case 'secondary': case 'border': case 'sidebarBorder': return p.selection
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
     case 'sidebarPrimary': case 'sidebarAccentForeground': return p.foreground
@@ -291,41 +309,52 @@ function draculaColor(role: CSSColorRole): string {
 }
 
 const alucard = {
-  background: 'oklch(0.9869 0.0214 95.28)', selection: 'oklch(0.9649 0.0214 95.28)',
+  background: 'oklch(0.9869 0.0214 95.28)',
+  // Real Selection #CFCFDE - this was previously stored as a "darkened
+  // Background" approximation (same 95.28deg hue), not the real swatch,
+  // which is a cool lavender-gray (286deg), a different hue family entirely.
+  // The real spec has no separate "border" tone - Dracula's own pattern.
+  selection: 'oklch(0.8590 0.0206 285.96)',
   comment: 'oklch(0.5084 0.0410 97.06)', foreground: 'oklch(0.2393 0.0000 89.88)',
   red: 'oklch(0.5632 0.1844 30.08)', orange: 'oklch(0.521 0.131 48.5)', yellow: 'oklch(0.5440 0.1044 93.88)',
   green: 'oklch(0.4784 0.1547 141.90)', cyan: 'oklch(0.4961 0.1061 236.17)', purple: 'oklch(0.5091 0.1878 287.15)',
   pink: 'oklch(0.468 0.177 5.0)',
-  // No fourth non-accent tone in the real spec, unlike a genuine "border" -
-  // this project's own earlier choice, kept as-is (still real: it's the
-  // theme's own Selection swatch at reduced apparent weight against bg).
-  border: 'oklch(0.8590 0.0206 285.96)',
 }
 function alucardColor(role: CSSColorRole): string {
   const p = alucard
   switch (role) {
-    case 'background': return p.background
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': return p.selection
+    // Real Background (#FFFBEB, warm cream) and Selection (#CFCFDE, cool
+    // lavender) are genuinely different hue families in Alucard's own spec,
+    // unlike M365 Princess's single-family background/card/border ramp.
+    // Since Selection is already the dominant tone across card/sidebar/
+    // panel, background matches it too rather than reading as a mismatched
+    // warm patch against an otherwise cool UI; Background is repurposed as
+    // the structural border/accent tone instead, which keeps it real (not
+    // invented) and keeps borders visible against card's own fill.
+    case 'background': return p.selection
+    case 'card': case 'popover': case 'muted': case 'input': return p.selection
+    case 'secondary': case 'border': case 'sidebarBorder': case 'accent': return p.background
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.foreground
     case 'primary': case 'scrollbarThumb': return p.purple
     case 'primaryForeground': case 'destructiveForeground': return WHITE
-    case 'border': case 'sidebarBorder': return p.border
     case 'mutedForeground': return p.comment
     case 'label': return p.cyan
-    case 'accent': return p.selection
     case 'destructive': return p.red
     case 'warning': return p.yellow
     case 'warningForeground': return p.foreground
     case 'success': return p.green
     case 'successForeground': return WHITE
     case 'ring': case 'sidebarRing': return p.cyan
-    // border is already darker than Selection - genuinely reusable as the
-    // sidebar anchor, no invented value needed.
-    case 'sidebar': return p.border
-    case 'sidebarAccent': return p.selection
+    // Same 2-tone constraint: sidebar repeats Selection (matches card, the
+    // darkest real option) and sidebarAccent repeats Background - the
+    // border split above already keeps sidebarBorder distinct from both.
+    case 'sidebar': return p.selection
+    case 'sidebarAccent': return p.background
     case 'sidebarPrimaryForeground': return p.background
-    case 'scrollbarTrack': return p.background
+    // Tracks the new background (Selection) so the scrollbar track blends
+    // with the page instead of the old cream tone.
+    case 'scrollbarTrack': return p.selection
   }
 }
 
@@ -350,7 +379,11 @@ function gruvboxDarkColor(role: CSSColorRole): string {
   const p = gruvboxDark
   switch (role) {
     case 'background': return p.bg0
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.bg1
+    // Real bg1 is authentically lighter than bg0, but filling actual
+    // panel/card surfaces with it read too bright next to a dark sidebar -
+    // card/popover/muted stay on bg0; bg1 becomes the divider instead.
+    case 'card': case 'popover': case 'muted': case 'input': return p.bg0
+    case 'secondary': case 'border': case 'sidebarBorder': return p.bg1
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
     case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
@@ -389,7 +422,7 @@ function gruvboxLightColor(role: CSSColorRole): string {
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
     case 'primary': case 'scrollbarThumb': return p.yellow
     case 'primaryForeground': case 'destructiveForeground': return WHITE
-    case 'secondary': case 'border': case 'sidebarBorder': return p.light2
+    case 'secondary': case 'border': return p.light2
     case 'mutedForeground': return p.fgMuted
     case 'label': return p.fg
     case 'accent': return p.light3
@@ -401,7 +434,10 @@ function gruvboxLightColor(role: CSSColorRole): string {
     case 'ring': case 'sidebarRing': return p.blue
     // light2 (already the border swatch) is already darker than card - a
     // real, already-established tone, genuinely reusable as the sidebar.
+    // sidebarBorder uses light3 (one tier further) so it doesn't collide
+    // with the sidebar's own fill.
     case 'sidebar': return p.light2
+    case 'sidebarBorder': return p.light3
     case 'sidebarAccent': return p.light1
     case 'sidebarPrimaryForeground': return p.light0
     case 'scrollbarTrack': return p.light0
@@ -424,7 +460,11 @@ function m365PrincessDarkColor(role: CSSColorRole): string {
   const p = m365PrincessDark
   switch (role) {
     case 'background': case 'input': return p.background
-    case 'card': case 'popover': case 'muted': case 'secondary': case 'border': case 'sidebarBorder': return p.card
+    // No external spec, but the same "panel too bright next to a dark
+    // sidebar" issue applies - card/popover/muted stay on background; the
+    // preset's own lighter "card" tone becomes the divider instead.
+    case 'card': case 'popover': case 'muted': return p.background
+    case 'secondary': case 'border': case 'sidebarBorder': return p.card
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
     case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
@@ -462,7 +502,7 @@ function m365PrincessLightColor(role: CSSColorRole): string {
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
     case 'primary': case 'scrollbarThumb': return p.primary
     case 'primaryForeground': case 'destructiveForeground': return WHITE
-    case 'secondary': case 'border': case 'sidebarBorder': return p.border
+    case 'secondary': case 'border': return p.border
     case 'mutedForeground': return p.textMuted
     case 'label': return p.blue
     case 'accent': return p.background
@@ -473,7 +513,10 @@ function m365PrincessLightColor(role: CSSColorRole): string {
     case 'successForeground': return WHITE
     case 'ring': case 'sidebarRing': return p.blue
     // border is already darker than card - reusable as the sidebar anchor.
+    // sidebarBorder uses background (lighter still) so it doesn't collide
+    // with the sidebar's own fill.
     case 'sidebar': return p.border
+    case 'sidebarBorder': return p.background
     case 'sidebarAccent': return p.card
     case 'sidebarPrimaryForeground': return p.background
     case 'scrollbarTrack': return p.background
@@ -495,7 +538,11 @@ function nordColor(role: CSSColorRole): string {
   const p = nord
   switch (role) {
     case 'background': return p.nord0
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.nord1
+    // Real nord1 is authentically lighter than nord0, but filling actual
+    // panel/card surfaces with it read too bright next to a dark sidebar -
+    // card/popover/muted stay on nord0; nord1 becomes the divider instead.
+    case 'card': case 'popover': case 'muted': case 'input': return p.nord0
+    case 'secondary': case 'border': case 'sidebarBorder': return p.nord1
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
     case 'sidebarPrimary': case 'sidebarAccentForeground': return p.nord6
@@ -533,7 +580,11 @@ function solarizedDarkColor(role: CSSColorRole): string {
   const p = solarized
   switch (role) {
     case 'background': return p.base03
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.base02
+    // Real base02 is authentically lighter than base03, but filling actual
+    // panel/card surfaces with it read too bright next to a dark sidebar -
+    // card/popover/muted stay on base03; base02 becomes the divider instead.
+    case 'card': case 'popover': case 'muted': case 'input': return p.base03
+    case 'secondary': case 'border': case 'sidebarBorder': return p.base02
     // Spec designates only base03/base02 as background-role tones - base01/
     // base00/base0/base1 are content (text) tones, never backgrounds, in
     // either mode.
@@ -573,23 +624,27 @@ function solarizedLightColor(role: CSSColorRole): string {
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.base01
     case 'primary': case 'scrollbarThumb': return p.yellow
     case 'primaryForeground': case 'destructiveForeground': return WHITE
-    case 'secondary': case 'border': case 'sidebarBorder': return p.base2
+    // Only 2 real background-role tones exist (base3/base2) - border and
+    // accent need to differ from card's own fill (base2) or they're
+    // invisible against it. base3 is the only other option, same
+    // resolution used for Solarized Dark/Alucard's identical constraint.
+    case 'secondary': case 'border': case 'accent': return p.base3
     // Mirror of the dark-mode fix: light mode's most-emphasized tone is
     // base01, not base00.
     case 'mutedForeground': return p.base1
     // No literal swatch clears 4.5:1 against base2/base3 - base01 gets
     // closest (4.40:1), an inherent limit of Solarized's own palette.
     case 'label': return p.base01
-    case 'accent': return p.base2
     case 'destructive': return p.red
     case 'warning': return p.orange
     case 'warningForeground': return p.base01
     case 'success': return p.green
     case 'successForeground': return WHITE
     case 'ring': case 'sidebarRing': return p.blue
-    // border/card share base2 here (no distinct real border swatch below
-    // it), so sidebar repeats it too - base3 is lighter, the wrong direction.
+    // sidebar repeats card's own base2 (the darkest real option); sidebarBorder
+    // uses base3 so it doesn't collide with the sidebar's own fill.
     case 'sidebar': return p.base2
+    case 'sidebarBorder': return p.base3
     case 'sidebarAccent': return p.base3
     case 'sidebarPrimaryForeground': return p.base3
     case 'scrollbarTrack': return p.base3
@@ -605,7 +660,7 @@ function solarizedLightColor(role: CSSColorRole): string {
 const tokyoNight = {
   bgDark: 'oklch(0.204 0.016 284.9)', bg: 'oklch(0.226 0.021 280.5)', bgHighlight: 'oklch(0.306 0.037 273.2)',
   sidebarBg: 'oklch(0.261 0.034 274.2)', border: 'oklch(0.387 0.054 273.9)',
-  fg: 'oklch(0.846 0.061 274.8)', comment: 'oklch(0.5890 0.0618 276.63)',
+  fg: 'oklch(0.846 0.061 274.8)', comment: 'oklch(0.496 0.068 274.4)',
   red: 'oklch(0.723 0.159 10.3)', green: 'oklch(0.795 0.139 130.1)', yellow: 'oklch(0.784 0.106 75.4)',
   blue: 'oklch(0.719 0.132 264.2)', magenta: 'oklch(0.751 0.134 299.5)', cyan: 'oklch(0.7537 0.1243 213.18)', white: 'oklch(0.767 0.054 275.5)',
 }
@@ -613,7 +668,12 @@ function tokyoNightColor(role: CSSColorRole): string {
   const p = tokyoNight
   switch (role) {
     case 'background': return p.bg
-    case 'card': case 'popover': case 'muted': case 'input': case 'secondary': case 'border': case 'sidebarBorder': return p.bgHighlight
+    // Real bg_highlight is authentically lighter than bg, but filling
+    // actual panel/card surfaces with it read too bright next to a dark
+    // sidebar - card/popover/muted stay on bg; bg_highlight becomes the
+    // divider instead.
+    case 'card': case 'popover': case 'muted': case 'input': return p.bg
+    case 'secondary': case 'border': case 'sidebarBorder': return p.bgHighlight
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'destructiveForeground': case 'sidebarForeground':
     case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
@@ -638,7 +698,7 @@ function tokyoNightColor(role: CSSColorRole): string {
 
 const tokyoNightLight = {
   background: 'oklch(0.877 0.007 277.2)', card: 'oklch(0.846 0.007 277.1)', border: 'oklch(0.774 0.006 274.9)',
-  text: 'oklch(0.359 0.051 273.2)', textMuted: 'oklch(0.6837 0.0150 272.60)',
+  text: 'oklch(0.359 0.051 273.2)', textMuted: 'oklch(0.51 0.01 272.61)',
   primary: 'oklch(0.448 0.097 260.3)', blue: 'oklch(0.474 0.076 212.3)', green: 'oklch(0.452 0.074 129.9)',
   red: 'oklch(0.480 0.100 9.5)', yellow: 'oklch(0.523 0.104 71.0)',
 }
@@ -651,7 +711,7 @@ function tokyoNightLightColor(role: CSSColorRole): string {
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
     case 'primary': case 'label': case 'scrollbarThumb': return p.primary
     case 'primaryForeground': case 'destructiveForeground': return WHITE
-    case 'secondary': case 'border': case 'sidebarBorder': return p.border
+    case 'secondary': case 'border': return p.border
     case 'mutedForeground': return p.textMuted
     case 'accent': return p.background
     case 'destructive': return p.red
@@ -662,7 +722,10 @@ function tokyoNightLightColor(role: CSSColorRole): string {
     case 'ring': case 'sidebarRing': return p.blue
     // No confidently-sourced extra tier for the Storm/Day light variant -
     // border is already darker than card, reused as the sidebar anchor.
+    // sidebarBorder uses card (lighter still) so it doesn't collide with
+    // the sidebar's own fill.
     case 'sidebar': return p.border
+    case 'sidebarBorder': return p.card
     case 'sidebarAccent': return p.card
     case 'sidebarPrimaryForeground': return p.background
     case 'scrollbarTrack': return p.background
