@@ -192,12 +192,13 @@ function catppuccinLatteColor(role: CSSColorRole): string {
     // border reads as a distinct line instead of colliding with card's own
     // fill (both were surface0 before).
     case 'secondary': case 'border': case 'sidebarBorder': return p.surface1
-    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
-    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.text
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground': return p.text
+    case 'accentForeground': case 'sidebarForeground': return p.text
+    case 'sidebarPrimary': case 'sidebarAccentForeground': return p.flamingo
     case 'primary': case 'scrollbarThumb': return p.mauve
     case 'primaryForeground': case 'destructiveForeground': return WHITE
     case 'mutedForeground': return p.subtext0
-    case 'label': return p.text
+    case 'label': return p.flamingo
     case 'accent': return p.surface2
     case 'destructive': return p.red
     case 'warning': return p.yellow
@@ -315,6 +316,7 @@ const alucard = {
   // which is a cool lavender-gray (286deg), a different hue family entirely.
   // The real spec has no separate "border" tone - Dracula's own pattern.
   selection: 'oklch(0.8590 0.0206 285.96)',
+  selection2: 'oklch(0.91 0.02 286.07)',
   comment: 'oklch(0.5084 0.0410 97.06)', foreground: 'oklch(0.2393 0.0000 89.88)',
   red: 'oklch(0.5632 0.1844 30.08)', orange: 'oklch(0.521 0.131 48.5)', yellow: 'oklch(0.5440 0.1044 93.88)',
   green: 'oklch(0.4784 0.1547 141.90)', cyan: 'oklch(0.4961 0.1061 236.17)', purple: 'oklch(0.5091 0.1878 287.15)',
@@ -331,14 +333,15 @@ function alucardColor(role: CSSColorRole): string {
     // warm patch against an otherwise cool UI; Background is repurposed as
     // the structural border/accent tone instead, which keeps it real (not
     // invented) and keeps borders visible against card's own fill.
-    case 'background': return p.selection
+    case 'background': return p.selection2
     case 'card': case 'popover': case 'muted': case 'input': return p.selection
-    case 'secondary': case 'border': case 'sidebarBorder': case 'accent': return p.background
+    case 'secondary': case 'border': case 'sidebarBorder': case 'accent': return p.purple
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
-    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.foreground
+    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': return p.foreground
+    case 'sidebarAccentForeground': return WHITE
     case 'primary': case 'scrollbarThumb': return p.purple
     case 'primaryForeground': case 'destructiveForeground': return WHITE
-    case 'mutedForeground': return p.comment
+    case 'mutedForeground': return p.cyan
     case 'label': return p.cyan
     case 'destructive': return p.red
     case 'warning': return p.yellow
@@ -350,7 +353,7 @@ function alucardColor(role: CSSColorRole): string {
     // darkest real option) and sidebarAccent repeats Background - the
     // border split above already keeps sidebarBorder distinct from both.
     case 'sidebar': return p.selection
-    case 'sidebarAccent': return p.background
+    case 'sidebarAccent': return p.cyan
     case 'sidebarPrimaryForeground': return p.background
     // Tracks the new background (Selection) so the scrollbar track blends
     // with the page instead of the old cream tone.
