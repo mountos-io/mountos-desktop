@@ -339,7 +339,7 @@
           <span class="flex shrink-0 items-stretch border border-border bg-card">
             <button
               type="button"
-              class="flex items-center justify-center border-r border-border px-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              class="flex items-center justify-center border-r border-border px-2 text-primary outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               title="Expand as left panel"
               aria-label="Expand as left panel"
               onclick={() => expandJobPanel(appState.view, 'left')}
@@ -355,12 +355,12 @@
               title="Search and select"
               onclick={() => openJobPanelFloating(appState.view)}
             >
-              <jobPanelChipItem.icon size={15} aria-hidden="true" />
-              <span>{jobPanelChipItem.label}</span>
+              <jobPanelChipItem.icon size={15} aria-hidden="true" class="text-primary" />
+              <span class="mono-label">{jobPanelChipItem.label}</span>
             </button>
             <button
               type="button"
-              class="flex items-center justify-center border-l border-border px-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              class="flex items-center justify-center border-l border-border px-2 text-primary outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               title="Expand as right panel"
               aria-label="Expand as right panel"
               onclick={() => expandJobPanel(appState.view, 'right')}
