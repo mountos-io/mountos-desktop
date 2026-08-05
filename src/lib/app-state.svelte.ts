@@ -8,6 +8,7 @@ import {
   buildDownloadResumeArgv,
   buildDownloadRetryFailedArgv,
   buildDownloadStartArgv,
+  buildExternalSourceUri,
   buildForkCreateArgv,
   buildForkDeleteArgv,
   buildForkListArgv,
@@ -29,8 +30,8 @@ import {
   errorClassLabel,
   isAbsolutePath,
   isValidFolderName,
-  looksLikeSourceUri,
   parseArgvInput,
+  validateExternalSourceFields,
   validateExtraArgs,
   validateGlobPattern,
   validateMountPathForBackend,
@@ -48,6 +49,7 @@ import {
   defaultViewDestination,
   deleteProfile,
   deleteProfileSecret,
+  deleteTransferSourceProfile,
   exportProfile,
   forkCreate,
   forkDelete,
@@ -60,6 +62,7 @@ import {
   getThirdPartyLicenses,
   launchDashboard,
   listProfiles,
+  listTransferSourceProfiles,
   mcpInstall,
   mcpStatus,
   mcpUninstall,
@@ -101,7 +104,9 @@ import {
   openSinkLog,
   saveProfile,
   saveSettings,
+  saveTransferSourceProfile,
   setProfileSecret,
+  setTransferSourceProfileSecret,
   startUpload,
   stopGateway,
   stopGatewayOnly,
@@ -125,6 +130,7 @@ import type {
   SinkStatus,
   SystemState,
   ThirdPartyLicenses,
+  TransferSourceProfile,
   UploadInstanceRef,
   UploadJob,
 } from './types'
@@ -401,20 +407,50 @@ const state = $state({
   uploadExcludeText: '',
   uploadFollowSymlinks: false,
   uploadCreateSourceDirectory: false,
-  // Shown only when uploadSource looks like an object-store URI (isExternalUploadSource
-  // below) -- the mountos CLI auto-detects the same way from the SOURCE
-  // argument's scheme, this just mirrors that detection in the form instead
-  // of a separate source-kind toggle. uploadSourceSecretValue is a
-  // plaintext secret held only in memory for the duration of this start
-  // call (see runUploadStart: passed straight to startUpload, never
-  // persisted, never logged) -- Rust writes it to a private temp file and
-  // the CLI unlinks that file itself immediately after reading it.
+  // uploadSourceType is an explicit, deliberate choice (a Select, not
+  // inferred from what's typed into a text field) between a local
+  // folder/profile-manifest source and an external object store --
+  // isExternalUploadSource() below reads this, nothing sniffs uploadSource's
+  // own text for a scheme prefix anymore. 'local' leaves every field below
+  // unused; uploadSource itself is ONLY used in 'local' mode (externalSourceUri
+  // builds the equivalent URI from the structured fields for 'external').
+  uploadSourceType: 'local' as 'local' | 'external',
   uploadSourceProvider: '',
+  uploadSourceBucket: '',
+  uploadSourcePrefix: '',
   uploadSourceEndpoint: '',
   uploadSourceRegion: '',
   uploadSourceAccount: '',
   uploadSourceAccessKeyId: '',
+  // Plaintext secret held only in memory for the duration of a Start or Test
+  // call (see runUploadStart/runUploadSourceTest: passed straight to
+  // startUpload, never persisted, never logged) -- Rust writes it to a
+  // private temp file and the CLI unlinks that file itself immediately
+  // after reading it.
   uploadSourceSecretValue: '',
+  // A saved TransferSourceProfile currently backing the form's fields --
+  // set by selectTransferSourceProfile, cleared by resetTransferSourceForm/
+  // switching to 'local'. Threaded through to Start/Test as
+  // transferSourceProfileId so Rust resolves a "vault" profile's secret
+  // itself (see startUpload's own doc comment) rather than this app ever
+  // holding the decrypted secret just to hand it back for the same profile.
+  uploadSourceProfileSelectedId: null as string | null,
+  transferSourceProfiles: [] as TransferSourceProfile[],
+  transferSourceProfilesLoaded: false,
+  // "Save as transfer profile" panel state, shown after a successful Test
+  // Connection or Start -- entirely separate from the live form fields
+  // above so filling in a save-name never affects what Start/Test submits.
+  uploadSourceSaveOpen: false,
+  uploadSourceSaveName: '',
+  uploadSourceSaveToVault: true,
+  uploadSourceSaveError: '',
+  // Test Connection's own result slot, deliberately separate from
+  // uploadDryRunReport/uploadStartError: a pre-flight check the user runs
+  // before Start must never be confused with, or overwritten by, an actual
+  // Start attempt's own dry-run report or failure.
+  uploadSourceTestBusy: false,
+  uploadSourceTestReport: '',
+  uploadSourceTestError: '',
   uploadStartSecretValue: '',
   uploadStartError: '',
   uploadBrowseError: '',
@@ -498,6 +534,49 @@ const state = $state({
   downloadExcludeText: '',
   downloadFollowSymlinks: false,
   downloadCreateSourceDirectory: false,
+  // downloadDestType mirrors uploadSourceType exactly, on the opposite
+  // positional: an explicit, deliberate choice between a local disk
+  // destination and pushing to an external object store. 'local' leaves
+  // every field below unused; downloadDest itself is ONLY used in 'local'
+  // mode (effectiveDownloadDest below builds the equivalent URI from the
+  // structured fields for 'external').
+  downloadDestType: 'local' as 'local' | 'external',
+  downloadDestProvider: '',
+  downloadDestBucket: '',
+  downloadDestPrefix: '',
+  downloadDestEndpoint: '',
+  downloadDestRegion: '',
+  downloadDestAccount: '',
+  downloadDestAccessKeyId: '',
+  // Plaintext secret held only in memory for the duration of a Start or Test
+  // call (see runDownloadStart/runDownloadDestTest: passed straight to
+  // startDownload, never persisted, never logged) -- Rust writes it to a
+  // private temp file and the CLI unlinks that file itself immediately
+  // after reading it.
+  downloadDestSecretValue: '',
+  // A saved TransferSourceProfile currently backing the form's fields --
+  // the SAME store uploadSourceProfileSelectedId picks from (see that
+  // field's own doc comment on TransferSourceProfile being provider/bucket/
+  // prefix/credential-generic, not upload-specific), just selected as a
+  // destination here instead of a source. Threaded through to Start/Test as
+  // transferDestProfileId so Rust resolves a "vault" profile's secret itself
+  // rather than this app ever holding the decrypted secret just to hand it
+  // back for the same profile.
+  downloadDestProfileSelectedId: null as string | null,
+  // "Save as transfer profile" panel state, shown after a successful Test
+  // Connection or Start -- entirely separate from the live form fields
+  // above so filling in a save-name never affects what Start/Test submits.
+  downloadDestSaveOpen: false,
+  downloadDestSaveName: '',
+  downloadDestSaveToVault: true,
+  downloadDestSaveError: '',
+  // Test Connection's own result slot, deliberately separate from
+  // downloadDryRunReport/downloadStartError: a pre-flight check the user
+  // runs before Start must never be confused with, or overwritten by, an
+  // actual Start attempt's own dry-run report or failure.
+  downloadDestTestBusy: false,
+  downloadDestTestReport: '',
+  downloadDestTestError: '',
   downloadStartSecretValue: '',
   downloadStartError: '',
   downloadBrowseError: '',
@@ -888,24 +967,35 @@ const uploadPreviewProfile = $derived.by((): MountProfile | null => {
   }
 })
 
-// isExternalUploadSource mirrors the mountos CLI's own SOURCE auto-detection
-// (looksLikeSourceUri === uploadjob.LooksLikeURI server-side): the object-
-// store fields only make sense, and only render, when the typed/pasted
-// Source looks like a "scheme://..." URI.
+// isExternalUploadSource reads the explicit Source type toggle -- nothing
+// sniffs uploadSource's own text for a scheme prefix; local vs. object
+// storage is a deliberate choice the same way Profile vs. running-Instance
+// already is, not inferred from what happens to be typed.
 export function isExternalUploadSource(): boolean {
-  return looksLikeSourceUri(state.uploadSource.trim())
+  return state.uploadSourceType === 'external'
+}
+
+// effectiveUploadSource is the actual SOURCE positional argv/preview/submit
+// ever see: uploadSource verbatim in 'local' mode, or the URI built from the
+// structured provider/bucket/prefix fields in 'external' mode -- the ONE
+// place those two modes converge back into a single string, so every other
+// call site (preview, start, test) reads this instead of branching itself.
+export function effectiveUploadSource(): string {
+  if (!isExternalUploadSource()) return state.uploadSource.trim()
+  return buildExternalSourceUri(state.uploadSourceProvider, state.uploadSourceBucket, state.uploadSourcePrefix) ?? ''
 }
 
 const uploadCommandText = $derived.by(() => {
   const profile = uploadPreviewProfile
-  if (!profile || !state.uploadSource.trim() || !state.uploadDest.trim()) return ''
+  const source = effectiveUploadSource()
+  if (!profile || !source || !state.uploadDest.trim()) return ''
   // A real secret is never written to a temp file just to render this
   // preview -- the placeholder makes clear a real run substitutes an actual
   // path, matching this app's existing "show the exact command, never a
   // secret value" convention (see cli.ts's own doc comments elsewhere on
   // never letting secrets reach argv/preview text).
   const sourceSecretFile = isExternalUploadSource() && state.uploadSourceSecretValue ? '<temp-file-written-at-start>' : undefined
-  return `mountos ${buildUploadStartArgv(profile, state.uploadSource.trim(), state.uploadDest.trim(), uploadStartParams(), sourceSecretFile).join(' ')}`
+  return `mountos ${buildUploadStartArgv(profile, source, state.uploadDest.trim(), uploadStartParams(), sourceSecretFile).join(' ')}`
 })
 
 // Sidebar badge count, lazily updated (whatever `uploads` last held from
@@ -1013,6 +1103,22 @@ const downloadNeedsSecret = $derived(
     : false,
 )
 
+// isExternalDownloadDest mirrors isExternalUploadSource exactly, on the
+// opposite positional: an explicit Destination type toggle, never sniffed
+// from downloadDest's own text.
+export function isExternalDownloadDest(): boolean {
+  return state.downloadDestType === 'external'
+}
+
+// effectiveDownloadDest is the actual DEST_PATH positional argv/preview/
+// submit ever see, mirrors effectiveUploadSource: downloadDest verbatim in
+// 'local' mode, or the URI built from the structured provider/bucket/prefix
+// fields in 'external' mode.
+export function effectiveDownloadDest(): string {
+  if (!isExternalDownloadDest()) return state.downloadDest.trim()
+  return buildExternalSourceUri(state.downloadDestProvider, state.downloadDestBucket, state.downloadDestPrefix) ?? ''
+}
+
 // Unlike uploadCommandText (which always needs a synthetic preview profile,
 // even for an instance source, because buildUploadStartArgv's profile
 // parameter is non-nullable), buildDownloadStartArgv takes `profile:
@@ -1020,11 +1126,15 @@ const downloadNeedsSecret = $derived(
 // instance-mode source needs no profile object here at all.
 const downloadCommandText = $derived.by(() => {
   const source = state.downloadSource.trim()
-  const dest = state.downloadDest.trim()
+  const dest = effectiveDownloadDest()
   if (!source || !dest) return ''
   if (state.downloadSourceKind === 'profile' && !downloadSelectedProfile) return ''
   const profile = state.downloadSourceKind === 'profile' ? (downloadSelectedProfile ?? null) : null
-  return `mountos ${buildDownloadStartArgv(profile, state.downloadSourceKind, source, dest, downloadStartParams()).join(' ')}`
+  // A real secret is never written to a temp file just to render this
+  // preview, same convention as uploadCommandText's own sourceSecretFile
+  // placeholder.
+  const destSecretFile = isExternalDownloadDest() && state.downloadDestSecretValue ? '<temp-file-written-at-start>' : undefined
+  return `mountos ${buildDownloadStartArgv(profile, state.downloadSourceKind, source, dest, downloadStartParams(), destSecretFile).join(' ')}`
 })
 
 // Sidebar badge count, same lazily-updated convention as uploadRunningCount
@@ -1734,6 +1844,11 @@ export function resetUploadForm() {
   state.uploadExcludeText = ''
   state.uploadFollowSymlinks = false
   state.uploadCreateSourceDirectory = false
+  state.uploadSourceType = 'local'
+  clearTransferSourceProfileSelection()
+  state.uploadSourceTestBusy = false
+  state.uploadSourceTestReport = ''
+  state.uploadSourceTestError = ''
   state.uploadStartSecretValue = ''
   state.uploadStartError = ''
   state.uploadBrowseError = ''
@@ -1747,6 +1862,21 @@ export function enterUploadCreate() {
   state.uploadProfileQuery = ''
   state.uploadSourceInstance = null
   resetUploadForm()
+  void loadTransferSourceProfiles()
+}
+
+// selectUploadSourceType applies the explicit Local/Object storage toggle.
+// Switching away from 'external' clears its form fields (clearTransferSourceProfileSelection)
+// so a stale bucket/secret can never linger invisibly and get submitted if
+// the user switches back without noticing; switching TO 'external' starts
+// from the same blank slate rather than carrying over whatever a prior
+// external session had.
+export function selectUploadSourceType(value: string) {
+  const next = value === 'external' ? 'external' : 'local'
+  if (state.uploadSourceType === next) return
+  state.uploadSourceType = next
+  state.uploadSourceError = ''
+  clearTransferSourceProfileSelection()
 }
 
 export function exitUploadCreate() {
@@ -1842,13 +1972,48 @@ function uploadGlobError(): string {
   return ''
 }
 
+// validateUploadSourceAndSecret is the Source-side validation shared by
+// Start and Test Connection. Local mode keeps the existing positional
+// check; external mode validates the structured provider/bucket/endpoint/
+// account fields (validateExternalSourceFields) plus a secret requirement
+// that applies to EVERY external provider, not just gcs -- s3 and azure
+// need one exactly as much (objectstore.CreateS3Client/CreateAzureBlobClient,
+// mountos-servers, both refuse to build a client with an empty secret); an
+// earlier version of this form only gated gcs, which was a real gap.
+// Returns an error message, or '' when the source side is valid. Never
+// touches uploadDest/uploadDestError -- the caller's own responsibility.
+function validateUploadSourceAndSecret(): string {
+  if (!isExternalUploadSource()) {
+    const source = state.uploadSource.trim()
+    return source ? (validateUploadPositional(source, 'Source folder') ?? '') : 'Source folder is required'
+  }
+  const fieldError = validateExternalSourceFields(
+    state.uploadSourceProvider,
+    state.uploadSourceBucket,
+    state.uploadSourceEndpoint,
+    state.uploadSourceAccount,
+    state.uploadSourceAccessKeyId,
+  )
+  if (fieldError) return fieldError
+  // A selected "vault" profile needs nothing re-typed -- Rust resolves its
+  // secret straight from the keychain (see startUpload's own doc comment).
+  // Only when there's no vault backing it does a blank field mean "no
+  // secret at all", the same failure an ad hoc unsaved source would have.
+  if (!state.uploadSourceSecretValue.trim() && !uploadSourceProfileUsesVault()) {
+    return state.uploadSourceProvider.trim() === 'gcs'
+      ? 'A service-account key (JSON) is required -- paste its content into the secret field'
+      : 'A secret is required'
+  }
+  return ''
+}
+
 export async function runUploadStart() {
   const profileId = state.uploadSourceKind === 'profile' ? (state.uploadSourceProfileId ?? undefined) : undefined
   const instance = state.uploadSourceKind === 'instance' ? (state.uploadSourceInstance ?? undefined) : undefined
   if (!profileId && !instance) return
-  const source = state.uploadSource.trim()
+  const source = effectiveUploadSource()
   const dest = state.uploadDest.trim()
-  state.uploadSourceError = source ? (validateUploadPositional(source, 'Source folder') ?? '') : 'Source folder is required'
+  state.uploadSourceError = validateUploadSourceAndSecret()
   state.uploadDestError = dest ? (validateUploadPositional(dest, 'Destination path') ?? '') : 'Destination path is required'
   if (state.uploadSourceError || state.uploadDestError) return
   const globError = uploadGlobError()
@@ -1856,21 +2021,22 @@ export async function runUploadStart() {
     state.uploadStartError = globError
     return
   }
-  // gcs mirrors the CLI's own gate (resolveSourceCredential, mountos-
-  // servers): its service-account key is a JSON blob, never something to
-  // type into a password field, so this app only ever supplies it via the
-  // temp-file handoff -- caught here with an actionable message instead of
-  // a cryptic CLI failure after the process has already been spawned.
-  if (isExternalUploadSource() && state.uploadSourceProvider.trim() === 'gcs' && !state.uploadSourceSecretValue) {
-    state.uploadStartError = 'gcs requires a service-account key file -- paste its JSON content into the source secret field'
-    return
-  }
   state.uploadsBusy = true
   state.uploadStartError = ''
   state.uploadDryRunReport = ''
   try {
     const sourceSecret = isExternalUploadSource() ? state.uploadSourceSecretValue || undefined : undefined
-    const result = await startUpload(profileId, instance, source, dest, uploadStartParams(), state.uploadStartSecretValue || undefined, sourceSecret)
+    const transferSourceProfileId = isExternalUploadSource() ? (state.uploadSourceProfileSelectedId ?? undefined) : undefined
+    const result = await startUpload(
+      profileId,
+      instance,
+      source,
+      dest,
+      uploadStartParams(),
+      state.uploadStartSecretValue || undefined,
+      sourceSecret,
+      transferSourceProfileId,
+    )
     if (state.uploadDryRun) {
       state.uploadDryRunReport = result
     } else {
@@ -1882,6 +2048,330 @@ export async function runUploadStart() {
     state.uploadStartError = describeError(error)
   } finally {
     state.uploadsBusy = false
+  }
+}
+
+// runUploadSourceTest is the "Test connection" affordance object storage
+// gets in place of a local source's folder Browse: there's no bucket-
+// listing UI to browse INTO, so this is the closest equivalent -- runs the
+// same --dry-run path Start's own Dry Run checkbox uses (already lists the
+// bucket server-side, see runUploadDryRun's doc comment, mountos-servers),
+// into its own report/error slots so it never collides with a real Start
+// attempt's state.
+export async function runUploadSourceTest() {
+  const profileId = state.uploadSourceKind === 'profile' ? (state.uploadSourceProfileId ?? undefined) : undefined
+  const instance = state.uploadSourceKind === 'instance' ? (state.uploadSourceInstance ?? undefined) : undefined
+  if (!profileId && !instance) return
+  state.uploadSourceError = validateUploadSourceAndSecret()
+  if (state.uploadSourceError) return
+  state.uploadSourceTestBusy = true
+  state.uploadSourceTestError = ''
+  state.uploadSourceTestReport = ''
+  try {
+    const source = effectiveUploadSource()
+    // A dry run needs SOME destination positional (cobra requires 2 args),
+    // but Test Connection deliberately doesn't require Destination to be
+    // filled in yet -- '/' is a harmless placeholder a dry run never
+    // actually writes to regardless of what's passed.
+    const dest = state.uploadDest.trim() || '/'
+    const result = await startUpload(
+      profileId,
+      instance,
+      source,
+      dest,
+      { ...uploadStartParams(), dryRun: true },
+      state.uploadStartSecretValue || undefined,
+      state.uploadSourceSecretValue || undefined,
+      state.uploadSourceProfileSelectedId ?? undefined,
+    )
+    state.uploadSourceTestReport = result
+  } catch (error) {
+    state.uploadSourceTestError = describeError(error)
+  } finally {
+    state.uploadSourceTestBusy = false
+  }
+}
+
+// loadTransferSourceProfiles fetches the saved list once per view visit
+// (mirrors runUploadList's own fetchedOnce gate in UploadsView.svelte,
+// called the same way). Best-effort: a failure here just leaves the picker
+// showing "no saved sources" rather than blocking the rest of the form.
+export async function loadTransferSourceProfiles() {
+  try {
+    const profiles = await listTransferSourceProfiles()
+    profiles.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    state.transferSourceProfiles = profiles
+  } catch {
+    state.transferSourceProfiles = []
+  } finally {
+    state.transferSourceProfilesLoaded = true
+  }
+}
+
+// selectTransferSourceProfile fills the form's structured fields from a
+// saved profile. The secret is deliberately NOT populated here even for a
+// "vault" profile -- this app never round-trips a decrypted vault secret
+// into JS state just to redisplay it; Start/Test instead pass the profile's
+// id through (uploadSourceProfileSelectedId) and let Rust resolve it
+// directly from the keychain. A "prompt" profile leaves the secret field
+// empty and the user re-enters it, same as a MountProfile with secretRef
+// "prompt" always has.
+export function selectTransferSourceProfile(id: string) {
+  const profile = state.transferSourceProfiles.find((p) => p.id === id)
+  if (!profile) return
+  state.uploadSourceProfileSelectedId = profile.id
+  state.uploadSourceProvider = profile.provider
+  state.uploadSourceBucket = profile.bucket
+  state.uploadSourcePrefix = profile.prefix ?? ''
+  state.uploadSourceEndpoint = profile.endpoint ?? ''
+  state.uploadSourceRegion = profile.region ?? ''
+  state.uploadSourceAccount = profile.account ?? ''
+  state.uploadSourceAccessKeyId = profile.accessKeyId ?? ''
+  state.uploadSourceSecretValue = ''
+  state.uploadSourceError = ''
+  state.uploadSourceSaveOpen = false
+}
+
+// clearTransferSourceProfileSelection resets the external-source form back
+// to a blank, unsaved state -- "New source" in the picker, or switching
+// Source type away from and back to 'external'.
+export function clearTransferSourceProfileSelection() {
+  state.uploadSourceProfileSelectedId = null
+  state.uploadSourceProvider = ''
+  state.uploadSourceBucket = ''
+  state.uploadSourcePrefix = ''
+  state.uploadSourceEndpoint = ''
+  state.uploadSourceRegion = ''
+  state.uploadSourceAccount = ''
+  state.uploadSourceAccessKeyId = ''
+  state.uploadSourceSecretValue = ''
+  state.uploadSourceSaveOpen = false
+  state.uploadSourceSaveName = ''
+  state.uploadSourceSaveError = ''
+}
+
+// uploadSourceProfileUsesVault reports whether the currently-selected saved
+// profile (if any) keeps its secret in the vault -- gates whether the form
+// shows a secret input at all (a vault profile needs none re-entered) vs.
+// the "using saved vault credential" indicator.
+export function uploadSourceProfileUsesVault(): boolean {
+  const id = state.uploadSourceProfileSelectedId
+  if (!id) return false
+  return state.transferSourceProfiles.find((p) => p.id === id)?.secretRef === 'vault'
+}
+
+export function openSaveTransferSourceProfile() {
+  const existing = state.transferSourceProfiles.find((p) => p.id === state.uploadSourceProfileSelectedId)
+  state.uploadSourceSaveName = existing?.name ?? ''
+  state.uploadSourceSaveToVault = true
+  state.uploadSourceSaveError = ''
+  state.uploadSourceSaveOpen = true
+}
+
+export function closeSaveTransferSourceProfile() {
+  state.uploadSourceSaveOpen = false
+}
+
+// saveCurrentAsTransferSourceProfile persists the form's current structured
+// fields (never uploadDest/local-mode fields, which have nothing to do with
+// this) as a named, reusable source -- creating a new profile normally, or
+// overwriting the currently-selected one if the name matches an existing
+// save-in-place flow the same way MountProfile editing does (save_profile
+// is itself an upsert keyed by id). storeInVault true additionally calls
+// setTransferSourceProfileSecret so next time this profile is selected,
+// Start/Test never need the secret re-typed.
+export async function saveCurrentAsTransferSourceProfile() {
+  const name = state.uploadSourceSaveName.trim()
+  if (!name) {
+    state.uploadSourceSaveError = 'Name is required'
+    return
+  }
+  const fieldError = validateExternalSourceFields(
+    state.uploadSourceProvider,
+    state.uploadSourceBucket,
+    state.uploadSourceEndpoint,
+    state.uploadSourceAccount,
+    state.uploadSourceAccessKeyId,
+  )
+  if (fieldError) {
+    state.uploadSourceSaveError = fieldError
+    return
+  }
+  const storeInVault = state.uploadSourceSaveToVault && Boolean(state.uploadSourceSecretValue.trim())
+  if (state.uploadSourceSaveToVault && !state.uploadSourceSecretValue.trim() && !state.uploadSourceProfileSelectedId) {
+    state.uploadSourceSaveError = 'Enter the secret above before saving it to the vault'
+    return
+  }
+  const id = state.uploadSourceProfileSelectedId ?? crypto.randomUUID()
+  const now = new Date().toISOString()
+  const existing = state.transferSourceProfiles.find((p) => p.id === id)
+  try {
+    const saved = await saveTransferSourceProfile({
+      id,
+      schemaVersion: 1,
+      name,
+      provider: state.uploadSourceProvider.trim(),
+      bucket: state.uploadSourceBucket.trim(),
+      prefix: state.uploadSourcePrefix.trim() || undefined,
+      endpoint: state.uploadSourceEndpoint.trim() || undefined,
+      region: state.uploadSourceRegion.trim() || undefined,
+      account: state.uploadSourceAccount.trim() || undefined,
+      accessKeyId: state.uploadSourceAccessKeyId.trim() || undefined,
+      // Keeping an existing vault-backed profile's secretRef "vault" even
+      // when this particular save didn't re-type the secret -- only a
+      // FRESH secret typed into the field (storeInVault) or an explicit
+      // prompt-only choice ever changes what's actually in the vault.
+      secretRef: storeInVault || existing?.secretRef === 'vault' ? 'vault' : 'prompt',
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    })
+    if (storeInVault) {
+      await setTransferSourceProfileSecret(id, state.uploadSourceSecretValue.trim())
+    }
+    await loadTransferSourceProfiles()
+    state.uploadSourceProfileSelectedId = saved.id
+    state.uploadSourceSaveOpen = false
+    notify(`Saved transfer source "${name}"`)
+  } catch (error) {
+    state.uploadSourceSaveError = describeError(error)
+  }
+}
+
+// removeTransferSourceProfile deletes both the saved JSON record and its
+// vault entry (delete_transfer_source_profile handles both server-side,
+// mirroring deleteProfile's own MountProfile behavior). The SAME profile
+// store backs both the upload Source picker and the download Destination
+// picker (see TransferSourceProfile's own doc comment), so a deletion
+// clears whichever form(s) currently reference it -- either, neither, or
+// both, independently -- rather than leaving one with a dangling id.
+export async function removeTransferSourceProfile(id: string) {
+  try {
+    await deleteTransferSourceProfile(id)
+    await loadTransferSourceProfiles()
+    if (state.uploadSourceProfileSelectedId === id) {
+      clearTransferSourceProfileSelection()
+    }
+    if (state.downloadDestProfileSelectedId === id) {
+      clearDownloadDestProfileSelection()
+    }
+  } catch (error) {
+    state.uploadSourceSaveError = describeError(error)
+  }
+}
+
+// selectDownloadDestTransferProfile fills the destination form's structured
+// fields from a saved profile, mirrors selectTransferSourceProfile exactly:
+// the secret is deliberately NOT populated even for a "vault" profile --
+// Start/Test instead pass the profile's id through
+// (downloadDestProfileSelectedId) and let Rust resolve it directly from the
+// keychain.
+export function selectDownloadDestTransferProfile(id: string) {
+  const profile = state.transferSourceProfiles.find((p) => p.id === id)
+  if (!profile) return
+  state.downloadDestProfileSelectedId = profile.id
+  state.downloadDestProvider = profile.provider
+  state.downloadDestBucket = profile.bucket
+  state.downloadDestPrefix = profile.prefix ?? ''
+  state.downloadDestEndpoint = profile.endpoint ?? ''
+  state.downloadDestRegion = profile.region ?? ''
+  state.downloadDestAccount = profile.account ?? ''
+  state.downloadDestAccessKeyId = profile.accessKeyId ?? ''
+  state.downloadDestSecretValue = ''
+  state.downloadDestError = ''
+  state.downloadDestSaveOpen = false
+}
+
+// clearDownloadDestProfileSelection resets the external-destination form
+// back to a blank, unsaved state, mirrors clearTransferSourceProfileSelection.
+export function clearDownloadDestProfileSelection() {
+  state.downloadDestProfileSelectedId = null
+  state.downloadDestProvider = ''
+  state.downloadDestBucket = ''
+  state.downloadDestPrefix = ''
+  state.downloadDestEndpoint = ''
+  state.downloadDestRegion = ''
+  state.downloadDestAccount = ''
+  state.downloadDestAccessKeyId = ''
+  state.downloadDestSecretValue = ''
+  state.downloadDestSaveOpen = false
+  state.downloadDestSaveName = ''
+  state.downloadDestSaveError = ''
+}
+
+// downloadDestProfileUsesVault mirrors uploadSourceProfileUsesVault exactly.
+export function downloadDestProfileUsesVault(): boolean {
+  const id = state.downloadDestProfileSelectedId
+  if (!id) return false
+  return state.transferSourceProfiles.find((p) => p.id === id)?.secretRef === 'vault'
+}
+
+export function openSaveDownloadDestTransferProfile() {
+  const existing = state.transferSourceProfiles.find((p) => p.id === state.downloadDestProfileSelectedId)
+  state.downloadDestSaveName = existing?.name ?? ''
+  state.downloadDestSaveToVault = true
+  state.downloadDestSaveError = ''
+  state.downloadDestSaveOpen = true
+}
+
+export function closeSaveDownloadDestTransferProfile() {
+  state.downloadDestSaveOpen = false
+}
+
+// saveDownloadDestAsTransferProfile persists the destination form's current
+// structured fields as a named, reusable transfer profile, mirrors
+// saveCurrentAsTransferSourceProfile exactly on the opposite positional --
+// same upsert-by-id/vault-storage/secretRef-preservation behavior, into the
+// same shared profile store.
+export async function saveDownloadDestAsTransferProfile() {
+  const name = state.downloadDestSaveName.trim()
+  if (!name) {
+    state.downloadDestSaveError = 'Name is required'
+    return
+  }
+  const fieldError = validateExternalSourceFields(
+    state.downloadDestProvider,
+    state.downloadDestBucket,
+    state.downloadDestEndpoint,
+    state.downloadDestAccount,
+    state.downloadDestAccessKeyId,
+  )
+  if (fieldError) {
+    state.downloadDestSaveError = fieldError
+    return
+  }
+  const storeInVault = state.downloadDestSaveToVault && Boolean(state.downloadDestSecretValue.trim())
+  if (state.downloadDestSaveToVault && !state.downloadDestSecretValue.trim() && !state.downloadDestProfileSelectedId) {
+    state.downloadDestSaveError = 'Enter the secret above before saving it to the vault'
+    return
+  }
+  const id = state.downloadDestProfileSelectedId ?? crypto.randomUUID()
+  const now = new Date().toISOString()
+  const existing = state.transferSourceProfiles.find((p) => p.id === id)
+  try {
+    const saved = await saveTransferSourceProfile({
+      id,
+      schemaVersion: 1,
+      name,
+      provider: state.downloadDestProvider.trim(),
+      bucket: state.downloadDestBucket.trim(),
+      prefix: state.downloadDestPrefix.trim() || undefined,
+      endpoint: state.downloadDestEndpoint.trim() || undefined,
+      region: state.downloadDestRegion.trim() || undefined,
+      account: state.downloadDestAccount.trim() || undefined,
+      accessKeyId: state.downloadDestAccessKeyId.trim() || undefined,
+      secretRef: storeInVault || existing?.secretRef === 'vault' ? 'vault' : 'prompt',
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    })
+    if (storeInVault) {
+      await setTransferSourceProfileSecret(id, state.downloadDestSecretValue.trim())
+    }
+    await loadTransferSourceProfiles()
+    state.downloadDestProfileSelectedId = saved.id
+    state.downloadDestSaveOpen = false
+    notify(`Saved transfer source "${name}"`)
+  } catch (error) {
+    state.downloadDestSaveError = describeError(error)
   }
 }
 
@@ -2166,6 +2656,11 @@ export function resetDownloadForm() {
   state.downloadExcludeText = ''
   state.downloadFollowSymlinks = false
   state.downloadCreateSourceDirectory = false
+  state.downloadDestType = 'local'
+  clearDownloadDestProfileSelection()
+  state.downloadDestTestBusy = false
+  state.downloadDestTestReport = ''
+  state.downloadDestTestError = ''
   state.downloadStartSecretValue = ''
   state.downloadStartError = ''
   state.downloadBrowseError = ''
@@ -2183,6 +2678,21 @@ export function enterDownloadCreate() {
   state.downloadProfileQuery = ''
   state.downloadSourceInstance = null
   resetDownloadForm()
+  void loadTransferSourceProfiles()
+}
+
+// selectDownloadDestType applies the explicit Local/Object storage toggle
+// for DEST_PATH, mirrors selectUploadSourceType exactly on the opposite
+// positional. Switching away from 'external' clears its form fields
+// (clearDownloadDestProfileSelection) so a stale bucket/secret can never
+// linger invisibly and get submitted if the user flips back to 'local' and
+// then back to 'external' again.
+export function selectDownloadDestType(value: string) {
+  const next = value === 'external' ? 'external' : 'local'
+  if (state.downloadDestType === next) return
+  state.downloadDestType = next
+  state.downloadDestError = ''
+  clearDownloadDestProfileSelection()
 }
 
 export function exitDownloadCreate() {
@@ -2246,6 +2756,15 @@ export function downloadStartParams(): DownloadStartParams {
     excludeGlobs: splitGlobLines(state.downloadExcludeText),
     followSymlinks: state.downloadFollowSymlinks,
     createSourceDirectory: state.downloadCreateSourceDirectory,
+    // Only meaningful (and only rendered in the form) for a URI DEST_PATH --
+    // isExternalDownloadDest gates whether these are ever non-empty in
+    // practice, but they're harmless to include unconditionally since
+    // buildDownloadStartArgv already skips blank values.
+    destProvider: state.downloadDestProvider.trim() || undefined,
+    destEndpoint: state.downloadDestEndpoint.trim() || undefined,
+    destRegion: state.downloadDestRegion.trim() || undefined,
+    destAccount: state.downloadDestAccount.trim() || undefined,
+    destAccessKeyId: state.downloadDestAccessKeyId.trim() || undefined,
   }
 }
 
@@ -2261,13 +2780,43 @@ function downloadGlobError(): string {
   return ''
 }
 
+// validateDownloadDestAndSecret is the Destination-side validation shared
+// by Start and Test Connection, mirrors validateUploadSourceAndSecret
+// exactly on the opposite positional: local mode keeps the existing
+// positional check; external mode validates the structured provider/
+// bucket/endpoint/account fields plus a secret requirement that applies to
+// every external provider. Never touches downloadSource/downloadSourceError
+// -- the caller's own responsibility.
+function validateDownloadDestAndSecret(): string {
+  if (!isExternalDownloadDest()) {
+    const dest = state.downloadDest.trim()
+    return dest ? (validateUploadPositional(dest, 'Destination folder') ?? '') : 'Destination folder is required'
+  }
+  const fieldError = validateExternalSourceFields(
+    state.downloadDestProvider,
+    state.downloadDestBucket,
+    state.downloadDestEndpoint,
+    state.downloadDestAccount,
+    state.downloadDestAccessKeyId,
+  )
+  if (fieldError) return fieldError
+  // A selected "vault" profile needs nothing re-typed -- Rust resolves its
+  // secret straight from the keychain (see startDownload's own doc comment).
+  if (!state.downloadDestSecretValue.trim() && !downloadDestProfileUsesVault()) {
+    return state.downloadDestProvider.trim() === 'gcs'
+      ? 'A service-account key (JSON) is required -- paste its content into the secret field'
+      : 'A secret is required'
+  }
+  return ''
+}
+
 export async function runDownloadStart() {
   const profileId = state.downloadSourceKind === 'profile' ? (state.downloadSourceProfileId ?? undefined) : undefined
   if (state.downloadSourceKind === 'profile' && !profileId) return
   const source = state.downloadSource.trim()
-  const dest = state.downloadDest.trim()
+  const dest = effectiveDownloadDest()
   state.downloadSourceError = source ? (validateUploadPositional(source, 'Source path') ?? '') : 'Source path is required'
-  state.downloadDestError = dest ? (validateUploadPositional(dest, 'Destination folder') ?? '') : 'Destination folder is required'
+  state.downloadDestError = validateDownloadDestAndSecret()
   if (state.downloadSourceError || state.downloadDestError) return
   const globError = downloadGlobError()
   if (globError) {
@@ -2278,7 +2827,18 @@ export async function runDownloadStart() {
   state.downloadStartError = ''
   state.downloadDryRunReport = ''
   try {
-    const result = await startDownload(state.downloadSourceKind, profileId, source, dest, downloadStartParams(), state.downloadStartSecretValue || undefined)
+    const destSecret = isExternalDownloadDest() ? state.downloadDestSecretValue || undefined : undefined
+    const transferDestProfileId = isExternalDownloadDest() ? (state.downloadDestProfileSelectedId ?? undefined) : undefined
+    const result = await startDownload(
+      state.downloadSourceKind,
+      profileId,
+      source,
+      dest,
+      downloadStartParams(),
+      state.downloadStartSecretValue || undefined,
+      destSecret,
+      transferDestProfileId,
+    )
     if (state.downloadDryRun) {
       state.downloadDryRunReport = result
     } else {
@@ -2290,6 +2850,44 @@ export async function runDownloadStart() {
     state.downloadStartError = describeError(error)
   } finally {
     state.downloadsBusy = false
+  }
+}
+
+// runDownloadDestTest is the export mirror of runUploadSourceTest: the
+// "Test connection" affordance for an external destination. Unlike
+// upload's Test Connection (which can submit a harmless '/' placeholder
+// DEST_PATH, since a URI SOURCE dry-run never reads it), a download's
+// dry-run genuinely walks/discovers SOURCE too (runDownloadDryRun,
+// cmd_download.go), so this requires a real, already-valid Source exactly
+// like a real Start does -- there is no meaningful way to test "can I reach
+// this bucket" independent of a real source to report a plan against.
+export async function runDownloadDestTest() {
+  const profileId = state.downloadSourceKind === 'profile' ? (state.downloadSourceProfileId ?? undefined) : undefined
+  if (state.downloadSourceKind === 'profile' && !profileId) return
+  const source = state.downloadSource.trim()
+  state.downloadSourceError = source ? (validateUploadPositional(source, 'Source path') ?? '') : 'Source path is required'
+  state.downloadDestError = validateDownloadDestAndSecret()
+  if (state.downloadSourceError || state.downloadDestError) return
+  state.downloadDestTestBusy = true
+  state.downloadDestTestError = ''
+  state.downloadDestTestReport = ''
+  try {
+    const dest = effectiveDownloadDest()
+    const result = await startDownload(
+      state.downloadSourceKind,
+      profileId,
+      source,
+      dest,
+      { ...downloadStartParams(), dryRun: true },
+      state.downloadStartSecretValue || undefined,
+      state.downloadDestSecretValue || undefined,
+      state.downloadDestProfileSelectedId ?? undefined,
+    )
+    state.downloadDestTestReport = result
+  } catch (error) {
+    state.downloadDestTestError = describeError(error)
+  } finally {
+    state.downloadDestTestBusy = false
   }
 }
 
@@ -2350,9 +2948,12 @@ export async function browseDownloadSource() {
   }
 }
 
-// Destination is always a plain local folder, mirrors browseUploadSource's
-// simple shape, not browseUploadDestination's scratch-mount complexity
-// (there's no remote destination to browse into for a download).
+// Only meaningful in 'local' mode (an external DEST_PATH has no local
+// folder to browse into, see isExternalDownloadDest -- the view itself
+// hides this button in that mode). Mirrors browseUploadSource's simple
+// shape, not browseUploadDestination's scratch-mount complexity (there's
+// no remote destination to browse into for a download's local mode
+// either).
 export async function browseDownloadDestination() {
   const chosen = await browseFolder('Choose a destination folder')
   if (chosen) state.downloadDest = chosen

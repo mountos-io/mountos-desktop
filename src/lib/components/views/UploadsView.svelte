@@ -24,6 +24,7 @@
   import { Label } from '$lib/components/ui/label'
   import { Checkbox } from '$lib/components/ui/checkbox'
   import { Textarea } from '$lib/components/ui/textarea'
+  import { Select } from '$lib/components/ui/select'
   import { Badge, type BadgeVariant } from '$lib/components/ui/badge'
   import { Table, TableBody, TableRow, TableCell } from '$lib/components/ui/table'
   import Combobox from '$lib/components/shared/Combobox.svelte'
@@ -32,33 +33,54 @@
   import CliErrorOutput from '$lib/components/CliErrorOutput.svelte'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import { focusOnMount } from '$lib/actions'
+  import { UPLOAD_SOURCE_PROVIDERS } from '$lib/cli'
   import {
     appState,
     browseUploadDestination,
     browseUploadSource,
     buildUploadResumeArgv,
     cancelUploadResume,
+    clearTransferSourceProfileSelection,
+    closeSaveTransferSourceProfile,
     computed,
     confirmUploadResume,
     copyUploadJobLogPath,
+    effectiveUploadSource,
     enterUploadCreate,
     exitUploadCreate,
     isExternalUploadSource,
+    openSaveTransferSourceProfile,
     openUploadJobLog,
+    removeTransferSourceProfile,
     requestUploadPrune,
     requestUploadResume,
     runUploadCancel,
     runUploadFinish,
     runUploadList,
     runUploadRetryFailed,
+    runUploadSourceTest,
     runUploadStart,
+    saveCurrentAsTransferSourceProfile,
+    selectTransferSourceProfile,
     selectUploadInstance,
     selectUploadProfile,
+    selectUploadSourceType,
+    uploadSourceProfileUsesVault,
     closeJobPanelFloating,
     setJobPanelCollapsed,
   } from '$lib/app-state.svelte'
   import type { MountInstance, MountProfile, UploadJob } from '$lib/types'
   import { cn, formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
+
+  const SOURCE_TYPE_OPTIONS = [
+    { value: 'local', label: 'Local folder / file list' },
+    { value: 'external', label: 'Object storage (S3 / Azure / GCS)' },
+  ]
+  const NEW_SOURCE_OPTION = '__new__'
+  const savedSourceOptions = $derived([
+    { value: NEW_SOURCE_OPTION, label: '+ New source' },
+    ...appState.transferSourceProfiles.map((p) => ({ value: p.id, label: p.name })),
+  ])
 
   // Fetch exactly once per mount, not gated on uploads.length === 0. Unlike
   // forks (every profile always has at least "main", so that gate never
@@ -220,7 +242,7 @@
             <Badge variant="secondary" class="min-w-0 shrink truncate" title="Fork: {computed.uploadResolvedFork || 'main'}">{computed.uploadResolvedFork || 'main'}</Badge>
           {/if}
         </div>
-        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy || !uploadSourceReady || !appState.uploadSource.trim() || !appState.uploadDest.trim()}>
+        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy || !uploadSourceReady || !effectiveUploadSource() || !appState.uploadDest.trim()}>
           <Upload size={16} aria-hidden="true" />
           {appState.uploadDryRun ? 'Run dry run' : 'Start upload'}
         </Button>
@@ -242,54 +264,82 @@
       </div>
 
       {#if uploadSourceReady}
-        <div class="grid gap-1.5">
-          <Label for="upload-source">Source folder</Label>
-          <div class="flex gap-2">
-            <Input
-              id="upload-source"
-              bind:value={appState.uploadSource}
-              placeholder="/local/photos or s3://bucket/prefix"
-              class="flex-1"
-            />
-            <Button type="button" onclick={browseUploadSource} disabled={appState.uploadsBusy || isExternalUploadSource()} class="shrink-0">
-              <FolderOpen size={16} aria-hidden="true" /> Browse
-            </Button>
-          </div>
-          {#if appState.uploadSourceError}
-            <small class="text-destructive text-sm">{appState.uploadSourceError}</small>
-          {/if}
+        <div class="grid gap-1.5 max-w-sm">
+          <Label id="upload-source-type-label">Source type</Label>
+          <Select
+            id="upload-source-type"
+            options={SOURCE_TYPE_OPTIONS}
+            value={appState.uploadSourceType}
+            ariaLabelledby="upload-source-type-label"
+            onchange={(value) => selectUploadSourceType(value)}
+          />
         </div>
 
-        {#if isExternalUploadSource()}
+        {#if !isExternalUploadSource()}
+          <div class="grid gap-1.5">
+            <Label for="upload-source">Source folder</Label>
+            <div class="flex gap-2">
+              <Input id="upload-source" bind:value={appState.uploadSource} placeholder="/local/photos" class="flex-1" />
+              <Button type="button" onclick={browseUploadSource} disabled={appState.uploadsBusy} class="shrink-0">
+                <FolderOpen size={16} aria-hidden="true" /> Browse
+              </Button>
+            </div>
+            {#if appState.uploadSourceError}
+              <small class="text-destructive text-sm">{appState.uploadSourceError}</small>
+            {/if}
+          </div>
+        {:else}
           <div class="grid gap-3 border border-border/40 p-3">
-            <p class="text-muted-foreground text-sm">
-              Object storage source (<code>s3://</code>, <code>az://</code>/<code>azblob://</code>, or
-              <code>gs://</code>) -- credentials below are never written to the command line.
-            </p>
-            <div class="grid gap-1.5">
-              <Label for="upload-source-provider">Provider</Label>
-              <Input
+            {#if appState.transferSourceProfiles.length > 0}
+              <div class="grid gap-1.5 max-w-sm">
+                <Label id="upload-source-saved-label">Saved source</Label>
+                <Select
+                  id="upload-source-saved"
+                  options={savedSourceOptions}
+                  value={appState.uploadSourceProfileSelectedId ?? NEW_SOURCE_OPTION}
+                  ariaLabelledby="upload-source-saved-label"
+                  onchange={(value) => (value === NEW_SOURCE_OPTION ? clearTransferSourceProfileSelection() : selectTransferSourceProfile(value))}
+                />
+              </div>
+            {/if}
+
+            <div class="grid gap-1.5 max-w-sm">
+              <Label id="upload-source-provider-label">Provider</Label>
+              <Select
                 id="upload-source-provider"
-                bind:value={appState.uploadSourceProvider}
-                placeholder="s3, s3compatible, backblaze, wasabi, cloudflare, azure, gcs, ..."
+                options={UPLOAD_SOURCE_PROVIDERS}
+                value={appState.uploadSourceProvider}
+                placeholder="Choose a provider..."
+                ariaLabelledby="upload-source-provider-label"
+                onchange={(value) => (appState.uploadSourceProvider = value)}
               />
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div class="grid gap-1.5">
-                <Label for="upload-source-endpoint">Endpoint</Label>
-                <Input id="upload-source-endpoint" bind:value={appState.uploadSourceEndpoint} placeholder="required for s3compatible" />
+                <Label for="upload-source-bucket">{appState.uploadSourceProvider === 'azure' ? 'Container' : 'Bucket'}</Label>
+                <Input id="upload-source-bucket" bind:value={appState.uploadSourceBucket} autocomplete="off" />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="upload-source-prefix">Prefix (optional)</Label>
+                <Input id="upload-source-prefix" bind:value={appState.uploadSourcePrefix} placeholder="photos/2026" autocomplete="off" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="grid gap-1.5">
+                <Label for="upload-source-endpoint">Endpoint{appState.uploadSourceProvider === 's3compatible' ? ' (required)' : ''}</Label>
+                <Input id="upload-source-endpoint" bind:value={appState.uploadSourceEndpoint} placeholder={appState.uploadSourceProvider === 's3compatible' ? 'https://...' : 'auto-derived if left blank'} />
               </div>
               <div class="grid gap-1.5">
                 <Label for="upload-source-region">Region</Label>
                 <Input id="upload-source-region" bind:value={appState.uploadSourceRegion} />
               </div>
             </div>
-            {#if appState.uploadSourceProvider.trim() === 'azure'}
+            {#if appState.uploadSourceProvider === 'azure'}
               <div class="grid gap-1.5">
                 <Label for="upload-source-account">Storage account name</Label>
                 <Input id="upload-source-account" bind:value={appState.uploadSourceAccount} />
               </div>
-            {:else}
+            {:else if appState.uploadSourceProvider !== 'gcs'}
               <div class="grid gap-1.5">
                 <Label for="upload-source-access-key-id">Access key id</Label>
                 <Input id="upload-source-access-key-id" bind:value={appState.uploadSourceAccessKeyId} autocomplete="off" />
@@ -297,17 +347,58 @@
             {/if}
             <div class="grid gap-1.5">
               <Label for="upload-source-secret">
-                {appState.uploadSourceProvider.trim() === 'gcs' ? 'Service-account key (JSON)' : 'Secret access key'}
+                {appState.uploadSourceProvider === 'gcs' ? 'Service-account key (JSON)' : 'Secret access key'}
+                {#if uploadSourceProfileUsesVault()}<span class="text-muted-foreground font-normal">(optional, using saved vault credential)</span>{/if}
               </Label>
-              {#if appState.uploadSourceProvider.trim() === 'gcs'}
-                <Textarea id="upload-source-secret" bind:value={appState.uploadSourceSecretValue} rows={4} placeholder={'{"type": "service_account", ...}'} />
+              {#if appState.uploadSourceProvider === 'gcs'}
+                <Textarea id="upload-source-secret" bind:value={appState.uploadSourceSecretValue} rows={4} placeholder={uploadSourceProfileUsesVault() ? 'Leave blank to use the saved vault credential' : '{"type": "service_account", ...}'} />
               {:else}
-                <Input id="upload-source-secret" type="password" bind:value={appState.uploadSourceSecretValue} autocomplete="off" />
+                <Input id="upload-source-secret" type="password" bind:value={appState.uploadSourceSecretValue} autocomplete="off" placeholder={uploadSourceProfileUsesVault() ? 'Leave blank to use the saved vault credential' : ''} />
               {/if}
-              <small class="text-muted-foreground text-xs">
-                Written to a private, single-use file the mountos CLI reads once and deletes immediately -- never passed as a command-line value.
-              </small>
             </div>
+            {#if appState.uploadSourceError}
+              <small class="text-destructive text-sm">{appState.uploadSourceError}</small>
+            {/if}
+
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              <Button type="button" variant="secondary" onclick={() => runUploadSourceTest()} disabled={appState.uploadSourceTestBusy}>
+                <Radar size={16} aria-hidden="true" /> {appState.uploadSourceTestBusy ? 'Testing...' : 'Test connection'}
+              </Button>
+              <Button type="button" variant="secondary" onclick={openSaveTransferSourceProfile}>
+                Save as transfer source
+              </Button>
+              {#if appState.uploadSourceProfileSelectedId}
+                <Button type="button" variant="ghost" onclick={() => removeTransferSourceProfile(appState.uploadSourceProfileSelectedId ?? '')} class="text-destructive">
+                  <Trash2 size={16} aria-hidden="true" /> Delete saved source
+                </Button>
+              {/if}
+            </div>
+            {#if appState.uploadSourceTestReport}
+              <p class="text-sm font-mono whitespace-pre-wrap border border-border/40 p-2">{appState.uploadSourceTestReport}</p>
+            {/if}
+            {#if appState.uploadSourceTestError}
+              <small class="text-destructive text-sm wrap-anywhere">{appState.uploadSourceTestError}</small>
+            {/if}
+
+            {#if appState.uploadSourceSaveOpen}
+              <div class="grid gap-3 border border-border/40 p-3 bg-muted/20">
+                <div class="grid gap-1.5 max-w-sm">
+                  <Label for="upload-source-save-name">Name</Label>
+                  <Input id="upload-source-save-name" bind:value={appState.uploadSourceSaveName} placeholder="My S3 bucket" />
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <Checkbox bind:checked={appState.uploadSourceSaveToVault} label="Store secret in OS vault" />
+                  <InfoTip text="Stores the secret in your OS credential store so this source never asks for it again. Leave blank to be prompted next time." />
+                </div>
+                {#if appState.uploadSourceSaveError}
+                  <small class="text-destructive text-sm">{appState.uploadSourceSaveError}</small>
+                {/if}
+                <div class="flex gap-2">
+                  <Button type="button" variant="primary" onclick={() => saveCurrentAsTransferSourceProfile()}>Save</Button>
+                  <Button type="button" variant="ghost" onclick={closeSaveTransferSourceProfile}>Cancel</Button>
+                </div>
+              </div>
+            {/if}
           </div>
         {/if}
 
@@ -329,7 +420,7 @@
 
         {#if computed.uploadNeedsSecret}
           <div class="grid gap-1.5 max-w-sm">
-            <Label for="upload-start-secret">Secret access key</Label>
+            <Label for="upload-start-secret">Profile secret access key</Label>
             <Input id="upload-start-secret" type="password" bind:value={appState.uploadStartSecretValue} autocomplete="current-password" />
           </div>
         {/if}
@@ -439,7 +530,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
       <div class="flex justify-end gap-2">
         <Button type="button" variant="outline" onclick={exitUploadCreate}>Cancel</Button>
-        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy || !uploadSourceReady || !appState.uploadSource.trim() || !appState.uploadDest.trim()}>
+        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.uploadsBusy || !uploadSourceReady || !effectiveUploadSource() || !appState.uploadDest.trim()}>
           <Upload size={16} aria-hidden="true" />
           {appState.uploadDryRun ? 'Run dry run' : 'Start upload'}
         </Button>

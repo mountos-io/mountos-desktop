@@ -352,13 +352,71 @@ export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchPar
 // Mirrors uploadjob.LooksLikeURI (mountos-servers): a "scheme://..." shape,
 // requiring at least 2 chars before "://" so a Windows drive-letter path
 // ("C:\...", or even a stray "c://" typo) never misdetects as a URI scheme.
-// Used by the upload form to decide when to show the object-store source
-// fields, and by buildUploadStartArgv's callers to decide whether
-// sourceSecretFile even applies -- never used as a security boundary itself
-// (the CLI's own detection is authoritative; this only drives the UI).
+// The upload form itself never sniffs a typed string to decide this --
+// object-storage vs. local is an explicit toggle (see UploadsView.svelte's
+// Source type selector) -- this is used only as a self-check on
+// buildExternalSourceUri's OWN output before it's ever sent to argv, never
+// as a security boundary (the CLI's own scheme table is authoritative).
 export function looksLikeSourceUri(source: string): boolean {
   const idx = source.indexOf('://')
   return idx >= 2
+}
+
+// buildExternalSourceUri renders the "scheme://bucket/prefix" form from the
+// upload form's structured provider/bucket/prefix fields -- the user never
+// hand-types a URI (and so can never hand a malformed one to the CLI): gcs
+// gets gs://, azure gets az://, every other provider (s3 and every
+// S3-compatible one) gets s3://, mirroring mountos-servers'
+// ParseExternalSourceURI's own scheme table exactly in reverse. Returns null
+// when bucket is blank -- there is nothing valid to build yet.
+export function buildExternalSourceUri(provider: string, bucket: string, prefix: string): string | null {
+  const trimmedBucket = bucket.trim().replace(/^\/+|\/+$/g, '')
+  if (!trimmedBucket) return null
+  const scheme = provider === 'azure' ? 'az' : provider === 'gcs' ? 'gs' : 's3'
+  const trimmedPrefix = prefix.trim().replace(/^\/+|\/+$/g, '')
+  const uri = `${scheme}://${trimmedBucket}${trimmedPrefix ? `/${trimmedPrefix}` : ''}`
+  // Self-check: this construction must always produce something the CLI's
+  // own detection recognizes as a URI, or a bug here would silently send an
+  // external source down the local-path code path instead.
+  return looksLikeSourceUri(uri) ? uri : null
+}
+
+// UPLOAD_SOURCE_PROVIDERS is the known --source-provider vocabulary
+// (constants.ProviderType* in mountos-servers), for the form's Provider
+// select -- a real dropdown, not free text, so a typo can never reach argv
+// as an unrecognized provider the CLI would only reject after a launch
+// attempt.
+export const UPLOAD_SOURCE_PROVIDERS: { value: string; label: string }[] = [
+  { value: 's3', label: 'S3 (AWS)' },
+  { value: 's3compatible', label: 'S3-compatible (custom endpoint)' },
+  { value: 'backblaze', label: 'Backblaze B2' },
+  { value: 'wasabi', label: 'Wasabi' },
+  { value: 'cloudflare', label: 'Cloudflare R2' },
+  { value: 'digitalocean', label: 'DigitalOcean Spaces' },
+  { value: 'ibmcloud', label: 'IBM Cloud Object Storage' },
+  { value: 'impossiblecloud', label: 'Impossible Cloud' },
+  { value: 'lyve', label: 'Seagate Lyve Cloud' },
+  { value: 'azure', label: 'Azure Blob Storage' },
+  { value: 'gcs', label: 'Google Cloud Storage' },
+]
+
+// validateExternalSourceFields checks the object-storage form's structured
+// fields, mirroring mountos-servers' own hard requirements exactly (so a
+// mistake is caught here, inline, instead of after a process is already
+// spawned and failing): bucket is always required; s3compatible has no
+// default endpoint (resolveEndpoint, mountos-servers) so it must be typed;
+// azure authenticates with account+key so the account name is required;
+// every other provider needs an access-key-id/secret pair, so the id is
+// required too (gcs is the one exception -- its whole credential is the
+// secret, a service-account key, no separate id). The secret itself is
+// validated by the caller (runUploadStart/runUploadSourceTest), which also
+// has uploadSourceSecretValue in scope.
+export function validateExternalSourceFields(provider: string, bucket: string, endpoint: string, account: string, accessKeyId: string): string | null {
+  if (!bucket.trim()) return 'Bucket/container name is required'
+  if (provider === 's3compatible' && !endpoint.trim()) return 'Endpoint is required for a custom S3-compatible provider'
+  if (provider === 'azure' && !account.trim()) return 'Storage account name is required for Azure Blob'
+  if (provider !== 'azure' && provider !== 'gcs' && !accessKeyId.trim()) return 'Access key id is required'
+  return null
 }
 
 export interface UploadStartParams {
@@ -526,6 +584,18 @@ export interface DownloadStartParams {
   excludeGlobs: string[]
   followSymlinks: boolean
   createSourceDirectory: boolean
+  // Non-secret identifiers for a URI DEST_PATH (s3://, az://, azblob://,
+  // gs://), the export mirror of UploadStartParams' source* fields. The
+  // secret itself is never a field here -- see buildDownloadStartArgv's own
+  // destSecretFile parameter, which is the ONLY place a resolved
+  // destination secret reaches this builder, and only as a file path
+  // already written to disk, matching the mountos CLI's
+  // --dest-temporary-secret-file contract exactly.
+  destProvider?: string
+  destEndpoint?: string
+  destRegion?: string
+  destAccount?: string
+  destAccessKeyId?: string
 }
 
 // `download <SOURCE> <DEST_PATH>`'s flag surface, confirmed against
@@ -555,6 +625,7 @@ export function buildDownloadStartArgv(
   source: string,
   dest: string,
   params: DownloadStartParams,
+  destSecretFile?: string,
 ): string[] {
   const argv = ['download']
   if (sourceKind === 'profile') {
@@ -582,6 +653,18 @@ export function buildDownloadStartArgv(
   }
   if (params.followSymlinks) argv.push('--follow-symlinks')
   if (params.createSourceDirectory) argv.push('--create-source-directory')
+  // Non-secret identifiers for a URI DEST_PATH; destSecretFile is the ONLY
+  // secret-bearing thing this builder ever touches, and only as a path,
+  // never the secret's own content -- mirrors buildUploadStartArgv's
+  // sourceSecretFile handling exactly, including never emitting the
+  // persistent --dest-secret-file flag (the desktop app always uses the
+  // single-use --dest-temporary-secret-file handoff).
+  if (params.destProvider?.trim()) argv.push('--dest-provider', params.destProvider.trim())
+  if (params.destEndpoint?.trim()) argv.push('--dest-endpoint', params.destEndpoint.trim())
+  if (params.destRegion?.trim()) argv.push('--dest-region', params.destRegion.trim())
+  if (params.destAccount?.trim()) argv.push('--dest-account', params.destAccount.trim())
+  if (params.destAccessKeyId?.trim()) argv.push('--dest-access-key-id', params.destAccessKeyId.trim())
+  if (destSecretFile) argv.push('--dest-temporary-secret-file', destSecretFile)
   if (sourceKind === 'profile' && profile) pushSatelliteCredentials(argv, profile)
   argv.push('--', source, dest)
   return argv

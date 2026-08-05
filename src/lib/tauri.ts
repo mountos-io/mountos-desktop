@@ -18,6 +18,7 @@ import type {
   SinkStatus,
   SystemState,
   ThirdPartyLicenses,
+  TransferSourceProfile,
   UnmountResult,
   UnmountAllResult,
   UploadInstanceRef,
@@ -157,6 +158,40 @@ export async function getProfileSecretStatus(profileId: string): Promise<SecretS
   return invoke<SecretStatus>('get_profile_secret_status', { profileId })
 }
 
+// Transfer source profiles (saved upload/import external-object-store
+// sources) -- a deliberately separate CRUD set from the MountProfile one
+// above, mirroring it command-for-command; see TransferSourceProfile's own
+// doc comment (types.ts) for why it's not a MountProfile variant.
+export async function listTransferSourceProfiles(): Promise<TransferSourceProfile[]> {
+  if (!hasDesktopBridge()) return []
+  return invoke<TransferSourceProfile[]>('list_transfer_source_profiles')
+}
+
+export async function saveTransferSourceProfile(profile: TransferSourceProfile): Promise<TransferSourceProfile> {
+  if (!hasDesktopBridge()) return { ...profile, updatedAt: new Date().toISOString() }
+  return invoke<TransferSourceProfile>('save_transfer_source_profile', { profile })
+}
+
+export async function deleteTransferSourceProfile(id: string): Promise<void> {
+  if (!hasDesktopBridge()) return
+  await invoke('delete_transfer_source_profile', { id })
+}
+
+export async function setTransferSourceProfileSecret(id: string, secret: string): Promise<SecretStatus> {
+  if (!hasDesktopBridge()) return { profileId: id, stored: true }
+  return invoke<SecretStatus>('set_transfer_source_profile_secret', { id, secret })
+}
+
+export async function deleteTransferSourceProfileSecret(id: string): Promise<SecretStatus> {
+  if (!hasDesktopBridge()) return { profileId: id, stored: false }
+  return invoke<SecretStatus>('delete_transfer_source_profile_secret', { id })
+}
+
+export async function getTransferSourceProfileSecretStatus(id: string): Promise<SecretStatus> {
+  if (!hasDesktopBridge()) return { profileId: id, stored: false }
+  return invoke<SecretStatus>('get_transfer_source_profile_secret_status', { id })
+}
+
 export async function mountProfile(profileId: string, secret?: string): Promise<MountResult> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<MountResult>('mount_profile', { profileId, secret })
@@ -204,15 +239,20 @@ export async function startUpload(
   dest: string,
   params: UploadStartParams,
   secret?: string,
-  // sourceSecret is the resolved secret for a URI SOURCE (S3/Azure/GCS),
-  // never a saved-profile secret -- start_upload_blocking (Rust) writes it
-  // to a private, single-use temp file and passes only that file's PATH to
-  // the mountos CLI (--source-temporary-secret-file), the same "no secret
-  // in argv" contract every other secret in this app already follows.
+  // sourceSecret is the resolved secret for a URI SOURCE (S3/Azure/GCS) --
+  // start_upload_blocking (Rust) writes it to a private, single-use temp
+  // file and passes only that file's PATH to the mountos CLI
+  // (--source-temporary-secret-file), the same "no secret in argv" contract
+  // every other secret in this app already follows. When
+  // transferSourceProfileId is set, sourceSecret is only a fallback/
+  // override (e.g. a re-typed "prompt" secret) -- Rust resolves the saved
+  // profile's own vault entry itself when this is a "vault" profile, so the
+  // decrypted secret is never round-tripped through this JS call at all.
   sourceSecret?: string,
+  transferSourceProfileId?: string,
 ): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
-  return invoke<string>('start_upload', { profileId, instance, source, dest, params, secret, sourceSecret })
+  return invoke<string>('start_upload', { profileId, instance, source, dest, params, secret, sourceSecret, transferSourceProfileId })
 }
 
 // Ensures a read-only scratch mount of the upload source's volume exists
@@ -290,9 +330,20 @@ export async function startDownload(
   dest: string,
   params: DownloadStartParams,
   secret?: string,
+  // destSecret is the resolved secret for a URI DEST_PATH (S3/Azure/GCS) --
+  // start_download_blocking (Rust) writes it to a private, single-use temp
+  // file and passes only that file's PATH to the mountos CLI
+  // (--dest-temporary-secret-file), the same "no secret in argv" contract
+  // startUpload's sourceSecret already follows. When transferDestProfileId
+  // is set, destSecret is only a fallback/override (e.g. a re-typed
+  // "prompt" secret) -- Rust resolves the saved profile's own vault entry
+  // itself when this is a "vault" profile, so the decrypted secret is never
+  // round-tripped through this JS call at all.
+  destSecret?: string,
+  transferDestProfileId?: string,
 ): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
-  return invoke<string>('start_download', { sourceKind, profileId, source, dest, params, secret })
+  return invoke<string>('start_download', { sourceKind, profileId, source, dest, params, secret, destSecret, transferDestProfileId })
 }
 
 // Download's source-picker Browse for a 'profile'-mode source only (mode A

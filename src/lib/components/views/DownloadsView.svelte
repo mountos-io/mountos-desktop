@@ -13,6 +13,7 @@
     PanelLeftClose,
     PanelRightClose,
     Plus,
+    Radar,
     RefreshCw,
     RotateCcw,
     Tag,
@@ -32,33 +33,55 @@
   import CliErrorOutput from '$lib/components/CliErrorOutput.svelte'
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import { focusOnMount } from '$lib/actions'
+  import { UPLOAD_SOURCE_PROVIDERS } from '$lib/cli'
   import {
     appState,
     browseDownloadDestination,
     browseDownloadSource,
     buildDownloadResumeArgv,
     cancelDownloadResume,
+    clearDownloadDestProfileSelection,
     closeJobPanelFloating,
+    closeSaveDownloadDestTransferProfile,
     computed,
     confirmDownloadResume,
     copyDownloadJobLogPath,
+    downloadDestProfileUsesVault,
+    effectiveDownloadDest,
     enterDownloadCreate,
     exitDownloadCreate,
+    isExternalDownloadDest,
     openDownloadJobLog,
+    openSaveDownloadDestTransferProfile,
+    removeTransferSourceProfile,
     requestDownloadPrune,
     requestDownloadResume,
     resetDownloadForm,
     runDownloadCancel,
+    runDownloadDestTest,
     runDownloadFinish,
     runDownloadList,
     runDownloadRetryFailed,
     runDownloadStart,
+    saveDownloadDestAsTransferProfile,
+    selectDownloadDestTransferProfile,
+    selectDownloadDestType,
     selectDownloadInstance,
     selectDownloadProfile,
     setJobPanelCollapsed,
   } from '$lib/app-state.svelte'
   import type { DownloadJob, MountInstance, MountProfile } from '$lib/types'
   import { cn, formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
+
+  const DEST_TYPE_OPTIONS = [
+    { value: 'local', label: 'Local folder' },
+    { value: 'external', label: 'Object storage (S3 / Azure / GCS)' },
+  ]
+  const NEW_DEST_OPTION = '__new__'
+  const savedDestOptions = $derived([
+    { value: NEW_DEST_OPTION, label: '+ New destination' },
+    ...appState.transferSourceProfiles.map((p) => ({ value: p.id, label: p.name })),
+  ])
 
   // Fetch exactly once per mount, mirrors UploadsView's own fetchedOnce
   // gate (an empty job list is the normal first-run state, so gating on
@@ -239,7 +262,7 @@
             <Badge variant="secondary" class="min-w-0 shrink truncate" title="Fork: {computed.downloadResolvedFork}">{computed.downloadResolvedFork}</Badge>
           {/if}
         </div>
-        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.downloadsBusy || !downloadSourceReady || !appState.downloadSource.trim() || !appState.downloadDest.trim()}>
+        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.downloadsBusy || !downloadSourceReady || !appState.downloadSource.trim() || !effectiveDownloadDest()}>
           <Download size={16} aria-hidden="true" />
           {appState.downloadDryRun ? 'Run dry run' : 'Start download'}
         </Button>
@@ -253,13 +276,11 @@
           <Button type="button" size="sm" variant={appState.downloadSourceKind === 'instance' ? 'primary' : 'outline'} onclick={() => selectSourceKind('instance')}>Mounted instance</Button>
           <Button type="button" size="sm" variant={appState.downloadSourceKind === 'profile' ? 'primary' : 'outline'} onclick={() => selectSourceKind('profile')}>Saved profile</Button>
         </div>
-        <p class="text-muted-foreground text-sm">
-          {#if appState.downloadSourceKind === 'instance'}
-            Reads straight through an already-mounted volume, no connection, no credentials.
-          {:else}
+        {#if appState.downloadSourceKind === 'profile'}
+          <p class="text-muted-foreground text-sm">
             Connects fresh to a saved profile's fork (optionally as of a past snapshot).
-          {/if}
-        </p>
+          </p>
+        {/if}
       </div>
 
       {#if appState.downloadSourceKind === 'instance'}
@@ -323,18 +344,143 @@ Leave blank to read the fork's current, live content." />
           {/if}
         </div>
 
-        <div class="grid gap-1.5">
-          <Label for="download-dest">Destination folder</Label>
-          <div class="flex gap-2">
-            <Input id="download-dest" bind:value={appState.downloadDest} placeholder="/local/backups/photos" class="flex-1" />
-            <Button type="button" onclick={browseDownloadDestination} disabled={appState.downloadsBusy} class="shrink-0">
-              <FolderOpen size={16} aria-hidden="true" /> Browse
-            </Button>
-          </div>
-          {#if appState.downloadDestError}
-            <small class="text-destructive text-sm">{appState.downloadDestError}</small>
-          {/if}
+        <div class="grid gap-1.5 max-w-sm">
+          <Label id="download-dest-type-label">Destination type</Label>
+          <Select
+            id="download-dest-type"
+            options={DEST_TYPE_OPTIONS}
+            value={appState.downloadDestType}
+            ariaLabelledby="download-dest-type-label"
+            onchange={(value) => selectDownloadDestType(value)}
+          />
         </div>
+
+        {#if !isExternalDownloadDest()}
+          <div class="grid gap-1.5">
+            <Label for="download-dest">Destination folder</Label>
+            <div class="flex gap-2">
+              <Input id="download-dest" bind:value={appState.downloadDest} placeholder="/local/backups/photos" class="flex-1" />
+              <Button type="button" onclick={browseDownloadDestination} disabled={appState.downloadsBusy} class="shrink-0">
+                <FolderOpen size={16} aria-hidden="true" /> Browse
+              </Button>
+            </div>
+            {#if appState.downloadDestError}
+              <small class="text-destructive text-sm">{appState.downloadDestError}</small>
+            {/if}
+          </div>
+        {:else}
+          <div class="grid gap-3 border border-border/40 p-3">
+            {#if appState.transferSourceProfiles.length > 0}
+              <div class="grid gap-1.5 max-w-sm">
+                <Label id="download-dest-saved-label">Saved destination</Label>
+                <Select
+                  id="download-dest-saved"
+                  options={savedDestOptions}
+                  value={appState.downloadDestProfileSelectedId ?? NEW_DEST_OPTION}
+                  ariaLabelledby="download-dest-saved-label"
+                  onchange={(value) => (value === NEW_DEST_OPTION ? clearDownloadDestProfileSelection() : selectDownloadDestTransferProfile(value))}
+                />
+              </div>
+            {/if}
+
+            <div class="grid gap-1.5 max-w-sm">
+              <Label id="download-dest-provider-label">Provider</Label>
+              <Select
+                id="download-dest-provider"
+                options={UPLOAD_SOURCE_PROVIDERS}
+                value={appState.downloadDestProvider}
+                placeholder="Choose a provider..."
+                ariaLabelledby="download-dest-provider-label"
+                onchange={(value) => (appState.downloadDestProvider = value)}
+              />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="grid gap-1.5">
+                <Label for="download-dest-bucket">{appState.downloadDestProvider === 'azure' ? 'Container' : 'Bucket'}</Label>
+                <Input id="download-dest-bucket" bind:value={appState.downloadDestBucket} autocomplete="off" />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="download-dest-prefix">Prefix (optional)</Label>
+                <Input id="download-dest-prefix" bind:value={appState.downloadDestPrefix} placeholder="backups/2026" autocomplete="off" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="grid gap-1.5">
+                <Label for="download-dest-endpoint">Endpoint{appState.downloadDestProvider === 's3compatible' ? ' (required)' : ''}</Label>
+                <Input id="download-dest-endpoint" bind:value={appState.downloadDestEndpoint} placeholder={appState.downloadDestProvider === 's3compatible' ? 'https://...' : 'auto-derived if left blank'} />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="download-dest-region">Region</Label>
+                <Input id="download-dest-region" bind:value={appState.downloadDestRegion} />
+              </div>
+            </div>
+            {#if appState.downloadDestProvider === 'azure'}
+              <div class="grid gap-1.5">
+                <Label for="download-dest-account">Storage account name</Label>
+                <Input id="download-dest-account" bind:value={appState.downloadDestAccount} />
+              </div>
+            {:else if appState.downloadDestProvider !== 'gcs'}
+              <div class="grid gap-1.5">
+                <Label for="download-dest-access-key-id">Access key id</Label>
+                <Input id="download-dest-access-key-id" bind:value={appState.downloadDestAccessKeyId} autocomplete="off" />
+              </div>
+            {/if}
+            <div class="grid gap-1.5">
+              <Label for="download-dest-secret">
+                {appState.downloadDestProvider === 'gcs' ? 'Service-account key (JSON)' : 'Secret access key'}
+                {#if downloadDestProfileUsesVault()}<span class="text-muted-foreground font-normal">(optional, using saved vault credential)</span>{/if}
+              </Label>
+              {#if appState.downloadDestProvider === 'gcs'}
+                <Textarea id="download-dest-secret" bind:value={appState.downloadDestSecretValue} rows={4} placeholder={downloadDestProfileUsesVault() ? 'Leave blank to use the saved vault credential' : '{"type": "service_account", ...}'} />
+              {:else}
+                <Input id="download-dest-secret" type="password" bind:value={appState.downloadDestSecretValue} autocomplete="off" placeholder={downloadDestProfileUsesVault() ? 'Leave blank to use the saved vault credential' : ''} />
+              {/if}
+            </div>
+            {#if appState.downloadDestError}
+              <small class="text-destructive text-sm">{appState.downloadDestError}</small>
+            {/if}
+
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              <Button type="button" variant="secondary" onclick={() => runDownloadDestTest()} disabled={appState.downloadDestTestBusy}>
+                <Radar size={16} aria-hidden="true" /> {appState.downloadDestTestBusy ? 'Testing...' : 'Test connection'}
+              </Button>
+              <Button type="button" variant="secondary" onclick={openSaveDownloadDestTransferProfile}>
+                Save as transfer source
+              </Button>
+              {#if appState.downloadDestProfileSelectedId}
+                <Button type="button" variant="ghost" onclick={() => removeTransferSourceProfile(appState.downloadDestProfileSelectedId ?? '')} class="text-destructive">
+                  <Trash2 size={16} aria-hidden="true" /> Delete saved destination
+                </Button>
+              {/if}
+            </div>
+            {#if appState.downloadDestTestReport}
+              <p class="text-sm font-mono whitespace-pre-wrap border border-border/40 p-2">{appState.downloadDestTestReport}</p>
+            {/if}
+            {#if appState.downloadDestTestError}
+              <small class="text-destructive text-sm wrap-anywhere">{appState.downloadDestTestError}</small>
+            {/if}
+
+            {#if appState.downloadDestSaveOpen}
+              <div class="grid gap-3 border border-border/40 p-3 bg-muted/20">
+                <div class="grid gap-1.5 max-w-sm">
+                  <Label for="download-dest-save-name">Name</Label>
+                  <Input id="download-dest-save-name" bind:value={appState.downloadDestSaveName} placeholder="My S3 bucket" />
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <Checkbox bind:checked={appState.downloadDestSaveToVault} label="Store secret in OS vault" />
+                  <InfoTip text="Stores the secret in your OS credential store so this destination never asks for it again. Leave blank to be prompted next time." />
+                </div>
+                {#if appState.downloadDestSaveError}
+                  <small class="text-destructive text-sm">{appState.downloadDestSaveError}</small>
+                {/if}
+                <div class="flex gap-2">
+                  <Button type="button" variant="primary" onclick={() => saveDownloadDestAsTransferProfile()}>Save</Button>
+                  <Button type="button" variant="ghost" onclick={closeSaveDownloadDestTransferProfile}>Cancel</Button>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
 
         <div class="grid grid-cols-2 gap-4 max-w-2xl">
           <div class="grid gap-1.5">
@@ -366,7 +512,7 @@ Guards against an unbounded pull from a large remote tree by accident." />
 
         {#if computed.downloadNeedsSecret}
           <div class="grid gap-1.5 max-w-sm">
-            <Label for="download-start-secret">Secret access key</Label>
+            <Label for="download-start-secret">Profile secret access key</Label>
             <Input id="download-start-secret" type="password" bind:value={appState.downloadStartSecretValue} autocomplete="current-password" />
           </div>
         {/if}
@@ -453,7 +599,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
       <div class="flex justify-end gap-2">
         <Button type="button" variant="outline" onclick={exitDownloadCreate}>Cancel</Button>
-        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.downloadsBusy || !downloadSourceReady || !appState.downloadSource.trim() || !appState.downloadDest.trim()}>
+        <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.downloadsBusy || !downloadSourceReady || !appState.downloadSource.trim() || !effectiveDownloadDest()}>
           <Download size={16} aria-hidden="true" />
           {appState.downloadDryRun ? 'Run dry run' : 'Start download'}
         </Button>

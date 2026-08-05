@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildDeletedArgv,
   buildDownloadCancelArgv,
+  buildExternalSourceUri,
   buildDownloadListArgv,
   buildDownloadPruneArgv,
   buildDownloadResumeArgv,
@@ -33,6 +34,7 @@ import {
   isValidFolderName,
   looksLikeSourceUri,
   parseArgvInput,
+  validateExternalSourceFields,
   validateExtraArgs,
   validateGlobPattern,
   validateMountPathForBackend,
@@ -445,6 +447,32 @@ describe('cli helpers', () => {
     expect(looksLikeSourceUri('C:\\windows\\path')).toBe(false)
   })
 
+  it('builds an external source URI from structured fields, mapping scheme by provider', () => {
+    expect(buildExternalSourceUri('s3', 'my-bucket', 'photos/2026')).toBe('s3://my-bucket/photos/2026')
+    expect(buildExternalSourceUri('s3compatible', 'my-bucket', '')).toBe('s3://my-bucket')
+    expect(buildExternalSourceUri('azure', 'my-container', 'a/b')).toBe('az://my-container/a/b')
+    expect(buildExternalSourceUri('gcs', 'my-bucket', '')).toBe('gs://my-bucket')
+  })
+
+  it('trims slashes and returns null for a blank bucket when building an external source URI', () => {
+    expect(buildExternalSourceUri('s3', '  /my-bucket/  ', '/photos/')).toBe('s3://my-bucket/photos')
+    expect(buildExternalSourceUri('s3', '', 'photos')).toBeNull()
+    expect(buildExternalSourceUri('s3', '   ', 'photos')).toBeNull()
+  })
+
+  it('validates external source fields against each provider\'s real requirements', () => {
+    expect(validateExternalSourceFields('s3', 'bucket', '', '', 'AKIA...')).toBeNull()
+    expect(validateExternalSourceFields('s3', '', '', '', 'AKIA...')).toMatch(/bucket/i)
+    expect(validateExternalSourceFields('s3compatible', 'bucket', '', '', 'AKIA...')).toMatch(/endpoint/i)
+    expect(validateExternalSourceFields('s3compatible', 'bucket', 'https://x', '', 'AKIA...')).toBeNull()
+    expect(validateExternalSourceFields('azure', 'container', '', '', '')).toMatch(/account/i)
+    expect(validateExternalSourceFields('azure', 'container', '', 'myaccount', '')).toBeNull()
+    expect(validateExternalSourceFields('s3', 'bucket', '', '', '')).toMatch(/access key/i)
+    // gcs needs neither an access-key-id nor an account -- its whole
+    // credential is the service-account secret, validated by the caller.
+    expect(validateExternalSourceFields('gcs', 'bucket', '', '', '')).toBeNull()
+  })
+
   it('gives upload resume a smaller flag surface than start', () => {
     const argv = buildUploadResumeArgv(profile, 'abcdef1234567890', true, ' 45s ')
     expect(argv.slice(0, 3)).toEqual(['upload', 'resume', 'abcdef1234567890'])
@@ -551,6 +579,47 @@ describe('cli helpers', () => {
   it('omits --bwlimit when zero', () => {
     const argv = buildDownloadStartArgv(profile, 'profile', 'photos', '/dst', { ...downloadParams(), bwlimitMbps: 0 })
     expect(argv).not.toContain('--bwlimit')
+  })
+
+  it('emits dest-provider fields for a URI dest when set, trimmed', () => {
+    const params: DownloadStartParams = {
+      ...downloadParams(),
+      destProvider: 's3compatible',
+      destEndpoint: ' https://example.com ',
+      destRegion: 'us-east-1',
+      destAccount: 'myaccount',
+      destAccessKeyId: 'AKIA1234567890ABCDEF',
+    }
+    const argv = buildDownloadStartArgv(profile, 'profile', 'photos', 's3://bucket/prefix', params)
+    expect(argv).toEqual(
+      expect.arrayContaining([
+        '--dest-provider', 's3compatible',
+        '--dest-endpoint', 'https://example.com',
+        '--dest-region', 'us-east-1',
+        '--dest-account', 'myaccount',
+        '--dest-access-key-id', 'AKIA1234567890ABCDEF',
+      ]),
+    )
+  })
+
+  it('omits every dest field for a local dest', () => {
+    const argv = buildDownloadStartArgv(profile, 'profile', 'photos', '/dst', downloadParams())
+    for (const flag of [
+      '--dest-provider',
+      '--dest-endpoint',
+      '--dest-region',
+      '--dest-account',
+      '--dest-access-key-id',
+      '--dest-temporary-secret-file',
+    ]) {
+      expect(argv).not.toContain(flag)
+    }
+  })
+
+  it('emits --dest-temporary-secret-file, never --dest-secret-file, when a secret path is given', () => {
+    const argv = buildDownloadStartArgv(profile, 'profile', 'photos', 's3://bucket/prefix', downloadParams(), '/tmp/dest-secret-abc.tmp')
+    expect(argv).toEqual(expect.arrayContaining(['--dest-temporary-secret-file', '/tmp/dest-secret-abc.tmp']))
+    expect(argv).not.toContain('--dest-secret-file')
   })
 
   it('gives download resume a smaller flag surface than start, with no once/rescan-interval at all', () => {

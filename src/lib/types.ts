@@ -43,6 +43,27 @@ export interface MountProfile {
   volumeKind?: 'general' | 'iceberg'
 }
 
+// TransferSourceProfile is a saved `upload`/`import` external-object-store
+// source (provider/bucket/prefix/credentials) -- deliberately NOT a
+// MountProfile: it names a bucket to pull FROM, never a mountOS volume to
+// mount. See src-tauri/src/lib.rs's own doc comment on TransferSourceProfile
+// for why this is a distinct persisted+vaulted entity, not a variant.
+export interface TransferSourceProfile {
+  id: string
+  schemaVersion: 1
+  name: string
+  provider: string
+  bucket: string
+  prefix?: string
+  endpoint?: string
+  region?: string
+  account?: string
+  accessKeyId?: string
+  secretRef: SecretRef
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Fork {
   name: string
   fid: number
