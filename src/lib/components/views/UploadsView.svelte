@@ -884,15 +884,26 @@ Check this when you just want the current backlog cleared and the job to finish 
         </div>
       </div>
     {:else}
-      <!-- No "New upload" button here, the left panel already has the
-           primary one directly above this same empty state, so a second
-           identical CTA on screen at once was pure duplication. -->
       <div class="surface relative">
         <div class="tech-grid absolute inset-6 pointer-events-none" aria-hidden="true"></div>
         <div class="relative grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
           <Upload size={28} aria-hidden="true" />
           <strong>No job selected</strong>
-          <p>Pick a job on the left to see its progress and details.</p>
+          {#if appState.jobPanelCollapsed.uploads}
+            <!-- The panel's own "New upload" button is inert/hidden while
+                 collapsed (JobPanel.svelte), so this is the only reachable
+                 CTA until it's expanded again. -->
+            <p>The job panel is collapsed. Expand it to pick a job, or start a new one below.</p>
+            <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterUploadCreate}>
+              <Plus size={16} aria-hidden="true" />
+              New upload
+            </Button>
+          {:else}
+            <!-- No "New upload" button here: the panel's own CTA is visible
+                 right above this same empty state, so a second identical one
+                 on screen at once would be pure duplication. -->
+            <p>Pick a job on the {panelSide} to see its progress and details.</p>
+          {/if}
         </div>
       </div>
     {/if}

@@ -1017,8 +1017,13 @@ const uploadCommandText = $derived.by(() => {
   // preview -- the placeholder makes clear a real run substitutes an actual
   // path, matching this app's existing "show the exact command, never a
   // secret value" convention (see cli.ts's own doc comments elsewhere on
-  // never letting secrets reach argv/preview text).
-  const sourceSecretFile = isExternalUploadSource() && state.uploadSourceSecretValue ? '<temp-file-written-at-start>' : undefined
+  // never letting secrets reach argv/preview text). Shown whenever a
+  // secret will actually be resolved, whether typed here or supplied by a
+  // selected vault profile -- checking only the typed field would drop the
+  // flag from the preview for a vault-backed profile even though the real
+  // spawned command still includes it.
+  const sourceSecretFile =
+    isExternalUploadSource() && (state.uploadSourceSecretValue.trim() || uploadSourceProfileUsesVault()) ? '<temp-file-written-at-start>' : undefined
   return `mountos ${buildUploadStartArgv(profile, source, state.uploadDest.trim(), uploadStartParams(), sourceSecretFile).join(' ')}`
 })
 
@@ -1156,8 +1161,10 @@ const downloadCommandText = $derived.by(() => {
   const profile = state.downloadSourceKind === 'profile' ? (downloadSelectedProfile ?? null) : null
   // A real secret is never written to a temp file just to render this
   // preview, same convention as uploadCommandText's own sourceSecretFile
-  // placeholder.
-  const destSecretFile = isExternalDownloadDest() && state.downloadDestSecretValue ? '<temp-file-written-at-start>' : undefined
+  // placeholder, including showing it for a vault-backed profile even
+  // when the field itself is left blank.
+  const destSecretFile =
+    isExternalDownloadDest() && (state.downloadDestSecretValue.trim() || downloadDestProfileUsesVault()) ? '<temp-file-written-at-start>' : undefined
   return `mountos ${buildDownloadStartArgv(profile, state.downloadSourceKind, source, dest, downloadStartParams(), destSecretFile).join(' ')}`
 })
 
@@ -2054,7 +2061,7 @@ export async function runUploadStart() {
   state.uploadStartError = ''
   state.uploadDryRunReport = ''
   try {
-    const sourceSecret = isExternalUploadSource() ? state.uploadSourceSecretValue || undefined : undefined
+    const sourceSecret = isExternalUploadSource() ? state.uploadSourceSecretValue.trim() || undefined : undefined
     const transferSourceProfileId = isExternalUploadSource() ? (state.uploadSourceProfileSelectedId ?? undefined) : undefined
     const result = await startUpload(
       profileId,
@@ -2110,7 +2117,7 @@ export async function runUploadSourceTest() {
       dest,
       { ...uploadStartParams(), dryRun: true },
       state.uploadStartSecretValue || undefined,
-      state.uploadSourceSecretValue || undefined,
+      state.uploadSourceSecretValue.trim() || undefined,
       state.uploadSourceProfileSelectedId ?? undefined,
     )
     state.uploadSourceTestReport = result
@@ -2159,6 +2166,10 @@ export function selectTransferSourceProfile(id: string) {
   state.uploadSourceSecretValue = ''
   state.uploadSourceError = ''
   state.uploadSourceSaveOpen = false
+  // A stale success report from testing a DIFFERENT source must never
+  // keep showing once the fields underneath it have changed.
+  state.uploadSourceTestReport = ''
+  state.uploadSourceTestError = ''
 }
 
 // clearTransferSourceProfileSelection resets the external-source form back
@@ -2177,6 +2188,8 @@ export function clearTransferSourceProfileSelection() {
   state.uploadSourceSaveOpen = false
   state.uploadSourceSaveName = ''
   state.uploadSourceSaveError = ''
+  state.uploadSourceTestReport = ''
+  state.uploadSourceTestError = ''
 }
 
 // uploadSourceProfileUsesVault reports whether the currently-selected saved
@@ -2226,15 +2239,28 @@ export async function saveCurrentAsTransferSourceProfile() {
     state.uploadSourceSaveError = fieldError
     return
   }
-  const storeInVault = state.uploadSourceSaveToVault && Boolean(state.uploadSourceSecretValue.trim())
-  if (state.uploadSourceSaveToVault && !state.uploadSourceSecretValue.trim() && !state.uploadSourceProfileSelectedId) {
-    state.uploadSourceSaveError = 'Enter the secret above before saving it to the vault'
-    return
-  }
   const id = state.uploadSourceProfileSelectedId ?? crypto.randomUUID()
   const now = new Date().toISOString()
   const existing = state.transferSourceProfiles.find((p) => p.id === id)
+  const hasExistingVaultSecret = existing?.secretRef === 'vault'
+  const typedSecret = state.uploadSourceSecretValue.trim()
+  if (state.uploadSourceSaveToVault && !typedSecret && !hasExistingVaultSecret) {
+    state.uploadSourceSaveError = 'Enter the secret above before saving it to the vault'
+    return
+  }
   try {
+    // Vault write/delete happens BEFORE the profile record is saved, not
+    // after: if it fails, the JSON record must never claim a secretRef the
+    // keychain doesn't actually match (a new profile is never created at
+    // all in that case; an existing one is left untouched rather than
+    // half-updated). Unchecking "Store in vault" for a profile that
+    // currently has one is a real downgrade, not a silent no-op: it
+    // deletes the vault entry and the saved secretRef flips to "prompt".
+    if (state.uploadSourceSaveToVault && typedSecret) {
+      await setTransferSourceProfileSecret(id, typedSecret)
+    } else if (!state.uploadSourceSaveToVault && hasExistingVaultSecret) {
+      await deleteTransferSourceProfileSecret(id)
+    }
     const saved = await saveTransferSourceProfile({
       id,
       schemaVersion: 1,
@@ -2246,17 +2272,10 @@ export async function saveCurrentAsTransferSourceProfile() {
       region: state.uploadSourceRegion.trim() || undefined,
       account: state.uploadSourceAccount.trim() || undefined,
       accessKeyId: state.uploadSourceAccessKeyId.trim() || undefined,
-      // Keeping an existing vault-backed profile's secretRef "vault" even
-      // when this particular save didn't re-type the secret -- only a
-      // FRESH secret typed into the field (storeInVault) or an explicit
-      // prompt-only choice ever changes what's actually in the vault.
-      secretRef: storeInVault || existing?.secretRef === 'vault' ? 'vault' : 'prompt',
+      secretRef: state.uploadSourceSaveToVault ? 'vault' : 'prompt',
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     })
-    if (storeInVault) {
-      await setTransferSourceProfileSecret(id, state.uploadSourceSecretValue.trim())
-    }
     await loadTransferSourceProfiles()
     state.uploadSourceProfileSelectedId = saved.id
     state.uploadSourceSaveOpen = false
@@ -2274,17 +2293,26 @@ export async function saveCurrentAsTransferSourceProfile() {
 // clears whichever form(s) currently reference it -- either, neither, or
 // both, independently -- rather than leaving one with a dangling id.
 export async function removeTransferSourceProfile(id: string) {
+  // Read before the delete/clear below can null either one out, so a
+  // failure lands on whichever view(s) actually had this profile selected,
+  // not always the upload view's own error slot regardless of which view
+  // the user clicked "Delete" from.
+  const inUpload = state.uploadSourceProfileSelectedId === id
+  const inDownload = state.downloadDestProfileSelectedId === id
   try {
     await deleteTransferSourceProfile(id)
     await loadTransferSourceProfiles()
-    if (state.uploadSourceProfileSelectedId === id) {
-      clearTransferSourceProfileSelection()
-    }
-    if (state.downloadDestProfileSelectedId === id) {
-      clearDownloadDestProfileSelection()
-    }
+    if (inUpload) clearTransferSourceProfileSelection()
+    if (inDownload) clearDownloadDestProfileSelection()
   } catch (error) {
-    state.uploadSourceSaveError = describeError(error)
+    // uploadSourceError/downloadDestError, not the save-panel's own error
+    // slot: that panel is normally closed, so an error written there would
+    // never actually render for a plain "Delete saved source/destination"
+    // click (as opposed to a Save click, which the save panel being open
+    // for is a precondition of).
+    const message = describeError(error)
+    if (inUpload) state.uploadSourceError = message
+    if (inDownload) state.downloadDestError = message
   }
 }
 
@@ -2308,6 +2336,10 @@ export function selectDownloadDestTransferProfile(id: string) {
   state.downloadDestSecretValue = ''
   state.downloadDestError = ''
   state.downloadDestSaveOpen = false
+  // A stale success report from testing a DIFFERENT destination must
+  // never keep showing once the fields underneath it have changed.
+  state.downloadDestTestReport = ''
+  state.downloadDestTestError = ''
 }
 
 // clearDownloadDestProfileSelection resets the external-destination form
@@ -2325,6 +2357,8 @@ export function clearDownloadDestProfileSelection() {
   state.downloadDestSaveOpen = false
   state.downloadDestSaveName = ''
   state.downloadDestSaveError = ''
+  state.downloadDestTestReport = ''
+  state.downloadDestTestError = ''
 }
 
 // downloadDestProfileUsesVault mirrors uploadSourceProfileUsesVault exactly.
@@ -2377,6 +2411,13 @@ export async function saveDownloadDestAsTransferProfile() {
   const now = new Date().toISOString()
   const existing = state.transferSourceProfiles.find((p) => p.id === id)
   try {
+    // Vault write happens BEFORE the profile record is saved, mirrors
+    // saveCurrentAsTransferSourceProfile's own ordering fix: a failed
+    // keychain write must never leave a JSON record claiming secretRef
+    // "vault" for an entry that doesn't actually exist.
+    if (storeInVault) {
+      await setTransferSourceProfileSecret(id, state.downloadDestSecretValue.trim())
+    }
     const saved = await saveTransferSourceProfile({
       id,
       schemaVersion: 1,
@@ -2392,9 +2433,6 @@ export async function saveDownloadDestAsTransferProfile() {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     })
-    if (storeInVault) {
-      await setTransferSourceProfileSecret(id, state.downloadDestSecretValue.trim())
-    }
     await loadTransferSourceProfiles()
     state.downloadDestProfileSelectedId = saved.id
     state.downloadDestSaveOpen = false
@@ -2893,7 +2931,7 @@ export async function runDownloadStart() {
   state.downloadStartError = ''
   state.downloadDryRunReport = ''
   try {
-    const destSecret = isExternalDownloadDest() ? state.downloadDestSecretValue || undefined : undefined
+    const destSecret = isExternalDownloadDest() ? state.downloadDestSecretValue.trim() || undefined : undefined
     const transferDestProfileId = isExternalDownloadDest() ? (state.downloadDestProfileSelectedId ?? undefined) : undefined
     const result = await startDownload(
       state.downloadSourceKind,
@@ -2946,7 +2984,7 @@ export async function runDownloadDestTest() {
       dest,
       { ...downloadStartParams(), dryRun: true },
       state.downloadStartSecretValue || undefined,
-      state.downloadDestSecretValue || undefined,
+      state.downloadDestSecretValue.trim() || undefined,
       state.downloadDestProfileSelectedId ?? undefined,
     )
     state.downloadDestTestReport = result

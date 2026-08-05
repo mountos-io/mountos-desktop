@@ -4321,6 +4321,27 @@ fn start_upload_blocking(
     } else {
         source_secret
     };
+
+    // Every fallible step that doesn't itself depend on the temp secret
+    // file is resolved BEFORE that file is written, not after: none of
+    // resolve_satellite_secret/runtime_dir/mountos_path need it, and
+    // ordering them first means a failure here can never orphan the file
+    // the way it used to when they ran between the write and this
+    // function's two cleanup_temp_secret_file_on_error call sites.
+    //
+    // A single profile can legitimately drive multiple concurrent upload
+    // starts at different (source, dest) pairs (unlike a mount, which is
+    // 1:1 with a profile), so profile-id-only filenames would let one
+    // launch's log-file creation truncate another's mid-write. Same
+    // short_hash-of-destination convention as the Snapshot/Deleted/Version
+    // views below.
+    let resolved_secret = resolve_satellite_secret(&profile, secret)?;
+    let suffix = short_hash(&format!("{source}->{dest}"));
+    let runtime = runtime_dir(&app)?;
+    let stderr_path = runtime.join(format!("upload-{}-{suffix}-stderr.log", profile.id));
+    let stdout_path = runtime.join(format!("upload-{}-{suffix}-stdout.log", profile.id));
+    let mountos_bin = mountos_path()?;
+
     // Written up front, ahead of the dry-run branch too: a URI SOURCE's
     // dry-run genuinely connects and lists (see mountos-servers'
     // runUploadDryRun's own doc comment on why that's the one documented
@@ -4359,18 +4380,8 @@ fn start_upload_blocking(
         cleanup_temp_secret_file_on_error(&result, source_secret_path.as_deref());
         return result;
     }
-    let resolved_secret = resolve_satellite_secret(&profile, secret)?;
-    // A single profile can legitimately drive multiple concurrent upload
-    // starts at different (source, dest) pairs (unlike a mount, which is
-    // 1:1 with a profile), so profile-id-only filenames would let one
-    // launch's log-file creation truncate another's mid-write. Same
-    // short_hash-of-destination convention as the Snapshot/Deleted/Version
-    // views below.
-    let suffix = short_hash(&format!("{source}->{dest}"));
-    let stderr_path = runtime_dir(&app)?.join(format!("upload-{}-{suffix}-stderr.log", profile.id));
-    let stdout_path = runtime_dir(&app)?.join(format!("upload-{}-{suffix}-stdout.log", profile.id));
     let result = spawn_daemonizing_upload_and_wait(
-        &mountos_path()?,
+        &mountos_bin,
         &argv,
         resolved_secret.as_deref(),
         &stdout_path,
@@ -4838,6 +4849,28 @@ fn start_download_blocking(
     } else {
         dest_secret
     };
+
+    // Every fallible step that doesn't itself depend on the temp secret
+    // file is resolved BEFORE that file is written, not after: none of
+    // resolve_satellite_secret/runtime_dir/mountos_path need it, and
+    // ordering them first means a failure here can never orphan the file
+    // the way it used to when they ran between the write and this
+    // function's two cleanup_temp_secret_file_on_error call sites.
+    //
+    // Mode A (Instance) never resolves a secret, since profile is None, so
+    // this short-circuits explicitly rather than depending on
+    // resolve_satellite_secret's own empty-access-key-id branch.
+    let resolved_secret = match &profile {
+        Some(profile) => resolve_satellite_secret(profile, secret)?,
+        None => None,
+    };
+    let suffix = short_hash(&format!("{source}->{dest}"));
+    let profile_key = profile.as_ref().map_or("instance", |p| p.id.as_str());
+    let runtime = runtime_dir(&app)?;
+    let stderr_path = runtime.join(format!("download-{profile_key}-{suffix}-stderr.log"));
+    let stdout_path = runtime.join(format!("download-{profile_key}-{suffix}-stdout.log"));
+    let mountos_bin = mountos_path()?;
+
     // Written up front, ahead of the dry-run branch too: a URI DEST_PATH's
     // dry-run genuinely connects to it (dryRunConnectExternalDest,
     // cmd_download.go -- the destination-side mirror of runUploadDryRun's
@@ -4859,14 +4892,6 @@ fn start_download_blocking(
         dest_secret_file.as_deref(),
     );
 
-    // Mode A (Instance) never resolves a secret, since profile is None, so this
-    // short-circuits explicitly rather than depending on resolve_satellite_
-    // secret's own empty-access-key-id branch.
-    let resolved_secret = match &profile {
-        Some(profile) => resolve_satellite_secret(profile, secret)?,
-        None => None,
-    };
-
     if params.dry_run {
         // Unlike upload's dry-run (never connects, since upload's SOURCE is
         // always local disk, confirmed by cmd_upload.go's own "no
@@ -4881,19 +4906,13 @@ fn start_download_blocking(
         return result;
     }
 
-    let suffix = short_hash(&format!("{source}->{dest}"));
-    let profile_key = profile.as_ref().map_or("instance", |p| p.id.as_str());
-    let stderr_path =
-        runtime_dir(&app)?.join(format!("download-{profile_key}-{suffix}-stderr.log"));
-    let stdout_path =
-        runtime_dir(&app)?.join(format!("download-{profile_key}-{suffix}-stdout.log"));
     // Download always daemonizes on a successful start (shouldDaemonizeDownload,
     // cmd_download.go: `!foreground`, unconditionally; there is no --once
     // exception the way upload has). exit 0 IS the daemonize confirmation,
     // never a "job settled" signal the way upload's --once path is, so
     // LAUNCH_TIMEOUT (a plain daemonize wait) applies unconditionally.
     let result = spawn_daemonizing_upload_and_wait(
-        &mountos_path()?,
+        &mountos_bin,
         &argv,
         resolved_secret.as_deref(),
         &stdout_path,

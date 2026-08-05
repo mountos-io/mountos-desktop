@@ -936,7 +936,21 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         <div class="relative grid content-center justify-items-center gap-3 h-full px-7 py-10 text-center">
           <Download size={28} aria-hidden="true" />
           <strong>No job selected</strong>
-          <p>Pick a job on the left to see its progress and details.</p>
+          {#if appState.jobPanelCollapsed.downloads}
+            <!-- The panel's own "New download" button is inert/hidden while
+                 collapsed (JobPanel.svelte), so this is the only reachable
+                 CTA until it's expanded again. -->
+            <p>The job panel is collapsed. Expand it to pick a job, or start a new one below.</p>
+            <Button type="button" variant="primary" class="cyberpunk-skewed-sm" onclick={enterDownloadCreate}>
+              <Plus size={16} aria-hidden="true" />
+              New download
+            </Button>
+          {:else}
+            <!-- No "New download" button here: the panel's own CTA is
+                 visible right above this same empty state, so a second
+                 identical one on screen at once would be pure duplication. -->
+            <p>Pick a job on the {panelSide} to see its progress and details.</p>
+          {/if}
         </div>
       </div>
     {/if}
