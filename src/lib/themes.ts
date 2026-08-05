@@ -335,7 +335,8 @@ function alucardColor(role: CSSColorRole): string {
     // invented) and keeps borders visible against card's own fill.
     case 'background': return p.selection2
     case 'card': case 'popover': case 'muted': case 'input': return p.selection
-    case 'secondary': case 'border': case 'sidebarBorder': case 'accent': return p.purple
+    case 'secondary': case 'accent': return p.cyan
+    case 'border': case 'sidebarBorder': return p.background
     case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
     case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': return p.foreground
     case 'sidebarAccentForeground': return WHITE
