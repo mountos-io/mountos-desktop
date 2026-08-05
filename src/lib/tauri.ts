@@ -108,7 +108,7 @@ export async function listProfiles(): Promise<MountProfile[]> {
 }
 
 // Backed by Rust's random_friendly_name (src-tauri/src/lib.rs), mirroring
-// the daemon/CLI's own generator -- same word lists, same
+// the daemon/CLI's own generator: same word lists, same
 // "adjective-noun-xxxx" shape, so a CLI job and a GUI profile read as the
 // same product. No browser-fallback word list here: outside the desktop
 // bridge this just falls back to the old static placeholder.

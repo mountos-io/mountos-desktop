@@ -9,7 +9,7 @@
   // Shared collapse/expand/floating-quick-select chrome around a job-list
   // panel (Uploads/Downloads/Sink/Profiles today, any future job-list view
   // tomorrow). Callers keep owning their own header buttons, list rows, and
-  // filtering -- this component only renders that content (passed as
+  // filtering. This component only renders that content (passed as
   // `children`, re-rendered once inline and once inside the floating
   // overlay) and reacts to appState.jobPanelCollapsed/jobPanelFloatingId,
   // which App.svelte's header chip also reads/writes generically by panel
@@ -17,7 +17,7 @@
   //
   // `children` receives (query, floating): floating is true only for the
   // overlay render, so callers can skip inline-only chrome that makes no
-  // sense there -- the panel is already collapsed by the time the overlay
+  // sense there, since the panel is already collapsed by the time the overlay
   // can open, so a "collapse panel" button would be a visible no-op, and a
   // "New X" button meant to fill a 280px column would stretch across the
   // overlay's much wider body.
@@ -40,15 +40,6 @@
 
   const collapsed = $derived(appState.jobPanelCollapsed[id] ?? false)
   const floating = $derived(appState.jobPanelFloatingId === id)
-  // Which grid column this panel occupies in its view's 2-column grid.
-  // Explicit grid-column, not `order`: the detail pane only renders when a
-  // job is selected, and `order` only affects placement sequence relative to
-  // OTHER items present -- with the detail pane absent, an order-only panel
-  // would just fall into whichever track auto-placement fills first,
-  // ignoring side. Explicit placement pins it correctly either way. The
-  // detail pane (owned by the view, not this component) takes the opposite
-  // column -- see each view's own detail pane wrapper and grid-template-columns.
-  const side = $derived(appState.jobPanelSide[id] ?? 'left')
 
   let searchQuery = $state('')
   let searchInput: HTMLInputElement | undefined = $state()
@@ -58,7 +49,7 @@
     return () => {
       delete appState.jobPanelMounted[id]
       // The panel's own markup (list, selection handlers) lives in `children`,
-      // owned by whichever view mounted us -- once that's gone (navigated to
+      // owned by whichever view mounted us. Once that's gone (navigated to
       // a create/resume/sub-view form), a still-open floating overlay for
       // this id would have nothing to render.
       if (appState.jobPanelFloatingId === id) closeJobPanelFloating()
@@ -83,10 +74,17 @@
      just visual hiding) keeps a 0-width panel out of both the tab order and
      the accessibility tree while collapsed.
 
+     Always the grid's first (DOM-order) child, always track 1 -- which side
+     of the window that's on is the parent grid's own direction:rtl/ltr (see
+     each view's grid-template-columns comment), never this component's
+     concern. direction:ltr resets that inherited mirroring so this panel's
+     own text/icons/buttons never render reversed regardless of which side
+     the parent physically renders track 1 on.
+
      Collapsing relies on the ancestor grid track shrinking to 0px, but the
      section's own content (job rows, a `w-full` "New X" button, none of it
      `min-w-0`) never actually gets a zero-width box of its own to size
-     against -- it only renders inside whatever the grid hands this item, and
+     against; it only renders inside whatever the grid hands this item, and
      a single overflow-hidden layer clipping a nonzero-height/zero-width box
      against content with real intrinsic minimums is exactly the kind of
      combination that leaks a rendering sliver in WebView engines. Forcing
@@ -94,8 +92,7 @@
      removes that ambiguity instead of trusting the clip alone. -->
 <section
   class={cn('surface min-w-0 overflow-hidden', collapsed ? 'w-0 border-0 p-0' : 'p-4')}
-  style:grid-column={side === 'left' ? '1' : '2'}
-  style:grid-row="1"
+  style:direction="ltr"
   inert={collapsed}
   aria-hidden={collapsed}
 >

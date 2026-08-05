@@ -356,7 +356,7 @@
       />
     </div>
     <div class="grid gap-1.5">
-      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-dir-label">Default disk cache directory</strong><InfoTip text="Seeds new profiles only. Blank uses the CLI's own ~/.mountOS/cache. Shared across every volume and fork is safe, mountos already isolates each one under its own subfolder." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-dir-label">Default disk cache directory</strong><InfoTip text="Seeds new profiles only; blank uses ~/.mountOS/cache. Safe to share across volumes, each gets its own subfolder." /></span>
       <div class="flex gap-2">
         <Input
           type="text"
@@ -442,7 +442,7 @@
       <Callout>--force fork delete acts on the shared volume, not just this profile, and also removes the fork's entire subtree. Deleting a fork is recoverable only within its grace period.</Callout>
     {/if}
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong id="settings-allow-force-unmount-label">Allow force unmount</strong><InfoTip text="Adds a Force option to the unmount prompt, for unmounting a mount an app or terminal is still using." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-allow-force-unmount-label">Allow force unmount</strong><InfoTip text="Adds a Force option to unmount even while something else is still using it." /></span>
       <Checkbox
         checked={appState.settings.allowUnmountForce}
         onchange={(e) => changeAllowUnmountForce(e.currentTarget.checked)}
@@ -513,7 +513,7 @@
 
   {#if appState.systemState.cliPath}
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong>Signature</strong><InfoTip text="Checks the binary's actual code-signing signature, not just whether --version prints mountos (which a spoofed binary could fake too)." /></span>
+      <span class="inline-flex items-center gap-1"><strong>Signature</strong><InfoTip text="Checks the binary's actual code-signing identity, not just its printed --version string." /></span>
       <span class="flex items-center gap-2">
         {#if appState.cliSignatureStatus}
           <Badge variant={appState.cliSignatureStatus.verified ? 'success' : 'warning'}>

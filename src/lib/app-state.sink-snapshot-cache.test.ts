@@ -89,8 +89,8 @@ describe('sinkDisplaySnapshot', () => {
   })
 
   // A job that has genuinely stopped (SIGKILL, no CachedCounts to resolve
-  // to) reports live=undefined permanently, not just for one poll tick --
-  // falling back to a once-live cached snapshot here would freeze the pane
+  // to) reports live=undefined permanently, not just for one poll tick.
+  // Falling back to a once-live cached snapshot here would freeze the pane
   // on stale numbers forever with no staleness marker.
   it('does not fall back to the cache once the job is no longer running', () => {
     const cache = { 'job-1': snapshot({ fileSize: 100 }) }

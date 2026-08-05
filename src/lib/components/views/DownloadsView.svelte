@@ -209,13 +209,13 @@
         label: 'Retrying',
         count: job.counts.retrying,
         tone: 'text-warning',
-        info: 'Currently in backoff after a transient error (quota, volume lock, or a temporary read failure). Retried automatically as the job runs, self-clearing, no action needed.',
+        info: 'In backoff after a transient error (quota, lock, temporary read failure). Retries automatically, no action needed.',
       },
       {
         label: 'Failed',
         count: job.counts.failed,
         tone: 'text-destructive',
-        info: "Won't clear on its own. The job gave up on this path. Fix the underlying cause, then use Retry failed, or accept the loss.",
+        info: "The job gave up on this path and won't retry on its own. Fix the cause, then use Retry failed, or accept the loss.",
       },
       { label: 'Skipped', count: job.counts.skipped, tone: '' },
       { label: 'Missing', count: job.counts.missing, tone: '' },
@@ -499,7 +499,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         <div class="grid gap-1.5">
           <span class="inline-flex items-center gap-1">
             <Label for="download-resume-discovery-url">Discovery URL</Label>
-            <InfoTip text="Only needed to resume a profile-sourced job. Leave both this and Access key ID blank for a job that reads straight through an already-mounted instance; it needs no credentials at all." />
+            <InfoTip text="Only needed to resume a profile-sourced job. Leave blank for an instance-sourced job. No credentials needed." />
           </span>
           <Input id="download-resume-discovery-url" bind:value={appState.downloadResumeDiscoveryUrl} placeholder="https://discovery.example.com" />
         </div>
@@ -562,10 +562,9 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 {:else}
   <section
     class="grid flex-1 grid-rows-1 m-[22px] outline-hidden transition-[grid-template-columns,column-gap] duration-200 ease-out"
-    style:grid-template-columns={panelSide === 'left'
-      ? appState.jobPanelCollapsed.downloads ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'
-      : appState.jobPanelCollapsed.downloads ? 'minmax(0,1fr) 0px' : 'minmax(0,1fr) 280px'}
+    style:grid-template-columns={appState.jobPanelCollapsed.downloads ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'}
     style:column-gap={appState.jobPanelCollapsed.downloads ? '0px' : '1rem'}
+    style:direction={panelSide === 'left' ? 'ltr' : 'rtl'}
     tabindex="-1"
     use:focusOnMount
   >
@@ -655,7 +654,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
     {#if selectedJob}
       {@const job = selectedJob}
       {@const resumable = job.state === 'halted' || job.state === 'resumable'}
-      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:grid-column={panelSide === 'left' ? '2' : '1'} style:grid-row="1">
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:direction="ltr">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0 flex-1 basis-48">
             <h3 class="flex min-w-0 items-center gap-2">
@@ -712,7 +711,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
                 {#if job.state !== 'completed' && job.state !== 'halted'}
                   <span class="text-muted-foreground inline-flex items-center gap-1 text-xs">
                     (as of last scan)
-                    <InfoTip text="This job is still draining its backlog, so the file count and byte total shown here are a snapshot from the last discovery pass, not final. They'll stop changing once the job settles." />
+                    <InfoTip text="A snapshot from the last discovery pass, not final. Stops changing once the job settles." />
                   </span>
                 {/if}
               </p>

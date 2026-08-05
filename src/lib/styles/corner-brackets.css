@@ -108,7 +108,7 @@
     color: var(--bracket-color-dark);
   }
 
-  /* Diagonal two-corner accent (top-left + bottom-right only) -- a lighter,
+  /* Diagonal two-corner accent (top-left + bottom-right only): a lighter,
      "title"-weight mark for secondary/inline content nested inside a view's
      one primary bracketed panel, so it doesn't compete with .corner-brackets
      for the "one bracketed surface per view" role. */
@@ -355,7 +355,7 @@
   }
 
   /* Dashed connecting lines. A repeating-gradient background instead of
-     border-style:dashed -- native dashed borders render as chunky, uneven
+     border-style:dashed, since native dashed borders render as chunky, uneven
      segments (thickness/spacing isn't controllable and varies by browser),
      which reads as messy at the thin 1px heights this is used at. */
   .dashed-connector {
@@ -534,7 +534,7 @@
     color: var(--bracket-hover-dark);
   }
 
-  /* Small variant for buttons (10px cuts) -- only meant for solid/filled
+  /* Small variant for buttons (10px cuts): only meant for solid/filled
      buttons (primary, destructive); an outline button's own border already
      reads its shape, and the chamfer looks off cut into a bordered edge. */
   .cyberpunk-skewed-sm {
@@ -623,8 +623,8 @@
   }
 
   /* Cyberpunk table header labels; scan-line underline. 1rem, not 0.7rem:
-     same PRODUCT.md 16px floor as .mono-label (app.css), and the same fix --
-     tracking halves 0.2em -> 0.1em since it was tuned for 11px and is
+     same PRODUCT.md 16px floor as .mono-label (app.css), and the same fix.
+     Tracking halves 0.2em -> 0.1em since it was tuned for 11px and is
      relative to size, so carrying it up unchanged would push every header
      ~45% wider for no legibility gain. */
   .th-cyber {
@@ -725,13 +725,12 @@
      box-shadow-based focus ring (every ui/* component's own
      focus-visible:ring-*) that would otherwise extend past the border box.
      Dropping the clip on :focus-visible trades a momentarily-square corner
-     for a focus ring that is actually visible -- a real WCAG 2.4.7 fix, not
+     for a focus ring that is actually visible. This is a real WCAG 2.4.7 fix, not
      a style preference. Only -sm is covered: it's the only cyberpunk-skewed
      variant this app actually uses (on button footers), and unclipping on
      :focus-within instead for the larger, container-level variants would
      suppress their chamfer for nearly a dialog's entire open lifetime, since
-     something inside is normally focused. Deliberate divergence from the
-     admin-client original, which has the same gap. */
+     something inside is normally focused. */
   .cyberpunk-skewed-sm:focus-visible {
     clip-path: none;
   }

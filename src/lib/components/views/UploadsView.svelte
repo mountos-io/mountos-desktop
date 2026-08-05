@@ -503,10 +503,9 @@ Check this when you just want the current backlog cleared and the job to finish 
 {:else}
   <section
     class="grid flex-1 grid-rows-1 m-[22px] outline-hidden transition-[grid-template-columns,column-gap] duration-200 ease-out"
-    style:grid-template-columns={panelSide === 'left'
-      ? appState.jobPanelCollapsed.uploads ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'
-      : appState.jobPanelCollapsed.uploads ? 'minmax(0,1fr) 0px' : 'minmax(0,1fr) 280px'}
+    style:grid-template-columns={appState.jobPanelCollapsed.uploads ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'}
     style:column-gap={appState.jobPanelCollapsed.uploads ? '0px' : '1rem'}
+    style:direction={panelSide === 'left' ? 'ltr' : 'rtl'}
     tabindex="-1"
     use:focusOnMount
   >
@@ -601,7 +600,7 @@ Check this when you just want the current backlog cleared and the job to finish 
            CSS grid's default align-content is stretch. Without this, the
            header/detail/progress rows spread apart to fill that height
            instead of staying compact at the top. -->
-      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:grid-column={panelSide === 'left' ? '2' : '1'} style:grid-row="1">
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:direction="ltr">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0 flex-1 basis-48">
             <h3 class="flex min-w-0 items-center gap-2">
@@ -658,7 +657,7 @@ Check this when you just want the current backlog cleared and the job to finish 
                 {#if job.state !== 'completed' && job.state !== 'halted'}
                   <span class="text-muted-foreground inline-flex items-center gap-1 text-xs">
                     (as of last scan)
-                    <InfoTip text="A daemon-mode job keeps discovering more on every rescan, so the file count and byte total shown here aren't final. They'll stop changing once the job settles." />
+                    <InfoTip text="A daemon-mode job keeps discovering more each rescan. These numbers aren't final until it settles." />
                   </span>
                 {/if}
               </p>

@@ -1,6 +1,6 @@
 import type { Backend, ErrorClass, MountProfile } from './types'
 
-// UI-only mirror of src-tauri/src/lib.rs's validate_extra_args -- gives the
+// UI-only mirror of src-tauri/src/lib.rs's validate_extra_args, which gives the
 // user inline "rejected" feedback before they hit Save/Mount. The Rust side
 // independently re-validates everything from the on-disk profile before
 // acting, so this copy is not itself a security boundary, but it IS a
@@ -78,7 +78,7 @@ function pushBackendFlag(argv: string[], backend: Backend): void {
 
 // Accepts a Unix absolute path or a Windows drive-letter path (bare "C:",
 // "C:\", "C:/", or "C:\..."/"C:/..."), regardless of which OS this build is
-// running on -- the authoritative, OS-specific check lives in Rust's
+// running on. The authoritative, OS-specific check lives in Rust's
 // is_openable_target; this is only for immediate UI feedback.
 export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/') || /^[A-Za-z]:[\\/]?$/.test(path) || /^[A-Za-z]:[\\/]/.test(path)
@@ -95,8 +95,8 @@ export function isValidFolderName(name: string): boolean {
   return !/[/\\\x00-\x1f]/.test(name)
 }
 
-// UI-only mirror of src-tauri/src/lib.rs's validate_mount_path_for_backend --
-// same hand-synced-duplicate caveat as the flag allowlists above; the Rust
+// UI-only mirror of src-tauri/src/lib.rs's validate_mount_path_for_backend,
+// with the same hand-synced-duplicate caveat as the flag allowlists above; the Rust
 // side independently re-validates.
 export function validateMountPathForBackend(backend: Backend, mountPath: string): string | null {
   // Empty stays legal: buildMountArgv omits -m and the mountos CLI picks its
@@ -176,8 +176,8 @@ export function buildMountArgv(profile: MountProfile): string[] {
 }
 
 // UI-only mirrors of src-tauri/src/lib.rs's satellite_volname/
-// build_snapshot_argv/build_deleted_argv/build_version_argv/build_fork_*_argv
-// -- same hand-synced-duplicate caveat as buildMountArgv: these only drive the
+// build_snapshot_argv/build_deleted_argv/build_version_argv/build_fork_*_argv,
+// with the same hand-synced-duplicate caveat as buildMountArgv: these only drive the
 // live command preview shown in each dialog, Rust independently rebuilds and
 // re-validates everything from the on-disk profile before acting.
 // Short and non-linguistic: "(deleted)"/"(snapshot)"/"(version)" reads fine
@@ -280,7 +280,7 @@ export function buildVersionArgv(
 
 // No --type flag is ever emitted (defaults to "general" server-side; iceberg
 // volumes have no profile representation in this GUI). No volume-identifying
-// flag is needed either -- the access key alone scopes the volume.
+// flag is needed either, since the access key alone scopes the volume.
 export function buildForkListArgv(profile: MountProfile): string[] {
   const argv = ['fork', 'list']
   if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)

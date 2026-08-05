@@ -195,7 +195,7 @@ function initialSkipUnmountConfirm(): boolean {
 }
 
 // One JSON blob keyed by panel id (uploads/downloads/sink/profiles/...), not
-// a hand-rolled boolean per panel like sidebarCollapsed above -- JobPanel is
+// a hand-rolled boolean per panel like sidebarCollapsed above, since JobPanel is
 // a shared component mounted by every job-list view, so a new view gets
 // collapse persistence for free instead of needing its own storage key.
 function initialJobPanelCollapsed(): Record<string, boolean> {
@@ -212,7 +212,7 @@ export type JobPanelSide = 'left' | 'right'
 
 // Same one-JSON-blob-keyed-by-id shape as jobPanelCollapsed above. Which side
 // a panel docks on is set by which expand button the user clicks on its
-// header chip (App.svelte), not a separate toggle -- see setJobPanelSide.
+// header chip (App.svelte), not a separate toggle; see setJobPanelSide.
 function initialJobPanelSide(): Record<string, JobPanelSide> {
   if (typeof localStorage === 'undefined') return {}
   try {
@@ -263,7 +263,7 @@ const state = $state({
   // panel's quick-select overlay is open (at most one at a time), mounted
   // tracks which panel ids currently have a live JobPanel instance in the
   // DOM, since a view can swap its job-list section out entirely for a
-  // create/resume/sub-view form -- gates the header chip so it never offers
+  // create/resume/sub-view form. This gates the header chip so it never offers
   // to reopen a panel that isn't actually there right now.
   jobPanelCollapsed: initialJobPanelCollapsed() as Record<string, boolean>,
   jobPanelFloatingId: null as string | null,
@@ -280,7 +280,7 @@ const state = $state({
   licensesData: {} as Partial<Record<'rust' | 'js', ThirdPartyLicenses>>,
 
   // Secret prompt (mount). secretPromptResume, when set, is what the
-  // dialog's submit calls instead of the hardcoded main-mount doMount --
+  // dialog's submit calls instead of the hardcoded main-mount doMount. It is
   // the generic path a scratch-mount Browse flow uses (see
   // ensureBrowseSecret) to fill the prompted secret into its own form field
   // and retry, rather than failing with a raw "secret required" error.
@@ -504,15 +504,15 @@ const state = $state({
   // Downloads (list is the default master-detail sub-view; "New ingest"/
   // "Resume" are their own full-panel sub-views). A sink job's live state is
   // rate/lag counters, not a bounded per-status work list, so there is no
-  // showCompleted-style counts derivation the way upload/download have --
+  // showCompleted-style counts derivation the way upload/download have;
   // sortSinkJobs/sinkStateRank cover ordering only.
   sinkSubView: 'list' as 'list' | 'create' | 'resume',
   sinks: [] as SinkJob[],
   sinksBusy: false,
   sinksError: '',
   // Mount-on-first-view fetch, manual refresh, and a refetch after every
-  // mutating action, same baseline as uploadsLastFetchedAt -- plus SinkView's
-  // own bounded poll while a job is running (see runSinkStatus's comment),
+  // mutating action, same baseline as uploadsLastFetchedAt, plus SinkView's
+  // own bounded poll while a job is running (see runSinkStatus's comment);
   // unlike uploads/downloads which never auto-refresh.
   sinksLastFetchedAt: null as number | null,
   sinkSelectedJobId: null as string | null,
@@ -527,7 +527,7 @@ const state = $state({
   // Create-job form: the connection (fork/discovery-url/access-key) is
   // either a saved profile OR a live running mount instance, identical
   // resolution to uploadSourceKind (sink's dest is always the mountOS
-  // volume, same as upload's, regardless of source mode -- sink has no
+  // volume, same as upload's, regardless of source mode; sink has no
   // "read straight through a live mount" source the way download's instance
   // mode does, its source is always a remote M3U8 URL).
   sinkSourceKind: 'profile' as 'profile' | 'instance',
@@ -1839,7 +1839,7 @@ export async function runUploadStart() {
 
 // Opens the shared secret-prompt dialog for a scratch-mount Browse flow.
 // Mirrors runMount's own prompt setup, but the resume action is generic
-// (onSecretKnown) instead of the hardcoded doMount -- the dialog closes
+// (onSecretKnown) instead of the hardcoded doMount. The dialog closes
 // first (mirroring doMount's own success path), then onSecretKnown runs;
 // any error from it lands back in secretError so the dialog reopens with
 // the failure shown rather than silently vanishing.
@@ -1876,7 +1876,7 @@ function openSecretPrompt(profile: MountProfile, onSecretKnown: (secret: string)
 // already has one, this is a no-op and the caller proceeds immediately.
 // Otherwise it opens the prompt, writes the entered secret into secretField
 // (the SAME field Start/Confirm reads, so it survives past this one
-// browse), and re-invokes retry -- the caller's own function, now that the
+// browse), and re-invokes retry (the caller's own function), now that the
 // field is populated and this check passes on the second call.
 async function ensureBrowseSecret(
   profileId: string,
@@ -2510,13 +2510,13 @@ export async function runSinkStatus(jobId: string) {
 // is misleading for a job that already has a known reading, so SinkView
 // keeps its own per-job cache: withSinkSnapshotCached folds a fresh live
 // snapshot into it, sinkDisplaySnapshot prefers the live value and falls
-// back to the cached one -- but only while jobRunning, i.e. only across the
+// back to the cached one, but only while jobRunning, i.e. only across the
 // sub-second gap runSinkList's own clear creates for a job that is still
 // actually running. Once a job stops for good (halted/completed/finished/
 // resumable, including a SIGKILLed daemon that never got to cache final
 // counters), live goes to undefined permanently, not just for one poll
 // tick, and falling back would freeze the pane on a stale live reading
-// forever with no staleness marker -- the freshly resolved status (nil
+// forever with no staleness marker, so the freshly resolved status (nil
 // snapshot, or a cached one tagged lastKnown) must win instead.
 export function withSinkSnapshotCached(
   cache: Record<string, SinkSnapshot>,
@@ -2573,7 +2573,7 @@ export function selectSinkProfile(profileId: string) {
 }
 
 // Captures the instance's live config once (getInstanceConfig), same
-// one-shot pattern as selectUploadInstance -- resolve_upload_source_profile
+// one-shot pattern as selectUploadInstance: resolve_upload_source_profile
 // (Rust) falls back to exactly this cached value if the instance is no
 // longer mounted by the time it's actually used.
 export async function selectSinkInstance(instance: MountInstance) {
@@ -3728,7 +3728,7 @@ export function setJobPanelSide(id: string, side: JobPanelSide) {
   if (typeof localStorage !== 'undefined') localStorage.setItem('mountos-desktop-job-panel-side', JSON.stringify(state.jobPanelSide))
 }
 
-// Docks the panel on the given side and expands it in one step -- the
+// Docks the panel on the given side and expands it in one step. The
 // header chip's two expand buttons each call this with their own side, so
 // clicking either one both picks the layout and reopens the panel.
 export function expandJobPanel(id: string, side: JobPanelSide) {
@@ -3926,7 +3926,7 @@ export async function clearCliPathOverride() {
 }
 
 // Checks the code-signing signature of whichever binary is actually in
-// effect (the pinned override if set, else the PATH-resolved one) -- a
+// effect (the pinned override if set, else the PATH-resolved one), a
 // stronger claim than validateCliCandidate's "--version prints mountos" text
 // sniff, which a spoofed binary could trivially satisfy.
 export async function verifyCliBinary() {

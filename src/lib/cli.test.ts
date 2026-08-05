@@ -195,7 +195,7 @@ describe('cli helpers', () => {
     expect(validateExtraArgs(['-ma'])).toEqual(['-ma'])
     // '-o' takes a fused value (mirrors real short-opt parsing: once a
     // value-taking flag is hit in a cluster, the rest of the token is its
-    // value, not further flags) -- bare '-o' and '-o<value>' are both
+    // value, not further flags): bare '-o' and '-o<value>' are both
     // accepted even when the value text collides with a managed letter.
     expect(validateExtraArgs(['-o'])).toEqual([])
     expect(validateExtraArgs(['-oallow_other'])).toEqual([])
@@ -535,7 +535,7 @@ describe('cli helpers', () => {
 
   // Fixture argv shared with src-tauri/src/lib.rs's identically-named Rust
   // test (build_sink_start_argv_emits_source_and_dest_as_bare_positionals_
-  // after_dashdash) -- both assert this EXACT array for the SAME inputs, so
+  // after_dashdash): both assert this EXACT array for the SAME inputs, so
   // a flag spelling/order change that isn't mirrored in the other builder
   // fails one of the two suites. The preview argv (this file) and the argv
   // that actually runs (lib.rs) must never drift apart.

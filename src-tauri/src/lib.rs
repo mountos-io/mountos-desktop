@@ -112,7 +112,7 @@ struct MountProfile {
     // reset once set: save_profile rejects any incoming value that
     // contradicts what's already on disk (see require_stable_identity), and
     // once set it also locks access_key_id/discovery_url/volume against
-    // further edits -- the whole point is a stable answer to "which real
+    // further edits, since the whole point is a stable answer to "which real
     // volume does this profile point at", not a value that could drift.
     // Option<T> deserializes a missing key (profiles saved before this field
     // existed) as None automatically, no #[serde(default)] needed.
@@ -138,20 +138,20 @@ struct MountInstance {
     version_inode: Option<String>,
     orphaned: Option<bool>,
     // "mount" (the default assumed by an older CLI that predates this field)
-    // or "gateway" -- a gateway-only instance has no mountPath/backend/
+    // or "gateway": a gateway-only instance has no mountPath/backend/
     // fsName at all, only gatewayEndpoints, and the frontend must branch on
     // this before assuming any of those are populated.
     kind: Option<String>,
     gateway_endpoints: Option<Vec<GatewayEndpointInfo>>,
-    // Only meaningful for a "gateway" entry today -- stop_gateway_only is
+    // Only meaningful for a "gateway" entry today, since stop_gateway_only is
     // the one thing that needs it, to send a signal at a specific process.
     pid: Option<u32>,
     // Not part of `mountos list --json` (confirmed: name/mountPath/fsName/
-    // viewMode/backend/etc only) -- filled in afterward from each instance's
+    // viewMode/backend/etc only). Filled in afterward from each instance's
     // own .mountOS/.config, the same file get_instance_config reads.
     mount_time: Option<String>,
-    // Also read live from .mountOS/.config (InstanceConfigExtras, below) --
-    // works for external mounts too, unlike MountProfile's own volume_kind
+    // Also read live from .mountOS/.config (InstanceConfigExtras, below).
+    // Works for external mounts too, unlike MountProfile's own volume_kind
     // field, which only ever populates for profile-backed mounts.
     volume_kind: Option<String>,
     temporary_fork: Option<bool>,
@@ -328,7 +328,7 @@ struct MountResult {
 }
 
 // Mirrors mountos-servers' mountListEntry's upload-only fields (`mountos
-// list --kind upload --json`) -- source_path/dest_path/fork_name/halt_reason
+// list --kind upload --json`). source_path/dest_path/fork_name/halt_reason
 // are Option since the server field carries `omitempty` and won't appear at
 // all for every state (e.g. a freshly-started job has no halt_reason).
 #[derive(Debug, Clone, Serialize)]
@@ -350,8 +350,8 @@ struct UploadJob {
     // informational (lets the UI show/warn which volume a job belongs to),
     // not itself the enforcement point.
     volume_id: Option<u32>,
-    // job.json's own UnixNano timestamps, unrelated to any filesystem mtime
-    // -- lets the GUI sort the job list meaningfully; `mountos list --kind
+    // job.json's own UnixNano timestamps, unrelated to any filesystem mtime.
+    // Lets the GUI sort the job list meaningfully; `mountos list --kind
     // upload` otherwise returns directory-name (hex-hash lexical) order.
     created_at: Option<i64>,
     completed_at: Option<i64>,
@@ -359,14 +359,14 @@ struct UploadJob {
     // only present when that file still exists on disk (see
     // mountos-servers' uploadjob.JobSpec.LogPath doc comment).
     log_path: Option<String>,
-    // A live aggregate as of the server's last scan pass, not a fixed total
-    // -- see uploadjob.JobSpec's TotalFiles/TotalBytes doc comment.
+    // A live aggregate as of the server's last scan pass, not a fixed total.
+    // See uploadjob.JobSpec's TotalFiles/TotalBytes doc comment.
     total_bytes: Option<i64>,
     total_files: Option<i64>,
 }
 
-// Frontend-supplied flags for the `mountos upload <source> <dest>` run form
-// -- one struct rather than a long parameter list, deserialized straight off
+// Frontend-supplied flags for the `mountos upload <source> <dest>` run form.
+// One struct rather than a long parameter list, deserialized straight off
 // the IPC call.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -384,10 +384,10 @@ struct UploadStartParams {
 }
 
 // Mirrors mountos-servers' mountListEntry's download-only fields (`mountos
-// list --kind download --json`) -- verified identical Go struct/field names
+// list --kind download --json`). Verified identical Go struct/field names
 // to UploadJob above, only the counts keys differ in meaning (pending |
 // downloading | done | failed | skipped | missing, plus a synthetic
-// "retrying" key for entries currently in backoff -- self-clearing, distinct
+// "retrying" key for entries currently in backoff, which is self-clearing and distinct
 // from "failed" which needs `download retry-failed`).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -411,7 +411,7 @@ struct DownloadJob {
 }
 
 // The GUI's own SOURCE-mode concept (mirrors upload's 'profile'/'instance'
-// naming in src/lib/cli.ts) -- the Go CLI auto-detects mounted-vs-remote
+// naming in src/lib/cli.ts). The Go CLI auto-detects mounted-vs-remote
 // from the raw SOURCE path itself (detectDownloadSourceKind, cmd_download.go),
 // but the GUI needs to know the mode up front to decide the form fields AND
 // how build_download_start_argv shapes the command: Instance means SOURCE is
@@ -427,7 +427,7 @@ enum DownloadSourceKind {
 
 // Frontend-supplied flags for the `mountos download <source> <dest>` run
 // form. No once/overwrite/rescan_interval (download has neither --once nor
-// --overwrite -- see cmd_download.go's own doc comment) -- if_exists/depth/
+// --overwrite, see cmd_download.go's own doc comment); if_exists/depth/
 // as_of are new instead.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -445,13 +445,13 @@ struct DownloadStartParams {
 }
 
 // Mirrors mountos-servers' sinkListEntry (`mountos sink list --json`,
-// cmd_list_sink.go) -- a sink job's live state is rate/lag counters, not a
+// cmd_list_sink.go). A sink job's live state is rate/lag counters, not a
 // bounded per-status work list, so this is a genuinely different shape from
 // UploadJob/DownloadJob's `counts` map, not a reuse of it. Every counter
 // field carries `omitempty` server-side and is 0/absent for a job that has
 // neither a live daemon nor cached counters. A stopped job with cached
 // final counters (JobSpec.CachedCounts) reports them here too, tagged
-// last_known -- lag fields stay 0 in that case, they describe an active
+// last_known. Lag fields stay 0 in that case, since they describe an active
 // fetch loop that no longer exists (see cmd_list_sink.go's own doc comment).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -479,17 +479,17 @@ struct SinkJob {
     log_path: Option<String>,
     last_known: bool,
     // Number of destination files this job has produced so far, and the
-    // rendered path of the one currently being written -- see cmd_list_
+    // rendered path of the one currently being written. See cmd_list_
     // sink.go's sinkListEntry.FileCount/.CurrentPath doc comments. Both
     // omitempty Go-side (absent before the first file opens).
     file_count: Option<i64>,
     current_path: Option<String>,
 }
 
-// Mirrors mountos-servers' SinkSnapshot (sink_runner.go) -- the fuller
+// Mirrors mountos-servers' SinkSnapshot (sink_runner.go), the fuller
 // single-job rate/lag reading from `mountos sink status --job <id> --json`.
 // Present for a running job (a live reading) or for a stopped job with
-// cached final counters (SinkStatus.last_known true) -- see
+// cached final counters (SinkStatus.last_known true). See
 // sinkStatusPayload's own doc comment. last_commit_at/last_segment_at are
 // always None in the cached case: SinkCachedCounts does not persist them.
 #[derive(Debug, Clone, Serialize)]
@@ -509,12 +509,12 @@ struct SinkSnapshot {
     fetch_errors: i64,
     commit_retries: i64,
     // Number of destination files opened so far, and the rendered path of
-    // the one currently being written -- see sink_runner.go's SinkSnapshot.
+    // the one currently being written. See sink_runner.go's SinkSnapshot.
     // FileCount/.CurrentPath doc comments. Neither is omitempty Go-side.
     file_count: i64,
     current_path: String,
     // Go's zero time.Time ("0001-01-01T00:00:00Z") is normalized to None
-    // rather than passed through -- see parse_sink_snapshot_value.
+    // rather than passed through. See parse_sink_snapshot_value.
     last_commit_at: Option<String>,
     last_segment_at: Option<String>,
 }
@@ -536,7 +536,7 @@ struct SinkStatus {
 }
 
 // Frontend-supplied flags for the `mountos sink <M3U8_URL> <SINK_PATH>` run
-// form -- confirmed against cmd_sink.go: only --variant/--max-latency/
+// form. Confirmed against cmd_sink.go: only --variant/--max-latency/
 // --wal-max exist beyond the shared --fork/credentials every satellite
 // builder already handles. No once/overwrite/dryRun/bwlimit/include/
 // exclude the way UploadStartParams has, sink has none of those.
@@ -616,36 +616,36 @@ const WINDOWS_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const INDETERMINATE_TIMEOUT: Duration = Duration::from_secs(120);
 const UNMOUNT_TIMEOUT: Duration = Duration::from_secs(120);
 // Fork subcommands are a real network round trip (one-shot TCP call to the
-// discovery/data server), unlike a local `list --json`/`mcp status` call --
-// every other spawn helper in this file already bounds its wait; this one
+// discovery/data server), unlike a local `list --json`/`mcp status` call.
+// Every other spawn helper in this file already bounds its wait; this one
 // didn't, so an unreachable server could hang it (and forkBusy) forever.
 // Matches mountos-servers' own `context.WithTimeout(cmd.Context(), 30*time.
-// Second)` in cmd_fork.go by coincidence, not a shared constant -- keep the
+// Second)` in cmd_fork.go by coincidence, not a shared constant. Keep the
 // two in sync intentionally, since a shorter value here would mask that
 // server-side context's own descriptive timeout error with a generic one.
 const FORK_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 // `upload --dry-run` walks the entire source tree (runUploadDryRun,
 // cmd_upload.go) rather than doing one quick RPC like every other one-shot
-// upload subcommand -- a large tree on a slow/network disk can legitimately
+// upload subcommand, so a large tree on a slow/network disk can legitimately
 // take longer than FORK_COMMAND_TIMEOUT's 30s. Bounded well under
 // LAUNCH_TIMEOUT (65s) x-several rather than unbounded: this is a manual,
 // explicitly-triggered action the user is actively watching for, so a firm
 // upper bound with a clear timeout message still beats hanging forever.
 const DRY_RUN_TIMEOUT: Duration = Duration::from_secs(300);
 // `upload --once`/`upload resume --once` deliberately do NOT daemonize
-// server-side (shouldDaemonizeUpload/startUploadJob, cmd_upload.go) --
+// server-side (shouldDaemonizeUpload/startUploadJob, cmd_upload.go).
 // --once's whole purpose is to block in the foreground until the job
 // actually settles, then report a definitive exit code. Using LAUNCH_
 // TIMEOUT's 65s here (as if exit 0 were a daemonize confirmation, which it
 // never is for --once) would SIGKILL a perfectly healthy job mid-upload
 // the moment it ran longer than a minute. This bounds the wait for the
-// REAL settle instead -- generous since --once uploads data, not just
-// scans a tree like DRY_RUN_TIMEOUT's read-only walk -- while still firm
+// REAL settle instead, generous since --once uploads data, not just
+// scans a tree like DRY_RUN_TIMEOUT's read-only walk, while still firm
 // per this file's own established preference for a clear timeout over
 // hanging forever.
 const UPLOAD_ONCE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 // A local `--version` probe of a user-picked candidate binary, not a network
-// round trip -- bounded tight so an unresponsive/hung pick fails fast rather
+// round trip, bounded tight so an unresponsive/hung pick fails fast rather
 // than leaving the settings UI stuck validating.
 const CLI_VALIDATE_TIMEOUT: Duration = Duration::from_secs(5);
 // mountOS's Apple Developer Team ID, pinned here rather than read from
@@ -708,7 +708,7 @@ fn mountos_path() -> Result<PathBuf, DesktopError> {
             Ok(pinned)
         } else {
             // Fail loudly rather than silently falling back to a different
-            // PATH match -- that would defeat the point of pinning a path.
+            // PATH match, since that would defeat the point of pinning a path.
             Err(DesktopError::Message(format!(
                 "pinned CLI path no longer exists: {}",
                 pinned.display()
@@ -767,13 +767,13 @@ fn find_profile(app: &AppHandle, profile_id: &str) -> Result<MountProfile, Deskt
 // running mount instance that has no saved profile at all (the same "no
 // profile, re-derive credentials from the live mount's own .mountOS/.config"
 // pattern open_deleted_view_for_instance/open_version_view_for_instance
-// already use via synthetic_profile_for_live_mount -- reused here rather
+// already use via synthetic_profile_for_live_mount, reused here rather
 // than a second implementation of the same idea). Exactly one of
 // profile_id/instance_mount_path is expected; profile_id wins if both are
 // somehow set.
 // A running mount instance chosen as an upload's source, carrying the
 // config the frontend already captured (via getInstanceConfig) the moment
-// it was selected -- discovery_url/fork/volume/access_key_id are static
+// it was selected. discovery_url/fork/volume/access_key_id are static
 // config values, not tied to the mount being currently up, so they stay
 // valid to reuse even if the instance unmounts before Browse/Start actually
 // runs (which can happen well after selection). Only a live local FILESYSTEM
@@ -809,7 +809,7 @@ fn resolve_upload_source_profile(
                 instance.backend.clone(),
             );
         }
-        // No longer active -- fall back to the config captured at
+        // No longer active, so fall back to the config captured at
         // selection time instead of failing outright.
         if instance.discovery_url.is_empty() && instance.access_key_id.is_empty() {
             return Err(DesktopError::Message(format!(
@@ -838,12 +838,12 @@ fn resolve_upload_source_profile(
 // profile-vs-instance shape, but the two modes genuinely differ in what they
 // need here (unlike upload, where both dest modes resolve full credentials):
 // DownloadSourceKind::Profile needs a real saved MountProfile (discoveryUrl/
-// fork/accessKeyId) looked up by id -- no live-instance fallback the way
+// fork/accessKeyId) looked up by id. There is no live-instance fallback the way
 // upload's dest has, a download source picked from a saved profile is always
 // "connect fresh" (mode B). DownloadSourceKind::Instance needs nothing from
-// this at all -- SOURCE is a raw local path the caller already resolved,
+// this at all: SOURCE is a raw local path the caller already resolved,
 // read straight through the live mount with no RPC/credentials (mirrors
-// mountos-servers' detectDownloadSourceKind mode A) -- so this returns None
+// mountos-servers' detectDownloadSourceKind mode A), so this returns None
 // rather than re-deriving a profile nothing will read.
 fn resolve_download_source_profile(
     app: &AppHandle,
@@ -865,7 +865,7 @@ fn resolve_download_source_profile(
 
 // Destination-path Browse needs a real local folder tree to hand the native
 // file picker (browseFolder), but a mountOS destination path lives on the
-// REMOTE volume -- there is no existing "list a remote directory" RPC/CLI to
+// REMOTE volume, and there is no existing "list a remote directory" RPC/CLI to
 // call instead. Rather than build one, this mounts the volume READ-ONLY at a
 // throwaway scratch path (reusing the exact same mount/spawn_daemonizing_
 // and_wait machinery a real mount uses) so the native picker can browse it
@@ -981,13 +981,13 @@ fn ensure_upload_browse_mount_blocking(
                 }
                 return Ok(local_path.to_string_lossy().into_owned());
             }
-            // Reaped or otherwise gone since we last checked -- fall through
+            // Reaped or otherwise gone since we last checked, so fall through
             // and mount a fresh one.
         }
     }
 
     // FSKit mounts are jailed to FSKIT_MOUNT_PREFIX by validate_mount_path_for_backend
-    // (checked right below) -- runtime_dir lives outside that jail, so an FSKit-backed
+    // (checked right below). runtime_dir lives outside that jail, so an FSKit-backed
     // scratch mount must go under the prefix instead, or every FSKit browse fails outright.
     let local_path = if matches!(profile.backend, Backend::Fskit) {
         PathBuf::from(FSKIT_MOUNT_PREFIX).join(format!("upload-browse-{}", short_hash(&key)))
@@ -1051,7 +1051,7 @@ async fn ensure_upload_browse_mount(
 // `snapshot` view (build_snapshot_argv) instead of a plain `mount`
 // (build_mount_argv) fork mount, so Browse can root the native folder picker
 // at the exact historical tree the download will actually read from. No
-// `instance` parameter -- unlike upload's dest browse (which can fall back to
+// `instance` parameter. Unlike upload's dest browse (which can fall back to
 // a live instance with no saved profile, see resolve_upload_source_profile),
 // resolve_download_source_profile's Profile branch only ever resolves a real
 // saved MountProfile by id; DownloadSourceKind::Instance (mode A) never calls
@@ -1060,7 +1060,7 @@ async fn ensure_upload_browse_mount(
 //
 // Keyed into the SAME shared browse_mounts() map as upload's browse-mounts:
 // a live/no-AsOf browse (key == profile.id) intentionally can collide with
-// and reuse an upload dest browse-mount of the same profile -- both are just
+// and reuse an upload dest browse-mount of the same profile, since both are just
 // a read-only mount of that profile's fork at its current state, so sharing
 // one avoids a redundant mount. An AsOf browse gets its own distinct key
 // (profile.id + hash of the trimmed AsOf string) so it never collides with
@@ -1100,12 +1100,12 @@ fn ensure_download_browse_mount_blocking(
                 }
                 return Ok(local_path.to_string_lossy().into_owned());
             }
-            // Reaped or otherwise gone since we last checked -- fall through
+            // Reaped or otherwise gone since we last checked, so fall through
             // and mount a fresh one.
         }
     }
 
-    // Same FSKit jail as ensure_upload_browse_mount_blocking -- FSKIT_MOUNT_PREFIX
+    // Same FSKit jail as ensure_upload_browse_mount_blocking. FSKIT_MOUNT_PREFIX
     // is the only writable/mountable root FSKit will accept.
     let local_path = if matches!(profile.backend, Backend::Fskit) {
         PathBuf::from(FSKIT_MOUNT_PREFIX).join(format!("download-browse-{}", short_hash(&key)))
@@ -1184,7 +1184,7 @@ fn read_profiles(app: &AppHandle) -> Result<Vec<MountProfile>, DesktopError> {
 // sets (and their TS mirrors in src/lib/cli.ts) are what stops a profile's
 // "extra args" field from overriding security-sensitive managed flags
 // (discovery URL, credentials, mount target). They must be updated whenever
-// mountos-servers' cmd/mfuse CLI adds a new flag -- especially a new
+// mountos-servers' cmd/mfuse CLI adds a new flag, especially a new
 // value-taking SHORT flag, since validate_extra_args's short-cluster scan
 // only special-cases '-o' as a value-absorbing flag; any other new
 // value-taking short flag would need the same treatment or it risks being
@@ -1304,8 +1304,8 @@ fn validate_extra_args(args: &[String]) -> Vec<String> {
 // that actually shells extra_args out to the CLI re-validates at use time
 // too (mount_profile_blocking and the gateway combo path already did this
 // inline; factored out so the satellite view-mount launchers and the
-// gateway-only path -- which started emitting extra_args once
-// push_cache_and_extra_args was added to them -- get the same guarantee
+// gateway-only path, which started emitting extra_args once
+// push_cache_and_extra_args was added to them, get the same guarantee
 // instead of trusting an unrevalidated on-disk value).
 fn reject_managed_extra_args(profile: &MountProfile) -> Result<(), DesktopError> {
     let rejected = validate_extra_args(&profile.extra_args);
@@ -1353,7 +1353,7 @@ fn build_mount_argv(profile: &MountProfile) -> Vec<String> {
 
 // server_standalone.go resolves disk-cache-dir and applies extraArgs
 // unconditionally before branching on mount vs. deleted/version/snapshot vs.
-// gateway-only -- shared by build_mount_argv and every satellite/gateway
+// gateway-only, shared by build_mount_argv and every satellite/gateway
 // argv builder so a profile's configured cache dir and extra flags
 // (--debug, --agent, --xattr, etc.) don't silently revert to CLI defaults
 // for those launches.
@@ -1386,7 +1386,7 @@ fn push_backend_flag(argv: &mut Vec<String>, backend: &Backend) {
 // column, sourced from `mountos list`'s own Name field) a label that visibly
 // differs from the parent mount, so a snapshot/deleted/version row is never
 // mistaken for a second copy of the real volume.
-// Short, collision-unlikely digit suffix. Not cryptographically random --
+// Short, collision-unlikely digit suffix. Not cryptographically random,
 // just needs to differ across satellite mounts of the same profile, same
 // role subsec_nanos plays for the destination-folder suffix already
 // generated frontend-side (see defaultViewDestination's randomDigits).
@@ -1602,8 +1602,8 @@ fn build_fork_restore_argv(profile: &MountProfile, name: &str) -> Vec<String> {
     argv
 }
 
-// Server-side re-check for whatever a user typed/pasted into source/dest --
-// not itself the security boundary (build_upload_start_argv's own "--"
+// Server-side re-check for whatever a user typed/pasted into source/dest.
+// Not itself the security boundary (build_upload_start_argv's own "--"
 // separator is what actually makes an arbitrary value safe in argv), but a
 // value starting with '-' is *rejected outright* here rather than silently
 // forwarded, since even though "--" prevents it from being misparsed as a
@@ -1647,7 +1647,7 @@ fn validate_upload_positional(value: &str, field: &str) -> Result<(), DesktopErr
 // --once/--overwrite/--dry-run/--rescan-interval/--restart/--bwlimit/
 // --include/--exclude/--follow-symlinks/--create-source-directory, all only
 // on the top-level `upload <source> <dest>`. Included even for a dry run
-// (harmless -- runUploadDryRun never reads --fork/credentials at all, and
+// (harmless, since runUploadDryRun never reads --fork/credentials at all, and
 // cobra parses global flags regardless of which branch RunE takes), so this
 // one builder covers both branches upload_start_blocking takes.
 fn build_upload_start_argv(
@@ -1663,14 +1663,14 @@ fn build_upload_start_argv(
     // otherwise be misparsed as a NEW flag instead of the positional
     // argument it is. "--" unconditionally ends flag parsing, so everything
     // after it reaches cobra as the two positional args no matter what it
-    // contains -- this is the one argv shape that's actually safe for
+    // contains, so this is the one argv shape that's actually safe for
     // arbitrary user input, not just typical-looking paths.
     let mut argv = vec!["upload".to_string()];
     if !profile.discovery_url.is_empty() {
         argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
     }
     // Fork is always derived from the resolved profile (saved profile or
-    // live/cached instance config), never a free-typed value -- there is no
+    // live/cached instance config), never a free-typed value, since there is no
     // form field for it anymore.
     if !profile.fork.is_empty() {
         argv.extend(["--fork".to_string(), profile.fork.clone()]);
@@ -1727,7 +1727,7 @@ fn build_upload_start_argv(
 
 // `resume` re-registers only --once/--rescan-interval on its own subcommand
 // (cobra local flags on the parent `upload` command aren't inherited by
-// subcommands -- confirmed the hard way server-side, see cmd_upload_
+// subcommands, confirmed the hard way server-side, see cmd_upload_
 // subcommands.go), so this builder's flag surface is deliberately smaller
 // than build_upload_start_argv's.
 fn build_upload_resume_argv(
@@ -1755,7 +1755,7 @@ fn build_upload_resume_argv(
 }
 
 // list/cancel/retry-failed/prune are all purely local (job dir + control
-// socket, confirmed against cmd_list_upload.go/cmd_upload_subcommands.go --
+// socket, confirmed against cmd_list_upload.go/cmd_upload_subcommands.go;
 // none of the four touch resolveUploadCredentials), so unlike every builder
 // above these take no MountProfile at all: no --discovery-url, no --fork, no
 // satellite credentials.
@@ -1807,7 +1807,7 @@ fn build_upload_prune_argv(keep: u32) -> Vec<String> {
 // forever and --overwrite is superseded by --if-exists=overwrite).
 // `profile` is None for DownloadSourceKind::Instance (mode A: SOURCE is a
 // local path read straight through an already-live mount, no connection/
-// credentials at all) -- discoveryUrl/fork/as-of/-a/-s are only ever emitted
+// credentials at all); discoveryUrl/fork/as-of/-a/-s are only ever emitted
 // for DownloadSourceKind::Profile. Same flags-first-then-"--" ordering as
 // build_upload_start_argv, for the same reason (see that function's comment).
 fn build_download_start_argv(
@@ -1885,7 +1885,7 @@ fn build_download_start_argv(
 }
 
 // `download resume <job-id>` registers no distinctive flags of its own
-// (unlike `upload resume`'s --once/--rescan-interval -- download has
+// (unlike `upload resume`'s --once/--rescan-interval; download has
 // neither, every run is already single-pass), but a remote-mode job still
 // needs --discovery-url/-a/-s (root-inherited global flags) to reconnect.
 // Same profile-emptiness-gated pattern as build_upload_resume_argv: a
@@ -1905,8 +1905,8 @@ fn build_download_resume_argv(profile: &MountProfile, job_id: &str) -> Vec<Strin
 }
 
 // list/cancel/retry-failed/prune are all purely local (job dir + control
-// socket, confirmed against cmd_list_download.go/cmd_download_subcommands.go
-// -- none of the four touch resolveUploadCredentials), so these take no
+// socket, confirmed against cmd_list_download.go/cmd_download_subcommands.go;
+// none of the four touch resolveUploadCredentials), so these take no
 // MountProfile at all.
 fn build_download_list_argv() -> Vec<String> {
     vec![
@@ -1957,7 +1957,7 @@ fn build_download_prune_argv(keep: u32) -> Vec<String> {
 // create-source-directory either, do not carry those over from upload/
 // download by habit. Same flags-first-then-"--"-then-positionals ordering
 // as build_upload_start_argv, for the same reason (see that function's
-// comment) -- source is an operator-supplied URL and dest a path template,
+// comment). source is an operator-supplied URL and dest a path template,
 // both free text.
 fn build_sink_start_argv(
     profile: &MountProfile,
@@ -2058,12 +2058,12 @@ fn build_sink_prune_argv(keep: u32) -> Vec<String> {
 }
 
 // gateway-only mode uses the standalone `gateway` subcommand (no -m, no
-// backend flag, no --volname -- there is no FUSE mount at all, confirmed
+// backend flag, no --volname, since there is no FUSE mount at all, confirmed
 // against cmd_gateway.go/cmd_mount.go: -m is optional whenever
 // --gateway-only is set). The mount+gateway combo instead reuses the full
 // regular `mount` argv (build_mount_argv already emits -m/backend/
 // credentials/--read-only/--temporary-fork/cache-dir/extraArgs) with gateway
-// flags appended -- confirmed as the CLI's actual combo invocation shape
+// flags appended, confirmed as the CLI's actual combo invocation shape
 // (`mount -m <dir> --gateway s3,hdfs`, no --gateway-only).
 fn build_gateway_argv(
     profile: &MountProfile,
@@ -2133,7 +2133,7 @@ fn validate_backend_for_platform(backend: &Backend) -> Result<(), DesktopError> 
     }
 }
 
-// FSKit requires its mount point to live under this exact directory -- the
+// FSKit requires its mount point to live under this exact directory, since the
 // kernel-side FSKit extension registration only resolves volumes rooted
 // here, mirroring the same constraint the mos-sanity/mos-tests skills
 // already document for manual FSKit testing.
@@ -2156,7 +2156,7 @@ fn validate_mount_path_for_backend(
     if matches!(backend, Backend::Fskit) {
         let trimmed = mount_path.trim_end_matches('/');
         // The prefix check below is a plain byte comparison, not a resolved
-        // path check -- it never touches the filesystem (the mount point
+        // path check. It never touches the filesystem (the mount point
         // usually doesn't exist yet), so a ".." component must be rejected
         // explicitly instead of relying on canonicalization to normalize it
         // away, or "/Volumes/MountOS/x/../../../etc" would pass the prefix
@@ -2411,7 +2411,7 @@ fn run_cli_with_secret(
 }
 
 // Fork subcommands are one-shot TCP calls (connect, do the op, print, exit),
-// not mounts -- no daemonize, no list --json polling, just exit-code +
+// not mounts. No daemonize, no list --json polling, just exit-code +
 // stdout/stderr, mirroring mount_help_blocking's shape.
 fn fork_command_blocking(
     argv: Vec<String>,
@@ -2483,7 +2483,7 @@ fn get_third_party_licenses(app: AppHandle, kind: String) -> Result<Value, Deskt
 }
 
 // Frontend-supplied URL (a license package's repository link), so scheme-gated
-// to http(s) -- open::that_detached otherwise hands whatever string it's given
+// to http(s): open::that_detached otherwise hands whatever string it's given
 // straight to the OS shell, which is a broader "open anything" primitive than
 // a link needs.
 #[tauri::command]
@@ -2497,7 +2497,7 @@ fn open_external_url(url: String) -> Result<(), DesktopError> {
     Ok(())
 }
 
-// Runs `<path> --version` and checks the output starts with "mountos" --
+// Runs `<path> --version` and checks the output starts with "mountos", a
 // cheap, side-effect-free confirmation that a user-picked binary (from the
 // pin-CLI-path file browser) is actually our CLI, rather than pinning
 // whatever executable the file picker happened to return. stdin is closed so
@@ -2575,7 +2575,7 @@ struct CliSignatureStatus {
 // sniff: checks the binary's actual code-signing signature rather than
 // trusting whatever it prints. On macOS this confirms the signer is
 // mountOS's own Developer ID (not just "signed by someone"). On Windows it
-// only confirms the Authenticode signature is valid -- no certificate
+// only confirms the Authenticode signature is valid; no certificate
 // thumbprint is checked into this repo to pin the signer against (see
 // MOUNTOS_MACOS_TEAM_ID's comment). Unsigned dev/local builds correctly
 // report unverified; that's expected, not an error.
@@ -2823,7 +2823,7 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
         // "upload"/"download" entries (mountos-servers' `mountos list --json`
         // mixes mount + gateway + upload + download kinds unconditionally,
         // `--kind` is a CLI-side filter only) have no mountPath/backend at
-        // all and would otherwise render as broken mount rows here -- every
+        // all and would otherwise render as broken mount rows here. Every
         // existing kind check in this codebase is the binary
         // `kind !== "gateway"`, which treats anything else as a mount.
         // Uploads/downloads get their own list_uploads/list_downloads
@@ -2911,8 +2911,8 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
                     .get("pid")
                     .and_then(Value::as_u64)
                     .and_then(|value| u32::try_from(value).ok()),
-                // All are filled in / corrected afterward in get_system_state
-                // -- listing alone can't know any of them.
+                // All are filled in / corrected afterward in get_system_state,
+                // since listing alone can't know any of them.
                 mount_time: None,
                 volume_kind: None,
                 temporary_fork: None,
@@ -3005,7 +3005,7 @@ fn save_settings(
     // Bounded here, not just in the picker: settings.json is a plain file a user
     // can hand-edit, and a huge value would look like the list had frozen. 0 is
     // the explicit "Off" sentinel (auto-refresh disabled, manual Refresh button
-    // only) -- not a busy-loop interval, since the frontend never starts a
+    // only), not a busy-loop interval, since the frontend never starts a
     // timer for it.
     if let Some(seconds) = settings.poll_seconds {
         if seconds != 0 && !(1..=3600).contains(&seconds) {
@@ -3083,7 +3083,7 @@ fn export_profile(app: AppHandle, profile_id: String) -> Result<ExportedProfile,
 }
 
 // Once a profile's volume kind is known (see detect_and_persist_volume_kind),
-// its identity -- which real volume it points at -- must not silently
+// its identity, meaning which real volume it points at, must not silently
 // change out from under it. access_key_id/discovery_url/volume are the
 // identity triple; fork/backend are left editable since switching forks or
 // transport doesn't repoint the profile at a different volume. A brand-new
@@ -3118,7 +3118,7 @@ fn require_stable_identity(app: &AppHandle, profile: &MountProfile) -> Result<()
 // Reads the mounted volume's own `.mountOS/.volume-type` reserved file
 // (plain text "General"/"Iceberg\n") the first time a profile mounts
 // successfully, and persists it to the profile so its identity locks (see
-// require_stable_identity). Best-effort and silent on any failure -- a
+// require_stable_identity). Best-effort and silent on any failure, since a
 // volume-kind badge is not worth failing an otherwise-successful mount over,
 // and the next successful mount tries again since volume_kind stays None.
 fn detect_and_persist_volume_kind(app: &AppHandle, profile: &MountProfile) {
@@ -3161,7 +3161,7 @@ fn detect_and_persist_volume_kind(app: &AppHandle, profile: &MountProfile) {
 // (kept in sync so a CLI-created job and a GUI-created profile draw from the
 // same vocabulary) and the same "adjective-noun-xxxx" shape. Not a job/
 // profile identifier, a display label only, generated once by the caller
-// and then persisted as-is (here, a new profile's name field) -- so this
+// and then persisted as-is (here, a new profile's name field), so this
 // doesn't need cryptographic randomness, which is why it doesn't pull in
 // the `rand` crate for a cosmetic string. A splitmix64 mix seeded from
 // wall-clock time, process id, and a per-process call counter is plenty to
@@ -3437,7 +3437,7 @@ fn mount_profile_blocking(
 
 // Shared by mount_profile_blocking and open_snapshot_view_blocking: both
 // subcommands daemonize normally (parent forks, blocks on the readiness
-// pipe up to LAUNCH_TIMEOUT, exits 0 with "started with PID" on success) --
+// pipe up to LAUNCH_TIMEOUT, exits 0 with "started with PID" on success),
 // confirmed for `snapshot` by reading cmd_snapshot.go (Config.Foreground is
 // never set there, unlike deleted/version).
 fn spawn_daemonizing_and_wait(
@@ -3513,13 +3513,13 @@ fn spawn_daemonizing_and_wait(
 
 // `upload <source> <dest>` and `upload resume` daemonize the same way mount
 // does (parent forks, blocks on the readiness pipe, exits 0 once
-// utils.NotifyDaemonReady fires child-side) -- but unlike a mount there is
+// utils.NotifyDaemonReady fires child-side), but unlike a mount there is
 // no single mount-path-shaped target to poll for readiness, and exit code 0
 // IS the confirmation. Callers re-fetch list_uploads afterward rather than
 // this returning a job id, so this only needs to report success/failure, not
 // a MountResult. `timeout` is caller-supplied rather than a hardcoded
 // LAUNCH_TIMEOUT because --once breaks the "exit 0 means daemonized"
-// assumption entirely -- it never daemonizes, exit 0 there means the job
+// assumption entirely: it never daemonizes, exit 0 there means the job
 // actually settled (see UPLOAD_ONCE_TIMEOUT's own comment).
 fn spawn_daemonizing_upload_and_wait(
     mountos: &Path,
@@ -3572,7 +3572,7 @@ fn spawn_daemonizing_upload_and_wait(
 // readiness while concurrently checking try_wait() so a fast failure (bad
 // credentials, discovery error) is caught promptly rather than waiting out
 // the full timeout. On success the Child handle is dropped without being
-// waited on -- std::process::Child has no kill-on-drop behavior, so this
+// waited on, since std::process::Child has no kill-on-drop behavior, so this
 // correctly releases Rust's ownership while leaving the OS process running
 // as the mount's own server, same as any other backend's detached child.
 fn spawn_foreground_view_and_poll(
@@ -3616,7 +3616,7 @@ fn spawn_foreground_view_and_poll(
         if list_contains_target(ready_target).unwrap_or(false) {
             // This Child IS the long-running FUSE server (Foreground is
             // hardcoded server-side for deleted/version, no daemonize/
-            // re-parent ever happens) -- unlike spawn_daemonizing_and_wait's
+            // re-parent ever happens). Unlike spawn_daemonizing_and_wait's
             // tracked Child, which is always reaped by wait_child, dropping
             // this one leaks a zombie for the rest of the app's lifetime
             // (Child has no reap-on-drop). Reap it on a detached thread once
@@ -3649,7 +3649,7 @@ fn spawn_foreground_view_and_poll(
 // only: child exits 0 => ready, anything else is surfaced as-is. Gateway
 // mode is NOT hardcoded Foreground server-side (verified: no such reference
 // in cmd_gateway.go/cmd_mount.go), so it daemonizes normally like a regular
-// mount -- this is not a new spawn contract, just the existing one without a
+// mount. This is not a new spawn contract, just the existing one without a
 // target to double-check readiness against.
 fn spawn_gateway_only_and_wait(
     mountos: &Path,
@@ -3741,7 +3741,7 @@ fn resolve_satellite_secret(
 // invoke() caller can flip it on with one extra call before calling
 // fork_delete with force=true. Closing that would require treating the
 // webview as adversarial, which no other command in this app does either
-// (mount/unmount/save_profile are all equally reachable) -- accepted, same
+// (mount/unmount/save_profile are all equally reachable). Accepted, same
 // trust model as the rest of this file's Tauri commands.
 fn require_force_delete_allowed(app: &AppHandle) -> Result<(), DesktopError> {
     if get_settings(app.clone())?.allow_fork_force_delete {
@@ -3869,7 +3869,7 @@ async fn fork_restore(
 
 // entry.get("kind") == "upload" here comes from mountos-servers' `mountos
 // list --json` mixing mount + gateway + upload kinds unconditionally
-// (--kind is a CLI-side filter only) -- filtered defensively even though
+// (--kind is a CLI-side filter only). Filtered defensively even though
 // this call already passes --kind upload, so a future server change to that
 // filter can't silently leak the wrong rows into the uploads list either.
 fn parse_uploads_value(value: &Value) -> Vec<UploadJob> {
@@ -3991,11 +3991,11 @@ fn start_upload_blocking(
     let argv = build_upload_start_argv(&profile, source, dest, &params);
     if params.dry_run {
         // Never connects (runUploadDryRun is checked before credentials are
-        // even resolved server-side) and prints its report to stdout -- a
+        // even resolved server-side) and prints its report to stdout. A
         // one-shot foreground call, same shape as upload_command_blocking,
         // captures and returns exactly that report text instead of waiting
         // on a daemonize confirmation that will never come. Uses
-        // DRY_RUN_TIMEOUT, not FORK_COMMAND_TIMEOUT's 30s -- a dry run walks
+        // DRY_RUN_TIMEOUT, not FORK_COMMAND_TIMEOUT's 30s, since a dry run walks
         // the ENTIRE source tree (unlike every other one-shot upload
         // subcommand, which just touches local job state or a control
         // socket), and a large/slow-disk source can legitimately take
@@ -4005,7 +4005,7 @@ fn start_upload_blocking(
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
     // A single profile can legitimately drive multiple concurrent upload
     // starts at different (source, dest) pairs (unlike a mount, which is
-    // 1:1 with a profile) -- profile-id-only filenames would let one
+    // 1:1 with a profile), so profile-id-only filenames would let one
     // launch's log-file creation truncate another's mid-write. Same
     // short_hash-of-destination convention as the Snapshot/Deleted/Version
     // views below.
@@ -4044,7 +4044,7 @@ async fn start_upload(
     .map_err(|error| DesktopError::Message(format!("start upload task failed: {error}")))?
 }
 
-// Resume only ever needs discovery_url + access_key_id -- build_upload_
+// Resume only ever needs discovery_url + access_key_id. build_upload_
 // resume_argv reads neither volume/fork/mountPath/backend from its profile
 // (job.json already fixes those server-side; a job resumes purely by id).
 // This lets Resume work for ANY job, including one started from the CLI
@@ -4081,14 +4081,14 @@ fn resume_profile(discovery_url: String, access_key_id: String) -> MountProfile 
 
 // An access key id has exactly one matching secret (it encodes a specific
 // user+volume pairing server-side), so Resume doesn't need the caller to
-// pick a saved profile -- if a saved profile happens to share this access
+// pick a saved profile. If a saved profile happens to share this access
 // key id, reuse whatever secret is already cached for it; otherwise fall
 // through to requiring an explicit secret, exactly like resolve_satellite_
 // secret's own "not cached, ask for it" behavior.
 // Pulled out of resolve_secret_for_access_key as a pure function so the
 // matching logic is unit-testable without a real AppHandle. Matches on
 // BOTH access_key_id AND secret_ref == "vault" together, not access_key_id
-// alone -- multiple saved profiles can share one access key id (e.g. one
+// alone, since multiple saved profiles can share one access key id (e.g. one
 // created via "save as profile" off a live mount, another added manually),
 // and if the first one found (read_profiles sorts newest-updated-first) has
 // secret_ref == "prompt" while an older sibling has the actual cached vault
@@ -4194,7 +4194,7 @@ async fn resume_upload(
 
 // Upload's status/cancel/retry-failed/prune subcommands are one-shot local
 // calls (control-socket or on-disk state only, no cluster connection, no
-// credentials ever needed) -- same shape as fork_command_blocking/
+// credentials ever needed), same shape as fork_command_blocking/
 // mount_help_blocking, kept as its own sibling rather than reused across
 // features for the same naming-clarity reason those two are separate.
 fn upload_command_blocking(argv: Vec<String>, timeout: Duration) -> Result<String, DesktopError> {
@@ -4274,7 +4274,7 @@ async fn prune_uploads(keep: u32) -> Result<String, DesktopError> {
 
 // entry.get("kind") == "download" here comes from `mountos list --json`
 // mixing mount + gateway + upload + download kinds unconditionally (--kind
-// is a CLI-side filter only) -- filtered defensively even though this call
+// is a CLI-side filter only). Filtered defensively even though this call
 // already passes --kind download, same reasoning as parse_uploads_value.
 fn parse_downloads_value(value: &Value) -> Vec<DownloadJob> {
     value
@@ -4417,7 +4417,7 @@ fn start_download_blocking(
     validate_upload_positional(dest, "destination")?;
     let argv = build_download_start_argv(profile.as_ref(), source_kind, source, dest, &params);
 
-    // Mode A (Instance) never resolves a secret -- profile is None, so this
+    // Mode A (Instance) never resolves a secret, since profile is None, so this
     // short-circuits explicitly rather than depending on resolve_satellite_
     // secret's own empty-access-key-id branch.
     let resolved_secret = match &profile {
@@ -4426,12 +4426,12 @@ fn start_download_blocking(
     };
 
     if params.dry_run {
-        // Unlike upload's dry-run (never connects -- upload's SOURCE is
+        // Unlike upload's dry-run (never connects, since upload's SOURCE is
         // always local disk, confirmed by cmd_upload.go's own "no
         // connection, no writes" flag help text), a mode-B download's
         // dry-run genuinely connects to discover the remote source
         // (runDownloadDryRun calls resolveUploadCredentials for a
-        // non-mounted source, cmd_download.go) -- the resolved secret must
+        // non-mounted source, cmd_download.go), so the resolved secret must
         // actually be piped here, not dropped the way upload_command_
         // blocking's None does.
         return download_command_blocking(argv, resolved_secret, DRY_RUN_TIMEOUT);
@@ -4444,8 +4444,8 @@ fn start_download_blocking(
     let stdout_path =
         runtime_dir(&app)?.join(format!("download-{profile_key}-{suffix}-stdout.log"));
     // Download always daemonizes on a successful start (shouldDaemonizeDownload,
-    // cmd_download.go: `!foreground`, unconditionally -- there is no --once
-    // exception the way upload has) -- exit 0 IS the daemonize confirmation,
+    // cmd_download.go: `!foreground`, unconditionally; there is no --once
+    // exception the way upload has). exit 0 IS the daemonize confirmation,
     // never a "job settled" signal the way upload's --once path is, so
     // LAUNCH_TIMEOUT (a plain daemonize wait) applies unconditionally.
     spawn_daemonizing_upload_and_wait(
@@ -4478,7 +4478,7 @@ async fn start_download(
 
 // Unlike resume_upload_blocking (every upload job needs dest credentials,
 // since upload's dest is always the remote mountOS volume regardless of
-// source mode), a download job can be genuinely mode-A (mounted source) --
+// source mode), a download job can be genuinely mode-A (mounted source).
 // discovery_url/access_key_id are both empty for one of those, and this must
 // not demand them the way resume_upload_blocking unconditionally does.
 fn resume_download_blocking(
@@ -4596,8 +4596,8 @@ async fn prune_downloads(keep: u32) -> Result<String, DesktopError> {
 }
 
 // `sink list --json` returns a plain array of sinkListEntry directly (no
-// "kind" field to filter on, unlike parse_uploads_value/parse_downloads_value
-// -- confirmed against cmd_list_sink.go: sink list is its own subcommand,
+// "kind" field to filter on, unlike parse_uploads_value/parse_downloads_value).
+// Confirmed against cmd_list_sink.go: sink list is its own subcommand,
 // never mixed with mount/upload/download/gateway kinds the way `mountos
 // list --json` is).
 fn parse_sinks_value(value: &Value) -> Vec<SinkJob> {
@@ -4701,9 +4701,9 @@ async fn list_sinks() -> Result<Vec<SinkJob>, DesktopError> {
 }
 
 // sink's start/resolve-source needs are identical to upload's (a saved
-// profile, or an already-mounted instance's credentials/fork) -- sink and
+// profile, or an already-mounted instance's credentials/fork). Sink and
 // upload only differ in what the positionals mean (an M3U8 URL, not a local
-// path), never in how the connection is resolved -- so this reuses
+// path), never in how the connection is resolved, so this reuses
 // UploadInstanceRef/resolve_upload_source_profile directly rather than a
 // second, identical Sink-prefixed copy.
 fn sink_command_blocking(argv: Vec<String>, timeout: Duration) -> Result<String, DesktopError> {
@@ -4749,7 +4749,7 @@ fn start_sink_blocking(
     let stderr_path = runtime_dir(&app)?.join(format!("sink-{}-{suffix}-stderr.log", profile.id));
     let stdout_path = runtime_dir(&app)?.join(format!("sink-{}-{suffix}-stdout.log", profile.id));
     // Sink always daemonizes on a successful start (shouldDaemonizeSink
-    // parity with upload/download's default path -- sink has no --once
+    // parity with upload/download's default path; sink has no --once
     // foreground-block exception the way upload does), so exit 0 IS the
     // daemonize confirmation and LAUNCH_TIMEOUT applies unconditionally.
     spawn_daemonizing_upload_and_wait(
@@ -4884,7 +4884,7 @@ async fn prune_sinks(keep: u32) -> Result<String, DesktopError> {
 
 // Go's zero time.Time ("0001-01-01T00:00:00Z") means "never happened yet
 // this run" (LastCommitAt/LastSegmentAt start zero-valued, see sink_
-// runner.go's sinkMetrics), not a real timestamp -- normalized to None so
+// runner.go's sinkMetrics), not a real timestamp. Normalized to None so
 // the frontend never has to special-case that string.
 fn normalize_sink_timestamp(raw: Option<&str>) -> Option<String> {
     raw.filter(|v| !v.is_empty() && *v != "0001-01-01T00:00:00Z")
@@ -5165,7 +5165,7 @@ async fn open_deleted_view(
 
 // Bundling path/inode/version_format/idle_timeout/secret/full_chain into a
 // struct would need the frontend's flat invoke() payload nested under a new
-// key to match -- one arg per Tauri-visible field is the plainer tradeoff.
+// key to match, so one arg per Tauri-visible field is the plainer tradeoff.
 #[allow(clippy::too_many_arguments)]
 fn open_version_view_blocking(
     app: AppHandle,
@@ -5266,14 +5266,14 @@ async fn open_version_view(
     .map_err(|error| DesktopError::Message(format!("version view task failed: {error}")))?
 }
 
-// Deleted/Version view for an instance with no saved profile at all --
+// Deleted/Version view for an instance with no saved profile at all,
 // mounted from the terminal (or any tool outside this app). Profile is
 // deliberately optional here: forcing one into existence just to open a
 // satellite view would bloat the profile list for anyone who mounts from the
 // CLI as their main workflow. Credentials are re-derived from the live
 // mount's own .mountOS/.config instead of a persisted profile file,
 // preserving the same trust boundary find_profile enforces elsewhere in this
-// file -- nothing about identity or credentials is taken on the frontend's
+// file. Nothing about identity or credentials is taken on the frontend's
 // word, it's re-read from a source this process didn't write.
 #[derive(Debug, Deserialize, Default)]
 struct LiveMountConfig {
@@ -5285,7 +5285,7 @@ struct LiveMountConfig {
     access_id: String,
     #[serde(rename = "volumeName", default)]
     volume_name: String,
-    // "general" | "iceberg" | "" (legacy/unset, treated as general) -- same
+    // "general" | "iceberg" | "" (legacy/unset, treated as general), same
     // casing as MountConfig.VolumeType (mfusetypes/types.go). Iceberg
     // volumes don't support Deleted/Version, mirroring the profile editor's
     // own gate (ProfilesView.svelte's `{#if selectedProfile.volumeKind !==
@@ -5525,8 +5525,8 @@ async fn open_version_view_for_instance(
 }
 
 // Mirrors mountos-servers' gatewayDescriptor JSON exactly (snake_case keys
-// as written by Go's `json:"..."` tags, hence no #[serde(rename_all)] here
-// -- Rust's own field names already are snake_case). Deliberately reading
+// as written by Go's `json:"..."` tags, hence no #[serde(rename_all)] here,
+// since Rust's own field names already are snake_case). Deliberately reading
 // this file from the GUI, overriding the original "not public GUI contract"
 // caution: the only alternative is no live PID/endpoint readback at all, and
 // the descriptor already excludes the secret by design (comment in
@@ -5536,7 +5536,7 @@ struct GatewayDescriptorFile {
     #[serde(default)]
     endpoints: std::collections::HashMap<String, GatewayEndpointFile>,
     // Looked up by exact pid (the filename itself), so volume/fork identity
-    // in the payload doesn't need cross-checking here -- kept only for the
+    // in the payload doesn't need cross-checking here. Kept only for the
     // `pid` assertion in tests and to document the schema shape.
     pid: i64,
 }
@@ -5560,8 +5560,8 @@ struct GatewayEndpointInfo {
 #[serde(rename_all = "camelCase")]
 struct GatewayLaunchResult {
     state: String,
-    // None when the descriptor couldn't be found (best-effort discovery) --
-    // the launch may still have succeeded; a missing PID just means the
+    // None when the descriptor couldn't be found (best-effort discovery).
+    // The launch may still have succeeded; a missing PID just means the
     // Stop-gateway action won't be offered for it.
     pid: Option<u32>,
     endpoints: Vec<GatewayEndpointInfo>,
@@ -5571,12 +5571,12 @@ struct GatewayLaunchResult {
 // writeGatewayDescriptor; the home-dir copy needs an internal volShardID this
 // GUI has no way to compute, so only the tmp copy is used). Keyed by the
 // EXACT pid this process parsed from its own spawned child's stdout (see
-// parse_started_pid) -- deliberately not a volume-name+recency scan: this
+// parse_started_pid), deliberately not a volume-name+recency scan: this
 // machine can easily have multiple gateways from unrelated launches running
 // concurrently (including for the same volume), and a fuzzy match risked
 // attributing a different launch's PID/endpoints to this one, which then
 // fed straight into Stop-gateway. Best-effort: returns None on any I/O/parse
-// failure, never an error -- a missing descriptor shouldn't fail an
+// failure, never an error, since a missing descriptor shouldn't fail an
 // otherwise-successful launch.
 fn find_gateway_descriptor(pid: u32) -> Option<GatewayDescriptorFile> {
     let path = std::env::temp_dir().join(format!("mountOS-{pid}.gateway.json"));
@@ -5585,14 +5585,14 @@ fn find_gateway_descriptor(pid: u32) -> Option<GatewayDescriptorFile> {
     // Cheap integrity check: the file's own claimed pid must match the exact
     // pid its filename was looked up under. A mismatch means either a
     // corrupted write or a forged file (the temp dir is per-user but still
-    // shared with every other process this user runs) -- either way, not a
+    // shared with every other process this user runs). Either way, not a
     // descriptor this launch should trust.
     (descriptor.pid == i64::from(pid)).then_some(descriptor)
 }
 
 // The daemonizing spawn's own readiness signal (Unix's pipe, Windows'
 // poll_target on the eventual mount) only orders around the FUSE mount, not
-// the gateway descriptor write -- for a gateway-only launch there is no mount
+// the gateway descriptor write. For a gateway-only launch there is no mount
 // to wait on at all, and on Windows daemon_windows.go's Daemonize returns as
 // soon as CreateProcess succeeds, well before the child has bound its
 // listeners and written its descriptor. Poll briefly rather than accepting
@@ -5614,7 +5614,7 @@ fn find_gateway_descriptor_with_retry(pid: u32) -> Option<GatewayDescriptorFile>
 
 // Matches the pinned "<title> started with PID: <pid>" contract both
 // daemon.go and daemon_windows.go print on their parent's stdout right
-// before exiting 0 -- the same string the original desktop-gui design doc
+// before exiting 0, the same string the original desktop-gui design doc
 // already treats as a stable, documented pinned string for other purposes.
 fn parse_started_pid(text: &str) -> Option<u32> {
     let idx = text.find("started with PID: ")?;
@@ -5626,7 +5626,7 @@ fn parse_started_pid(text: &str) -> Option<u32> {
 }
 
 // PIDs this process has itself discovered via a successful gateway launch's
-// own stdout (see parse_started_pid) -- the only PIDs stop_gateway is willing
+// own stdout (see parse_started_pid), the only PIDs stop_gateway is willing
 // to act on. Without this, stop_gateway would trust whatever u32 an
 // invoke('stop_gateway', {pid}) caller supplied, name-checked only by
 // pid_is_mountos_process, which can't distinguish "the gateway this app
@@ -5733,7 +5733,7 @@ fn open_gateway_blocking(
             &profile.mount_path,
         )?
     };
-    // The parent's own stdout is the authoritative source for the pid --
+    // The parent's own stdout is the authoritative source for the pid,
     // parsed from this process's own spawned child, never from anything the
     // frontend could supply. Only a pid discovered this way ever becomes
     // stoppable (see known_gateway_pids/stop_gateway_blocking).
@@ -5779,14 +5779,14 @@ async fn open_gateway(
     .map_err(|error| DesktopError::Message(format!("gateway launch task failed: {error}")))?
 }
 
-// Scoped, single-purpose stop for a gateway launched via open_gateway --
-// there is no `unmount` equivalent for it (no control socket, no mount
+// Scoped, single-purpose stop for a gateway launched via open_gateway.
+// There is no `unmount` equivalent for it (no control socket, no mount
 // entry), and this is deliberately narrower than the general Force-stop
 // pattern reserved for §17.8 (opt-in, any wedged mount). Two independent
 // checks gate this, not one: `pid` must be in known_gateway_pids() (a pid
 // THIS process itself parsed from its own spawned child's stdout in
 // open_gateway_blocking, never trusted from whatever a frontend caller
-// supplies -- Tauri's own capability system gates only plugin commands, not
+// supplies, since Tauri's own capability system gates only plugin commands, not
 // app-defined ones, so a compromised/buggy renderer could otherwise invoke
 // this with any u32), AND pid_is_mountos_process must still hold (closes the
 // window where a known-but-since-reused pid was picked up by an unrelated
@@ -5797,13 +5797,13 @@ async fn open_gateway(
 // mountos-servers' gateway_descriptor.go.
 // A pid launched via open_gateway and never stopped through this app (killed
 // externally, crashed, exited on idle-timeout) stays in known_gateway_pids
-// forever otherwise -- widening, without bound, the window in which the OS
+// forever otherwise, widening, without bound, the window in which the OS
 // could hand that same pid number to an unrelated mountos-family process
 // (this machine alone runs dozens, see mos-load-*) that stop_gateway would
 // then also be willing to act on. Opportunistic, not exhaustive: still a
 // residual TOCTOU between this call and the next (no cross-platform
 // process-identity/start-time check exists to close it further), but no
-// longer unbounded -- every gateway launch/stop call now re-checks every pid
+// longer unbounded, since every gateway launch/stop call now re-checks every pid
 // this process still thinks is live.
 fn reconcile_known_gateway_pids() {
     let mut guard = known_gateway_pids()
@@ -5820,7 +5820,7 @@ fn stop_gateway_blocking(pid: u32) -> Result<(), DesktopError> {
         .contains(&pid);
     if !is_known {
         return Err(DesktopError::Message(format!(
-            "PID {pid} was not discovered by this app's own gateway launch -- refusing to stop it"
+            "PID {pid} was not discovered by this app's own gateway launch, refusing to stop it"
         )));
     }
     if !pid_is_mountos_process(pid)? {
@@ -5829,7 +5829,7 @@ fn stop_gateway_blocking(pid: u32) -> Result<(), DesktopError> {
             .unwrap_or_else(|error| error.into_inner())
             .remove(&pid);
         return Err(DesktopError::Message(format!(
-            "no running mountos process at PID {pid} -- it may have already exited"
+            "no running mountos process at PID {pid}, it may have already exited"
         )));
     }
     let result = send_graceful_stop(pid);
@@ -5844,7 +5844,7 @@ fn stop_gateway_blocking(pid: u32) -> Result<(), DesktopError> {
 // to on Ctrl+C, so this drives the identical graceful-shutdown sequence
 // (detach mount, flush, drain) rather than an abrupt kill. Windows has no
 // equivalent graceful request for a console process without its own IPC
-// listener -- `taskkill /F` is what stop_gateway has always used here; kept
+// listener, so `taskkill /F` is what stop_gateway has always used here; kept
 // as-is rather than silently changing existing launched-by-this-app behavior
 // as a side effect of adding the gateway-only case below.
 fn send_graceful_stop(pid: u32) -> Result<(), DesktopError> {
@@ -5873,8 +5873,8 @@ async fn stop_gateway_only(pid: u32) -> Result<(), DesktopError> {
 }
 
 // A standalone gateway-only row (mountos gateway / mount --gateway-only) has
-// no launch record in known_gateway_pids -- it was very likely started from
-// a terminal, not this app -- so there is nothing to check that trust chain
+// no launch record in known_gateway_pids. It was very likely started from
+// a terminal, not this app, so there is nothing to check that trust chain
 // against. Instead this re-derives trust from mountos list --json itself,
 // the same "the renderer's claim about what to act on must be corroborated
 // by the CLI's own live listing" pattern list_contains_target/open_target
@@ -5905,7 +5905,7 @@ fn stop_gateway_only_blocking(pid: u32) -> Result<(), DesktopError> {
     }
     if !pid_is_mountos_process(pid)? {
         return Err(DesktopError::Message(format!(
-            "no running mountos process at PID {pid} -- it may have already exited"
+            "no running mountos process at PID {pid}, it may have already exited"
         )));
     }
     send_graceful_stop(pid)
@@ -6105,7 +6105,7 @@ fn unmount_all_targets_blocking(
 }
 
 // Unlike a single unmount_target (one poll_target call), --all's per-mount
-// teardown can straggle -- some targets finish flushing sooner than others.
+// teardown can straggle, since some targets finish flushing sooner than others.
 // Re-listing once immediately after the CLI process exits raced the
 // still-in-progress unmounts and reported every target as failed even though
 // they all cleared moments later. Poll the whole list instead, the same
@@ -6140,7 +6140,7 @@ async fn unmount_all_targets(
 
 // Best-effort read for the instances list poll: every instance gets this on
 // every refresh, so failures (unmounted mid-read, no .config yet, unexpected
-// shape) fall back to None rather than failing the whole list -- an uptime
+// shape) fall back to None rather than failing the whole list. An uptime
 // or volume-kind badge that's occasionally missing beats one that takes the
 // entire Instances view down with it.
 struct InstanceConfigExtras {
@@ -6152,7 +6152,7 @@ struct InstanceConfigExtras {
     // profile) has no such record, so its badge would never show without a
     // second, profile-independent source. Same "general"/"iceberg" casing.
     volume_kind: Option<String>,
-    // Not in `mountos list --json` at all (confirmed) -- server-side this is
+    // Not in `mountos list --json` at all (confirmed). Server-side this is
     // MountConfig.TemporaryFork (mfusetypes/types.go), a bool, distinct from
     // the same struct's ForkName string.
     temporary_fork: Option<bool>,
@@ -6184,7 +6184,7 @@ fn read_instance_config_extras(mount_path: &str) -> InstanceConfigExtras {
     }
 }
 
-// Reads .mountOS/.config directly off disk rather than shelling out -- it's
+// Reads .mountOS/.config directly off disk rather than shelling out. It's
 // a plain JSON file the mfuse process already writes for its own TUI/CLI
 // tooling (cmd/mfuse/reserved.go getConfigData), so no extra CLI round
 // trip is needed. Scrubbing is unnecessary: MountConfig carries the access
@@ -6383,7 +6383,7 @@ fn spawn_dashboard_terminal(
         }
         // WezTerm is the one that does NOT go through `open -na`: passed that
         // way it launches but silently drops the command. Its in-bundle CLI
-        // works, and --config is a global flag that must precede `start` --
+        // works, and --config is a global flag that must precede `start`;
         // after it, wezterm rejects it outright.
         "wezterm" => {
             let bundle = terminal_bundle_path("WezTerm")
@@ -6421,7 +6421,7 @@ fn spawn_dashboard_terminal(
 
 // .output(), not .spawn(): the scripting calls here are synchronous AppleEvents
 // that return once the terminal has started the command (not once it finishes),
-// so this doesn't block on the dashboard session itself -- but it DOES need to be
+// so this doesn't block on the dashboard session itself, but it DOES need to be
 // awaited to catch a real failure, most notably "AppleEvent timed out" (-1712)
 // when this app hasn't been granted Automation permission for that terminal yet
 // (System Settings > Privacy & Security > Automation). A bare .spawn() would
@@ -6448,7 +6448,7 @@ fn run_osascript(script: String, app: &str) -> Result<(), DesktopError> {
 // Windows Terminal is the Win11 default host and cmd is guaranteed present.
 // Both are the forms this launcher already shipped with, i.e. the ones known to
 // work. Alacritty/WezTerm/PowerShell are deliberately absent rather than added
-// from documentation alone -- there was no Windows host here to verify them on,
+// from documentation alone, since there was no Windows host here to verify them on,
 // and an unverified entry in this list is a dashboard button that opens the
 // wrong thing or nothing.
 #[cfg(windows)]
@@ -6490,7 +6490,7 @@ fn spawn_dashboard_terminal(
 
     // cmd /k keeps the window open after the command finishes, like
     // Terminal.app's do script. `mode con` resizes the console before the
-    // dashboard TUI starts -- its own minimum (118x35) is larger than cmd/wt's
+    // dashboard TUI starts, since its own minimum (118x35) is larger than cmd/wt's
     // default new-window/new-tab size, which otherwise shows a "Terminal too
     // small" placeholder instead of the dashboard (mirrors the macOS fix).
     //
@@ -6648,7 +6648,7 @@ fn open_target(target: String) -> Result<(), DesktopError> {
     Ok(())
 }
 
-// Opens the mount's reserved .lost+found directory -- every mountOS volume
+// Opens the mount's reserved .lost+found directory. Every mountOS volume
 // keeps one (server-side: internal/constants.LostFoundName), holding files
 // whose original name/parent link was lost to a crash or cleanup. Mirrors
 // open_target's guard: target must still be a live mount, the subpath itself
@@ -6693,7 +6693,7 @@ fn open_diagnostics_bundle(app: AppHandle, path: String) -> Result<(), DesktopEr
 }
 
 // Opens a job's file-logger output (mountos-servers'
-// internal/logger.getDefaultLogDir -- always ~/.mountOS/logs for a desktop
+// internal/logger.getDefaultLogDir, always ~/.mountOS/logs for a desktop
 // app, which never runs as Linux root). Shared by upload, download and sink,
 // whose daemons all reuse the same logger machinery.
 //
@@ -6845,7 +6845,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             None::<&str>,
         )?));
     } else {
-        // A menubar dropdown listing every mount doesn't scale -- cap it and
+        // A menubar dropdown listing every mount doesn't scale, so cap it and
         // fold the rest into a single "+N more" item that opens the full app
         // (same id as "Open mountOS" below, same action) instead of growing
         // the native menu unboundedly.
@@ -6860,7 +6860,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             items.push(Box::new(MenuItem::with_id(
                 app,
                 format!("open-mount:{}", instance.mount_path),
-                format!("{label} \u{2014} {}", instance.health),
+                format!("{label} ({})", instance.health),
                 is_openable_target(&instance.mount_path),
                 None::<&str>,
             )?));
@@ -6918,7 +6918,7 @@ pub fn run() {
             let menu = build_tray_menu(app.handle())?;
             // macOS re-tints a template image to match the menu bar's
             // light/dark state, so it gets the grayscale asset built for
-            // that. Windows/Linux trays have no such retinting -- they would
+            // that. Windows/Linux trays have no such retinting, so they would
             // just render that grayscale asset flat, so they get the actual
             // color logo instead, and icon_as_template stays macOS-only.
             let is_macos = cfg!(target_os = "macos");
@@ -6950,7 +6950,7 @@ pub fn run() {
                 .on_tray_icon_event(|tray, event| {
                     // Native menus render reliably everywhere (including over
                     // another app's fullscreen Space) since AppKit itself owns
-                    // showing them -- unlike the tray-popover webview window,
+                    // showing them, unlike the tray-popover webview window,
                     // which repeated attempts couldn't make reliably visible
                     // there. Rebuilt on hover so the mount list is current by
                     // the time an actual click follows.
@@ -7053,9 +7053,9 @@ pub fn run() {
         .run(|app_handle, event| {
             // Best-effort cleanup on quit: a read-only browse scratch mount
             // (ensure_upload_browse_mount_blocking, ensure_download_browse_
-            // mount_blocking -- both share the same browse_mounts() registry)
+            // mount_blocking, both share the same browse_mounts() registry)
             // only gets reaped by the in-process idle sweeper, which dies
-            // with this process and has no persisted registry -- without
+            // with this process and has no persisted registry. Without
             // this, quitting mid-idle-window (not just closing the window,
             // which only hides it) leaves it orphaned until the user
             // notices it manually in
@@ -7210,7 +7210,7 @@ mod tests {
     #[cfg(not(windows))]
     fn shell_quote_survives_a_shell_round_trip() {
         // Every quoted value, fed through `sh -c 'printf %s ' + quoted`,
-        // must come back byte-for-byte identical -- this is the actual
+        // must come back byte-for-byte identical. This is the actual
         // property that matters for dashboard-launcher command construction.
         for raw in [
             "/Volumes/MountOS/Team",
@@ -7248,7 +7248,7 @@ mod tests {
             vec!["--mount".to_string(), "/tmp/other".to_string()]
         );
         // --destination is a real alias for -m on the deleted/version commands
-        // now, so it must be blocked exactly like --mount -- otherwise a
+        // now, so it must be blocked exactly like --mount, otherwise a
         // stray value here would silently redirect a satellite view mount.
         assert_eq!(
             validate_extra_args(&["--destination".to_string(), "/tmp/other".to_string()]),
@@ -7276,7 +7276,7 @@ mod tests {
         );
         // '-o' takes a fused value (mirrors real short-opt parsing: once a
         // value-taking flag is hit in a cluster, the rest of the token is
-        // its value, not further flags) -- bare '-o' and '-o<value>' are both
+        // its value, not further flags). Bare '-o' and '-o<value>' are both
         // accepted even when the value text collides with a managed letter.
         assert!(validate_extra_args(&["-o".to_string()]).is_empty());
         assert!(validate_extra_args(&["-oallow_other".to_string()]).is_empty());
@@ -7338,7 +7338,7 @@ mod tests {
         let instances = parse_instances_value(&value);
         assert_eq!(instances[0].kind.as_deref(), Some("gateway"));
         assert!(instances[0].mount_path.is_empty());
-        // No mountPath to key on -- falls back to the volume identifier.
+        // No mountPath to key on, so falls back to the volume identifier.
         assert_eq!(instances[0].key, "019d19b9-dae5-7000-ac89-60c07d76c408");
         let endpoints = instances[0].gateway_endpoints.as_ref().expect("endpoints");
         assert_eq!(endpoints.len(), 1);
@@ -7510,7 +7510,7 @@ mod tests {
     }
 
     // Guards the hand-synced JSON contract against mfusetypes.MountConfig
-    // (mountos-servers/cmd/mfuse/mfusetypes/types.go) -- a typo'd #[serde(rename)]
+    // (mountos-servers/cmd/mfuse/mfusetypes/types.go). A typo'd #[serde(rename)]
     // here would silently deserialize every field as empty rather than fail.
     #[test]
     fn live_mount_config_deserializes_the_go_field_names() {
@@ -7741,7 +7741,7 @@ mod tests {
     #[test]
     fn satellite_and_gateway_only_argv_include_cache_dir_and_extra_args() {
         // profile() carries cache_dir "/tmp/mountos cache", cache_size "10G",
-        // and extra_args ["--attr-cache", "2.0"] -- the server resolves these
+        // and extra_args ["--attr-cache", "2.0"]. The server resolves these
         // unconditionally regardless of subcommand, so every builder besides
         // the mount+gateway combo (which already goes through
         // build_mount_argv) must emit them too.
@@ -7773,7 +7773,7 @@ mod tests {
     fn finds_gateway_descriptor_by_exact_pid_only() {
         let dir = std::env::temp_dir();
         // A same-volume, same-machine descriptor at a DIFFERENT pid must
-        // never be picked up -- this is exactly the misattribution the
+        // never be picked up. This is exactly the misattribution the
         // pid-exact lookup replaces a fuzzy volume-name+recency scan to
         // avoid (a stale heuristic could otherwise hand this launch a
         // different launch's live PID, which then feeds straight into
@@ -7859,8 +7859,8 @@ mod tests {
             &upload_params(),
         );
         assert_eq!(argv[0], "upload");
-        // Every flag comes before "--", then exactly the two positionals --
-        // this is what makes an arbitrary (even flag-shaped) source/dest
+        // Every flag comes before "--", then exactly the two positionals.
+        // This is what makes an arbitrary (even flag-shaped) source/dest
         // value safe: pflag stops scanning for flags at "--".
         let dashdash = argv
             .iter()
@@ -7945,7 +7945,7 @@ mod tests {
     }
 
     // Fixture argv shared with src/lib/cli.test.ts's identically-named
-    // TypeScript test -- both assert this EXACT array for the SAME inputs,
+    // TypeScript test. Both assert this EXACT array for the SAME inputs,
     // so a change to one flag's spelling/order that isn't mirrored in the
     // other builder fails one of the two suites. This is the closest a Rust
     // test and a Vitest test can get to enforcing "the preview argv IS what
@@ -7992,7 +7992,7 @@ mod tests {
         assert!(argv.windows(2).any(|a| a == ["--max-latency", "45s"]));
         assert!(argv.windows(2).any(|a| a == ["--wal-max", "512M"]));
         // sink never had once/overwrite/dry-run/bwlimit/include/exclude/
-        // follow-symlinks/create-source-directory to begin with -- confirms
+        // follow-symlinks/create-source-directory to begin with. Confirms
         // none of upload's flag surface leaked in by copy-paste habit.
         assert!(!argv.contains(&"--once".to_string()));
         assert!(!argv.contains(&"--overwrite".to_string()));
@@ -8196,7 +8196,7 @@ mod tests {
         // Regression: read_profiles sorts newest-updated-first, so a naive
         // "first profile with this access key" match can land on a
         // secret_ref: "prompt" profile while an older sibling actually has
-        // the secret cached in the vault -- the vault entry must still be
+        // the secret cached in the vault. The vault entry must still be
         // found, not shadowed by the prompt-only profile ordered ahead of it.
         let mut prompt_only = profile();
         prompt_only.id = "profile-newer".to_string();
@@ -8214,7 +8214,7 @@ mod tests {
     fn resume_profile_carries_only_discovery_url_and_access_key_into_the_argv() {
         // Resume must work from just these two fields, independent of any
         // saved profile (e.g. a job started via the CLI with no GUI profile
-        // at all) -- the synthetic profile's other fields (volume/fork/
+        // at all). The synthetic profile's other fields (volume/fork/
         // mountPath/backend) must never leak into the resume argv.
         let profile = resume_profile(
             "https://discovery.example".to_string(),
@@ -8436,7 +8436,7 @@ mod tests {
     #[test]
     fn build_download_start_argv_instance_mode_emits_no_connection_flags_at_all() {
         // Mode A: no --discovery-url/--fork/--as-of/-a/-s, even when a
-        // populated profile is passed by mistake -- source_kind gates this,
+        // populated profile is passed by mistake. source_kind gates this,
         // not profile emptiness, so a stray Some(profile) must still be
         // fully ignored for connection flags.
         let mut params = download_params();
@@ -8531,7 +8531,7 @@ mod tests {
     #[test]
     fn build_download_resume_argv_mounted_source_carries_no_credentials() {
         // A mode-A (mounted source) resume's synthetic profile has blank
-        // discoveryUrl/accessKeyId -- resume_download_blocking builds one
+        // discoveryUrl/accessKeyId. resume_download_blocking builds one
         // via resume_profile("".to_string(), "".to_string()) for that case.
         let mounted = resume_profile(String::new(), String::new());
         let argv = build_download_resume_argv(&mounted, "abcdef1234567890");

@@ -61,7 +61,7 @@
   // already fires runSinkList whenever the feature is (or becomes) enabled,
   // covering both "already on at launch" and "just turned on in Settings",
   // so only start a second fetch here if neither an in-flight nor a
-  // completed one already exists -- otherwise this view and the sidebar
+  // completed one already exists, since otherwise this view and the sidebar
   // badge would race two concurrent `sink list --json` subprocesses that
   // both clear sinkStatusByJobId.
   let fetchedOnce = false
@@ -104,7 +104,7 @@
   // The fuller rate/lag snapshot (segmentsCommitted/fileSize/
   // bitrateObserved/lastCommitAt/lastSegmentAt) isn't in the list response,
   // only `sink status --job <id>` has it (see runSinkStatus's own doc
-  // comment) -- fetched once per selection, then kept fresh by the poll
+  // comment); fetched once per selection, then kept fresh by the poll
   // below while its job stays running.
   $effect(() => {
     const jobId = selectedJob?.jobId
@@ -138,7 +138,7 @@
   // Stale-while-revalidate: selectedSnapshot goes undefined for a beat every
   // poll tick (runSinkList clears the cache it's derived from, see its own
   // comment), so this view keeps the last snapshot seen per job and shows
-  // that instead of flickering to "Not available" and back -- but only
+  // that instead of flickering to "Not available" and back, but only
   // while the job is still running, see withSinkSnapshotCached/
   // sinkDisplaySnapshot's own doc comment for why the fallback stops once
   // the job has genuinely halted/completed/finished/resumable.
@@ -248,15 +248,15 @@
   // rest is detail" instruction.
   // A status snapshot is present for a running job (a live reading) or for
   // a stopped job with cached final counters (job.lastKnown true, see
-  // querySinkStatus's own cached-counts branch) -- an absent snapshot here
+  // querySinkStatus's own cached-counts branch); an absent snapshot here
   // means neither applies, so rendering 0 for a halted job that ingested
   // gigabytes before stopping would misreport it as never having done
   // anything.
   const NOT_AVAILABLE = 'Not available'
   // lastCommitAt/lastSegmentAt are never persisted in the cached-counts
   // fallback (SinkCachedCounts carries no timestamps), so a lastKnown
-  // snapshot's missing timestamp means "not tracked", not "never happened"
-  // -- only a live (non-lastKnown) snapshot's absent timestamp is the
+  // snapshot's missing timestamp means "not tracked", not "never happened";
+  // only a live (non-lastKnown) snapshot's absent timestamp is the
   // legitimate "hasn't committed/arrived yet this run" case, which
   // formatTimestamp renders as "never".
   function formatLastActivity(isLastKnown: boolean, snapshot: SinkSnapshot | undefined, iso: string | undefined): string {
@@ -326,7 +326,7 @@
       <div class="grid gap-1.5 max-w-sm">
         <span class="inline-flex items-center gap-1">
           <Label>Destination volume</Label>
-          <InfoTip text="The mountOS profile or already-mounted instance to ingest into. Supplies the fork, discovery URL, and credentials, the same way it does for an upload." />
+          <InfoTip text="The profile or instance to ingest into. Supplies fork, discovery URL, and credentials, same as an upload." />
         </span>
         <Combobox
           options={sinkTargetOptions}
@@ -352,9 +352,9 @@
         <div class="grid gap-1.5">
           <span class="inline-flex items-center gap-1">
             <Label for="sink-path">Destination path</Label>
-            <InfoTip text="Where the growing media file (and its `.m3u8` sidecar) is written, mountOS-relative.
+            <InfoTip text="Where the media file and its `.m3u8` sidecar are written, mountOS-relative.
 
-Always a template, even a literal path with no substitutions: `%Y %m %d %H %M` render per rollover, e.g. `/cams/feed-%Y%m%d-%H.mp4` rolls hourly on its own." />
+Always a template: `%Y %m %d %H %M` render per rollover, e.g. `/cams/feed-%Y%m%d-%H.mp4` rolls hourly." />
           </span>
           <Input id="sink-path" bind:value={appState.sinkPath} placeholder="/recordings/feed.mp4" />
           {#if appState.sinkPathError}
@@ -525,10 +525,9 @@ Default: the smaller of 2 GiB and 25% of free disk." />
 {:else}
   <section
     class="grid flex-1 grid-rows-1 m-[22px] outline-hidden transition-[grid-template-columns,column-gap] duration-200 ease-out"
-    style:grid-template-columns={panelSide === 'left'
-      ? appState.jobPanelCollapsed.sink ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'
-      : appState.jobPanelCollapsed.sink ? 'minmax(0,1fr) 0px' : 'minmax(0,1fr) 280px'}
+    style:grid-template-columns={appState.jobPanelCollapsed.sink ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'}
     style:column-gap={appState.jobPanelCollapsed.sink ? '0px' : '1rem'}
+    style:direction={panelSide === 'left' ? 'ltr' : 'rtl'}
     tabindex="-1"
     use:focusOnMount
   >
@@ -617,7 +616,7 @@ Default: the smaller of 2 GiB and 25% of free disk." />
 
     {#if selectedJob}
       {@const job = selectedJob}
-      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:grid-column={panelSide === 'left' ? '2' : '1'} style:grid-row="1">
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:direction="ltr">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0 flex-1 basis-48">
             <h3 class="flex min-w-0 items-center gap-2">
@@ -660,7 +659,7 @@ Default: the smaller of 2 GiB and 25% of free disk." />
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="grid gap-1 min-w-0 sm:col-span-2">
-            <span class="inline-flex items-center gap-1"><Label>Stream URL</Label><InfoTip text="Redacted by the CLI before it ever reaches this app, to keep embedded credentials or auth tokens out of view -- the ... marks removed characters, not a display truncation." /></span>
+            <span class="inline-flex items-center gap-1"><Label>Stream URL</Label><InfoTip text="Redacted by the CLI to strip embedded credentials. The ... marks removed text, not truncation." /></span>
             <p class="wrap-anywhere">{job.source}</p>
           </div>
           <div class="grid gap-1 min-w-0 sm:col-span-2">
@@ -717,7 +716,7 @@ Default: the smaller of 2 GiB and 25% of free disk." />
                below). Lag is always 0 in job.json's cached final counters
                (they describe an active fetch loop that no longer exists),
                so a lastKnown job renders "Not available" here rather than a
-               fabricated zero -- WAL depth and Files are genuine cached
+               fabricated zero; WAL depth and Files are genuine cached
                totals, kept numeric and just labeled. grid-cols-1 sm:grid-
                cols-3, never a hard-coded grid-cols-3: a fixed column count
                with no single-column fallback overflows at narrow widths. -->

@@ -6,8 +6,8 @@
   export const buttonVariants = tv({
     // disabled:cursor-not-allowed, not pointer-events-none: pointer-events:none
     // removes the element from hit-testing entirely, so the browser shows
-    // whatever's underneath (default cursor) instead of not-allowed -- a
-    // disabled button already blocks clicks/keyboard activation natively,
+    // whatever's underneath (default cursor) instead of not-allowed. A
+    // disabled button already blocks clicks/keyboard activation natively;
     // this only needs to keep hit-testing alive for the cursor to render.
     base: "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-sm text-sm font-medium outline-none transition-[color,background-color,border-color,transform,opacity] focus-visible:ring-[2px] disabled:cursor-not-allowed disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
     variants: {

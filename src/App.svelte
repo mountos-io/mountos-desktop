@@ -115,7 +115,7 @@
 
   // Header chip for whichever job-list view is both mounted (its JobPanel
   // section is actually on screen, not swapped for a create/resume/sub-view
-  // form -- see JobPanel's jobPanelMounted comment) and collapsed. Reuses
+  // form (see JobPanel's jobPanelMounted comment) and collapsed. Reuses
   // navItems for label/icon so adding a future JobPanel-based view needs no
   // changes here beyond the navItems entry it would add regardless.
   const jobPanelChipItem = $derived(
@@ -180,7 +180,7 @@
   })
 
   // Sink is opt-in and off by default (see $lib/features), so its list
-  // fetch is gated on the feature being enabled -- an always-on fetch here
+  // fetch is gated on the feature being enabled, since an always-on fetch here
   // would defeat the "no CLI shell-out for a feature most sessions never
   // touch" reasoning the comment above already applies to uploads/downloads.
   $effect(() => {

@@ -125,8 +125,8 @@ export interface DownloadJob {
 // `counts` map, not a reuse of it. Every counter is 0/absent for a job with
 // neither a live daemon nor cached counters. A stopped job with cached
 // final counters (JobSpec.CachedCounts) reports them too, with lastKnown
-// true -- lagSegments/lagSeconds stay 0 in that case, they describe an
-// active fetch loop that no longer exists, never render them as a real
+// true. lagSegments/lagSeconds stay 0 in that case, since they describe an
+// active fetch loop that no longer exists; never render them as a real
 // reading when lastKnown is set.
 export interface SinkJob {
   jobId: string
@@ -152,8 +152,8 @@ export interface SinkJob {
   logPath?: string
   lastKnown?: boolean
   // Number of destination files this job has produced so far, and the
-  // rendered path of the one currently being written -- absent before the
-  // first file opens, see cmd_list_sink.go's sinkListEntry.FileCount/
+  // rendered path of the one currently being written, both absent before the
+  // first file opens; see cmd_list_sink.go's sinkListEntry.FileCount/
   // .CurrentPath doc comments.
   fileCount?: number
   currentPath?: string
@@ -163,7 +163,7 @@ export interface SinkJob {
 // --json` (src-tauri/src/lib.rs's SinkSnapshot, mirroring mountos-servers
 // sink_runner.go's SinkSnapshot). Present for a running job (a live
 // reading) or for a stopped job with cached final counters (SinkStatus.
-// lastKnown true) -- see SinkStatus's own doc comment. lastCommitAt/
+// lastKnown true); see SinkStatus's own doc comment. lastCommitAt/
 // lastSegmentAt are ISO timestamps, absent (not the Go zero-time string)
 // when nothing has committed/arrived yet this run, and always absent for a
 // cached snapshot: the cache does not persist them.
@@ -182,7 +182,7 @@ export interface SinkSnapshot {
   fetchErrors: number
   commitRetries: number
   // Number of destination files opened so far, and the rendered path of the
-  // one currently being written -- neither is omitempty Go-side, see
+  // one currently being written; neither is omitempty Go-side, see
   // sink_runner.go's SinkSnapshot.FileCount/.CurrentPath doc comments.
   fileCount: number
   currentPath: string

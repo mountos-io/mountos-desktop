@@ -30,7 +30,7 @@
   --accent-foreground: oklch(0.12 0 0);
   --destructive: oklch(0.54 0.24 24.42);
   /* No translucent tint of --destructive over any surface in this app clears
-     4.5:1 at any opacity (computed: 4.78:1 at 0%, already under 4.5 by 4%) --
+     4.5:1 at any opacity (computed: 4.78:1 at 0%, already under 4.5 by 4%), so
      a solid fill needs its own foreground rather than reusing --destructive
      as both the fill and the text color. */
   --destructive-foreground: oklch(1 0 0);
@@ -104,8 +104,9 @@
 /* Maps Tailwind's utility classes (bg-card, border-border, text-muted-foreground,
    rounded-lg, text-sm, ...) onto this file's own OKLCH custom properties above,
    the same "@theme inline" pattern mountos-admin-client uses (identical token
-   values -- DESIGN.md's mirroring claim, verified) -- so new markup can reach
-   for Tailwind utilities without a second, disconnected color system. Only maps
+   values, matching DESIGN.md's mirroring claim, which has been verified), so
+   new markup can reach for Tailwind utilities without a second, disconnected
+   color system. Only maps
    tokens that actually exist above; admin-client's sidebar/chart/extra
    -foreground tokens aren't defined here and are deliberately left out rather
    than referencing an undefined variable. */
@@ -156,14 +157,14 @@
    @layer base to match Tailwind v4's own layer ordering (base < components <
    utilities): unlayered CSS beats ALL layered CSS regardless of specificity,
    so a bare (unlayered) `h1,h2,h3{margin:0}` here would silently defeat
-   every `mb-*` utility on a heading anywhere in the app -- confirmed as the
-   actual cause of "my margin utility isn't doing anything" on more than one
+   every `mb-*` utility on a heading anywhere in the app, which was confirmed
+   as the actual cause of "my margin utility isn't doing anything" on more than one
    heading. Mirrors mountos-admin-client's app.css, which already wraps its
    equivalent reset block this same way. */
 @layer base {
 /* Tailwind v4's own preflight defaults every element's border-color to a
    fixed gray (not this app's --border token) whenever a bare `border`
-   utility is used without an explicit border-{color} class -- invisible in
+   utility is used without an explicit border-{color} class. This is invisible in
    light mode, but reads as a stray white/light border on a dark surface
    (and the mirror-image dark border in light mode). Pins it to the theme
    token instead, matching mountos-admin-client's own reset. */
@@ -234,7 +235,7 @@ p {
    Firefox-style bar, which would fight the auto-hide behavior below. Styling
    ::-webkit-scrollbar at all already drops WKWebView out of macOS's native
    overlay mode into a classic, always-reserved-space bar, so the thumb is
-   made transparent at rest and only revealed on container :hover -- the
+   made transparent at rest and only revealed on container :hover, the
    closest CSS-only approximation of overlay auto-hide available once that
    pseudo-element is touched. Matches mountos-admin-client's own selector set
    (body, [data-slot="table-container"], .overflow-y-auto/.overflow-x-auto),
@@ -333,7 +334,7 @@ body::-webkit-scrollbar-thumb:hover,
 
 /* A translucent --destructive tint never clears 4.5:1 against this text
    color at any opacity (computed: 4.78:1 untinted, already under 4.5:1 by
-   4% tint) -- a solid fill with its own foreground is the only treatment
+   4% tint), so a solid fill with its own foreground is the only treatment
    that stays AA-compliant in both themes (5.36:1 light, 4.55:1 dark). The
    generic bits-ui DropdownMenu.Item `data-highlighted:bg-accent` Tailwind
    utility (shared by every other item) fails AA for a destructive item;
