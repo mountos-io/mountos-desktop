@@ -722,7 +722,7 @@ Default: the smaller of 2 GiB and 25% of free disk." />
                with no single-column fallback overflows at narrow widths. -->
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-lg">
             <div class="corner-accent p-3 min-w-0">
-              <p class="text-muted-foreground text-xs uppercase tracking-wide">Lag</p>
+              <p class="text-label-foreground text-xs uppercase tracking-wide">Lag</p>
               {#if job.lastKnown}
                 <p class="text-2xl font-semibold tabular-nums text-muted-foreground">Not available</p>
                 <p class="text-muted-foreground text-xs">last known job, no live lag reading</p>
@@ -734,12 +734,12 @@ Default: the smaller of 2 GiB and 25% of free disk." />
               {/if}
             </div>
             <div class="corner-accent p-3 min-w-0">
-              <p class="text-muted-foreground text-xs uppercase tracking-wide">WAL depth{job.lastKnown ? ' (last known)' : ''}</p>
+              <p class="text-label-foreground text-xs uppercase tracking-wide">WAL depth{job.lastKnown ? ' (last known)' : ''}</p>
               <p class="text-2xl font-semibold tabular-nums">{formatBytes(job.walBytes ?? 0)}</p>
               <p class="text-muted-foreground text-xs tabular-nums">{(job.walSegments ?? 0).toLocaleString()} segment{(job.walSegments ?? 0) === 1 ? '' : 's'}</p>
             </div>
             <div class="corner-accent p-3 min-w-0">
-              <p class="text-muted-foreground text-xs uppercase tracking-wide">Files{job.lastKnown ? ' (last known)' : ''}</p>
+              <p class="text-label-foreground text-xs uppercase tracking-wide">Files{job.lastKnown ? ' (last known)' : ''}</p>
               <p class="text-2xl font-semibold tabular-nums">{(job.fileCount ?? 0).toLocaleString()}</p>
               {#if job.currentPath}
                 <p class="text-muted-foreground text-xs truncate" title={job.currentPath}>{sinkFileBasename(job.currentPath)}</p>
@@ -752,12 +752,12 @@ Default: the smaller of 2 GiB and 25% of free disk." />
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-4 max-w-3xl mt-4">
             {#each detailGroups as group (group.title)}
               <div class="grid gap-1 min-w-0">
-                <p class="text-muted-foreground text-xs font-semibold uppercase tracking-wide">{group.title}</p>
+                <p class="text-label-foreground text-xs font-semibold uppercase tracking-wide">{group.title}</p>
                 <Table containerLabel={group.title} class="w-full">
                   <TableBody>
                     {#each group.rows as row (row.label)}
                       <TableRow>
-                        <TableCell class="text-muted-foreground text-xs uppercase tracking-wide">{row.label}</TableCell>
+                        <TableCell class="text-label-foreground text-xs uppercase tracking-wide">{row.label}</TableCell>
                         <TableCell class="text-right tabular-nums {row.tone}">{row.value}</TableCell>
                       </TableRow>
                     {/each}

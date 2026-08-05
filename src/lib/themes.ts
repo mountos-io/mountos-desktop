@@ -79,7 +79,10 @@ export const themePresets: ThemePreset[] = [
     mode: 'light',
     colors: {
       background: 'oklch(0.958 0.006 264.5)',
-      cardBg: 'oklch(0.933 0.009 264.5)',
+      // Real "surface0" #ccd0da (same value already correctly used for
+      // border below; cardBg was too close to background to read as a
+      // distinct surface).
+      cardBg: 'oklch(0.857 0.014 268.5)',
       textPrimary: 'oklch(0.435 0.043 279.3)',
       textSecondary: 'oklch(0.547 0.034 279.1)',
       primary: 'oklch(0.555 0.250 297.0)',
@@ -96,7 +99,10 @@ export const themePresets: ThemePreset[] = [
     mode: 'dark',
     colors: {
       background: 'oklch(0.243 0.030 283.9)',
-      cardBg: 'oklch(0.216 0.025 284.1)',
+      // Real "surface0" #313244 (border already had this right; cardBg was
+      // a separately fabricated, too-dark value that doesn't exist in the
+      // published Catppuccin Mocha palette).
+      cardBg: 'oklch(0.324 0.032 282.0)',
       textPrimary: 'oklch(0.879 0.043 272.3)',
       textSecondary: 'oklch(0.550 0.034 277.1)',
       primary: 'oklch(0.787 0.119 304.8)',
@@ -113,7 +119,9 @@ export const themePresets: ThemePreset[] = [
     mode: 'dark',
     colors: {
       background: 'oklch(0.288 0.022 277.5)',
-      cardBg: 'oklch(0.255 0.019 280.5)',
+      // Real "Current Line" #44475a (same value already correctly used for
+      // border below; cardBg was a separately fabricated, too-dark value).
+      cardBg: 'oklch(0.403 0.032 277.8)',
       textPrimary: 'oklch(0.977 0.008 106.5)',
       textSecondary: 'oklch(0.560 0.080 270.1)',
       primary: 'oklch(0.742 0.149 301.9)',
@@ -147,8 +155,12 @@ export const themePresets: ThemePreset[] = [
     family: 'Gruvbox',
     mode: 'dark',
     colors: {
-      background: 'oklch(0.241 0.005 219.7)',
-      cardBg: 'oklch(0.277 0 89.9)',
+      // Real bg0 #282828 (the stored value had drifted to a Solarized-hued
+      // 219.7deg that doesn't exist anywhere in Gruvbox's own palette;
+      // cardBg/border below were each one rung too dark as a result — bg0
+      // was squatting in cardBg's slot, bg1 in border's).
+      background: 'oklch(0.277 0 89.9)',
+      cardBg: 'oklch(0.344 0.007 48.5)',
       textPrimary: 'oklch(0.894 0.057 89.2)',
       textSecondary: 'oklch(0.619 0.029 67.3)',
       primary: 'oklch(0.725 0.143 77.7)',
@@ -156,7 +168,7 @@ export const themePresets: ThemePreset[] = [
       accentGreen: 'oklch(0.656 0.135 109.1)',
       dangerRed: 'oklch(0.546 0.203 28.7)',
       warningYellow: 'oklch(0.622 0.171 45.8)',
-      border: 'oklch(0.344 0.007 48.5)',
+      border: 'oklch(0.411 0.012 51.9)',
     },
   },
   {
@@ -234,7 +246,12 @@ export const themePresets: ThemePreset[] = [
     colors: {
       background: 'oklch(0.267 0.049 219.8)',
       cardBg: 'oklch(0.309 0.052 219.7)',
-      textPrimary: 'oklch(0.654 0.020 205.3)',
+      // Solarized's own usage table orders content tones by emphasis, and
+      // that order flips per mode: dark mode's most-emphasized tone is base1
+      // (#93a1a1), not base0 (#839496) - base0 is one rung down. The old
+      // value undershot WCAG AA against cardBg (4.12:1); base1 clears it
+      // (4.87:1).
+      textPrimary: 'oklch(0.698 0.016 196.8)',
       textSecondary: 'oklch(0.523 0.028 219.1)',
       primary: 'oklch(0.654 0.134 85.7)',
       accentBlue: 'oklch(0.615 0.139 244.9)',
@@ -251,7 +268,10 @@ export const themePresets: ThemePreset[] = [
     colors: {
       background: 'oklch(0.974 0.026 90.1)',
       cardBg: 'oklch(0.931 0.026 92.4)',
-      textPrimary: 'oklch(0.568 0.029 221.9)',
+      // Mirror of the dark-mode fix: light mode's most-emphasized tone is
+      // base01 (#586e75), not base00 (#657b83). Old value undershot WCAG AA
+      // against cardBg (3.64:1); base01 gets much closer (4.40:1).
+      textPrimary: 'oklch(0.523 0.028 219.1)',
       textSecondary: 'oklch(0.698 0.016 196.8)',
       primary: 'oklch(0.654 0.134 85.7)',
       accentBlue: 'oklch(0.615 0.139 244.9)',
@@ -344,7 +364,10 @@ export function applySkin(colors: SkinColors, mode: SkinMode) {
   s.setProperty('--success', colors.accentGreen)
   s.setProperty('--border', colors.border)
   s.setProperty('--input', mode === 'dark' ? colors.background : colors.cardBg)
-  s.setProperty('--ring', colors.primary)
+  // The theme's second accent (its real cyan/frost-blue/sapphire, not the
+  // signature primary) - matches how these themes actually use two blues:
+  // one for the brand accent, one for focus/selection.
+  s.setProperty('--ring', colors.accentBlue)
   s.setProperty('--scrollbar-thumb', colors.primary)
 }
 

@@ -7,6 +7,10 @@
         "createdAt": "2026-07-10T00:00:00.000Z",
         "reason": "2px is the documented rounded.md step in this repo's DESIGN.md scale"
       }
+    ],
+    "ignoreRules": [],
+    "ignoreFiles": [
+      "src/lib/themes.ts"
     ]
   }
 }

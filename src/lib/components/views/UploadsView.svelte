@@ -715,7 +715,7 @@ Check this when you just want the current backlog cleared and the job to finish 
             <TableBody>
               {#each [['Pending', job.counts.pending, ''], ['Uploading', job.counts.uploading, ''], ['Done', job.counts.done, 'text-success'], ['Failed', job.counts.failed, 'text-destructive'], ['Skipped', job.counts.skipped, ''], ['Missing', job.counts.missing, '']] as [countLabel, count, tone] (countLabel)}
                 <TableRow>
-                  <TableCell class="text-muted-foreground text-xs uppercase tracking-wide">{countLabel}</TableCell>
+                  <TableCell class="text-label-foreground text-xs uppercase tracking-wide">{countLabel}</TableCell>
                   <TableCell class="text-right tabular-nums {tone}">{count ?? 0}</TableCell>
                 </TableRow>
               {/each}

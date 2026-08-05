@@ -3397,11 +3397,27 @@ export async function browseMountPath() {
 export function setExtraArgs(value: string) {
   state.extraArgsInput = value
   try {
-    patchProfile({ extraArgs: parseArgvInput(value) })
+    const parsed = parseArgvInput(value)
+    patchProfile({ extraArgs: parsed })
+    // While the user is still typing the last token (no trailing space yet),
+    // validating it against the managed-flag list produces false-positive
+    // rejections mid-word (e.g. "--" on the way to "--attr-cache"). Only the
+    // already-committed tokens are checked live; commitExtraArgs re-checks
+    // the trailing token once the field is done being edited.
+    const committed = parsed.length && !/\s$/.test(value) ? parsed.slice(0, -1) : parsed
+    state.rejectedArgs = validateExtraArgs(committed)
     state.extraArgsError = ''
   } catch (error) {
     state.extraArgsError = error instanceof Error ? error.message : 'Invalid extra args'
   }
+}
+
+// Runs on blur so the trailing token setExtraArgs deferred (see above) still
+// gets validated once editing stops, e.g. before Save/Mount's disabled state
+// is read.
+export function commitExtraArgs() {
+  if (!selectedProfile) return
+  state.rejectedArgs = validateExtraArgs(selectedProfile.extraArgs)
 }
 
 export async function runMount(profile: MountProfile) {

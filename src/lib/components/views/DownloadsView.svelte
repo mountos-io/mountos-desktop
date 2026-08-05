@@ -757,7 +757,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
             <TableBody>
               {#each progressRows(job) as row (row.label)}
                 <TableRow>
-                  <TableCell class="text-muted-foreground text-xs uppercase tracking-wide">
+                  <TableCell class="text-label-foreground text-xs uppercase tracking-wide">
                     <span class="inline-flex items-center gap-1">
                       {row.label}
                       {#if row.info}

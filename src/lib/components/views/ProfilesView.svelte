@@ -62,6 +62,7 @@
     requestVersionView,
     runMount,
     selectProfile,
+    commitExtraArgs,
     setAccessKeyId,
     setExtraArgs,
     setJobPanelCollapsed,
@@ -78,6 +79,16 @@
   ]
 
   const panelSide = $derived(appState.jobPanelSide.profiles ?? 'left')
+
+  // Advanced options is literal CLI syntax, e.g. "--attr-cache 2.0": WebKit's
+  // Smart Dashes/Quotes substitution (autocapitalize/spellcheck alone don't
+  // cover it) would otherwise silently turn "--" into an em dash while
+  // typing. "autocorrect" isn't in the standard textarea attribute types, so
+  // it's set directly on the element rather than passed as a prop.
+  let advancedOptionsRef = $state<HTMLTextAreaElement | null>(null)
+  $effect(() => {
+    advancedOptionsRef?.setAttribute('autocorrect', 'off')
+  })
 </script>
 
 {#if computed.selectedProfile && appState.profileSubView !== 'editor'}
@@ -344,8 +355,13 @@
         </div>
         <Textarea
           id="advanced-options"
+          bind:ref={advancedOptionsRef}
           value={appState.extraArgsInput}
           oninput={(e) => setExtraArgs(e.currentTarget.value)}
+          onblur={commitExtraArgs}
+          aria-invalid={appState.rejectedArgs.length > 0 || !!appState.extraArgsError}
+          autocapitalize="off"
+          spellcheck="false"
           placeholder="Flags mountos mount accepts but this form doesn't manage, e.g. --attr-cache 2.0"
         />
       </div>
@@ -364,7 +380,11 @@
         <Callout>Rejected managed flags: {appState.rejectedArgs.join(', ')}</Callout>
       {/if}
 
-      <CommandPreview label="COMMAND PREVIEW" text={appState.commandText || `mountos ${buildMountArgv(selectedProfile).join(' ')}`}>
+      <CommandPreview
+        label="COMMAND PREVIEW"
+        text={appState.commandText || `mountos ${buildMountArgv(selectedProfile).join(' ')}`}
+        class={appState.rejectedArgs.length || appState.extraArgsError ? 'border-destructive text-destructive' : ''}
+      >
         <code>{appState.commandText || `mountos ${buildMountArgv(selectedProfile).join(' ')}`}</code>
       </CommandPreview>
     </form>
