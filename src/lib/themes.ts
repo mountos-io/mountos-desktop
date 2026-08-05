@@ -421,13 +421,15 @@ function gruvboxLightColor(role: CSSColorRole): string {
   switch (role) {
     case 'background': return p.light0
     case 'card': case 'popover': case 'muted': case 'input': return p.light0Soft
-    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground':
-    case 'accentForeground': case 'sidebarForeground': case 'sidebarPrimary': case 'sidebarAccentForeground': return p.fg
+    case 'foreground': case 'cardForeground': case 'popoverForeground': case 'secondaryForeground': return p.fg
+    case 'accentForeground': case 'sidebarPrimary': return p.fg
+    case 'sidebarAccentForeground': return p.green
+    case 'sidebarForeground': return p.fg
     case 'primary': case 'scrollbarThumb': return p.yellow
     case 'primaryForeground': case 'destructiveForeground': return WHITE
     case 'secondary': case 'border': return p.light2
     case 'mutedForeground': return p.fgMuted
-    case 'label': return p.fg
+    case 'label': return p.green
     case 'accent': return p.light3
     case 'destructive': return p.red
     case 'warning': return p.orange
