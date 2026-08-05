@@ -412,6 +412,7 @@ export const UPLOAD_SOURCE_PROVIDERS: { value: string; label: string }[] = [
 // validated by the caller (runUploadStart/runUploadSourceTest), which also
 // has uploadSourceSecretValue in scope.
 export function validateExternalSourceFields(provider: string, bucket: string, endpoint: string, account: string, accessKeyId: string): string | null {
+  if (!provider.trim()) return 'Provider is required'
   if (!bucket.trim()) return 'Bucket/container name is required'
   if (provider === 's3compatible' && !endpoint.trim()) return 'Endpoint is required for a custom S3-compatible provider'
   if (provider === 'azure' && !account.trim()) return 'Storage account name is required for Azure Blob'

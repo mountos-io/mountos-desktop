@@ -473,6 +473,11 @@ describe('cli helpers', () => {
     expect(validateExternalSourceFields('gcs', 'bucket', '', '', '')).toBeNull()
   })
 
+  it('rejects a blank provider instead of silently defaulting to s3', () => {
+    expect(validateExternalSourceFields('', 'bucket', '', '', 'AKIA...')).toMatch(/provider/i)
+    expect(validateExternalSourceFields('  ', 'bucket', '', '', 'AKIA...')).toMatch(/provider/i)
+  })
+
   it('gives upload resume a smaller flag surface than start', () => {
     const argv = buildUploadResumeArgv(profile, 'abcdef1234567890', true, ' 45s ')
     expect(argv.slice(0, 3)).toEqual(['upload', 'resume', 'abcdef1234567890'])

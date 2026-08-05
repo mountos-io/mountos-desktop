@@ -62,6 +62,7 @@
     runUploadSourceTest,
     runUploadStart,
     saveCurrentAsTransferSourceProfile,
+    schedulePoll,
     selectTransferSourceProfile,
     selectUploadInstance,
     selectUploadProfile,
@@ -95,9 +96,14 @@
     }
   })
 
-  // Ticks so "Updated Xs ago" stays live without a real refetch. There's
-  // no auto-poll for the uploads list (see uploadsLastFetchedAt's own doc
-  // comment), so this is purely a staleness indicator, not a feed.
+  // Auto-refreshes the job list on the same cadence pollSystem uses for
+  // instances (App.svelte), only while this view is actually the active
+  // one: mirrors the deliberate "no background CLI shell-out for a view
+  // nobody's looking at" reasoning the one-shot startup fetch already
+  // follows (App.svelte's own comment on that fetch).
+  $effect(() => schedulePoll(() => void runUploadList()))
+
+  // Ticks so "Updated Xs ago" stays live between refetches.
   let now = $state(Date.now())
   $effect(() => {
     const id = setInterval(() => { now = Date.now() }, 1000)

@@ -33,7 +33,6 @@
   import {
     appState,
     computed,
-    DEFAULT_POLL_SECONDS,
     drillIntoFork,
     enterDownloadCreate,
     enterSinkCreate,
@@ -43,7 +42,6 @@
     exitSinkCreate,
     exitUploadCreate,
     expandJobPanel,
-    HIDDEN_POLL_MS,
     loadSettings,
     newProfile,
     openJobPanelFloating,
@@ -52,6 +50,7 @@
     runDownloadList,
     runSinkList,
     runUploadList,
+    schedulePoll,
     toggleSidebar,
     viewTitle,
     type View,
@@ -191,29 +190,9 @@
   })
 
   $effect(() => {
-    // Read inside the effect so changing the setting reschedules immediately
-    // rather than waiting for a restart. 0 means "Off", no timer at all,
-    // the Refresh button covers manual updates.
-    const pollSeconds = appState.settings.pollSeconds ?? DEFAULT_POLL_SECONDS
-    if (pollSeconds === 0) return
-    const visibleMs = pollSeconds * 1000
-    // A hidden window always backs off, but never polls more often than the
-    // user asked for: someone who picked 60s does not want 30s in the
-    // background.
-    const hiddenMs = Math.max(HIDDEN_POLL_MS, visibleMs)
-    let timer: ReturnType<typeof setInterval> | undefined
-    const schedule = () => {
-      clearInterval(timer)
-      timer = setInterval(() => {
-        void pollSystem()
-      }, document.hidden ? hiddenMs : visibleMs)
-    }
-    schedule()
-    document.addEventListener('visibilitychange', schedule)
-    return () => {
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', schedule)
-    }
+    // 0 ("Off") means no timer at all, the Refresh button covers manual
+    // updates.
+    return schedulePoll(() => void pollSystem())
   })
 </script>
 

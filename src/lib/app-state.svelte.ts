@@ -53,6 +53,7 @@ import {
   deleteProfile,
   deleteProfileSecret,
   deleteTransferSourceProfile,
+  deleteTransferSourceProfileSecret,
   exportProfile,
   forkCreate,
   forkDelete,
@@ -174,6 +175,35 @@ export const SECRET_ACCESS_KEY_LENGTH = 40
 export const DEFAULT_POLL_SECONDS = 10
 export const HIDDEN_POLL_MS = 30_000
 export const POLL_CHOICES = [0, 2, 5, 10, 30, 60]
+
+// schedulePoll runs callback on the user's configured poll interval,
+// backing off to HIDDEN_POLL_MS while the window is hidden the same way
+// App.svelte's own pollSystem effect does, and never at all when
+// pollSeconds is "Off" (0). Meant to be called from inside a $effect (its
+// own settings.pollSeconds read is tracked there, same as reading it
+// directly, so changing the setting reschedules immediately rather than
+// waiting for a restart); the effect's cleanup should call the returned
+// function.
+export function schedulePoll(callback: () => void): () => void {
+  const pollSeconds = state.settings.pollSeconds ?? DEFAULT_POLL_SECONDS
+  if (pollSeconds === 0) return () => {}
+  const visibleMs = pollSeconds * 1000
+  // A hidden window always backs off, but never polls more often than the
+  // user asked for: someone who picked 60s does not want 30s in the
+  // background.
+  const hiddenMs = Math.max(HIDDEN_POLL_MS, visibleMs)
+  let timer: ReturnType<typeof setInterval> | undefined
+  const schedule = () => {
+    clearInterval(timer)
+    timer = setInterval(callback, document.hidden ? hiddenMs : visibleMs)
+  }
+  schedule()
+  document.addEventListener('visibilitychange', schedule)
+  return () => {
+    clearInterval(timer)
+    document.removeEventListener('visibilitychange', schedule)
+  }
+}
 
 // Starting point offered when a user turns off Auto disk-cache sizing,
 // not a hidden default (Auto, i.e. no --disk-cache-size at all, leaving the
@@ -364,10 +394,10 @@ const state = $state({
   uploads: [] as UploadJob[],
   uploadsBusy: false,
   uploadsError: '',
-  // Wall-clock ms of the last successful runUploadList(). There's no
-  // auto-poll for this list (only the mount-on-first-view fetch plus a
-  // refetch after every mutating action), so surfacing this tells the user
-  // how stale the list might be rather than implying a live feed.
+  // Wall-clock ms of the last successful runUploadList(): the mount-on-
+  // first-view fetch, a refetch after every mutating action, and (while
+  // this view is the active one) the same schedulePoll cadence pollSystem
+  // uses for instances.
   uploadsLastFetchedAt: null as number | null,
   uploadSelectedJobId: null as string | null,
   // Cleanly-completed jobs are historical noise once done, nothing
@@ -2012,12 +2042,11 @@ function uploadGlobError(): string {
 // Start and Test Connection. Local mode keeps the existing positional
 // check; external mode validates the structured provider/bucket/endpoint/
 // account fields (validateExternalSourceFields) plus a secret requirement
-// that applies to EVERY external provider, not just gcs -- s3 and azure
-// need one exactly as much (objectstore.CreateS3Client/CreateAzureBlobClient,
-// mountos-servers, both refuse to build a client with an empty secret); an
-// earlier version of this form only gated gcs, which was a real gap.
+// that applies to EVERY external provider, not just gcs: s3 and azure need
+// one exactly as much (objectstore.CreateS3Client/CreateAzureBlobClient,
+// mountos-servers, both refuse to build a client with an empty secret).
 // Returns an error message, or '' when the source side is valid. Never
-// touches uploadDest/uploadDestError -- the caller's own responsibility.
+// touches uploadDest/uploadDestError, the caller's own responsibility.
 function validateUploadSourceAndSecret(): string {
   if (!isExternalUploadSource()) {
     const source = state.uploadSource.trim()
@@ -2037,7 +2066,7 @@ function validateUploadSourceAndSecret(): string {
   // secret at all", the same failure an ad hoc unsaved source would have.
   if (!state.uploadSourceSecretValue.trim() && !uploadSourceProfileUsesVault()) {
     return state.uploadSourceProvider.trim() === 'gcs'
-      ? 'A service-account key (JSON) is required -- paste its content into the secret field'
+      ? 'A service-account key (JSON) is required. Paste its content into the secret field'
       : 'A secret is required'
   }
   return ''
@@ -2402,21 +2431,26 @@ export async function saveDownloadDestAsTransferProfile() {
     state.downloadDestSaveError = fieldError
     return
   }
-  const storeInVault = state.downloadDestSaveToVault && Boolean(state.downloadDestSecretValue.trim())
-  if (state.downloadDestSaveToVault && !state.downloadDestSecretValue.trim() && !state.downloadDestProfileSelectedId) {
-    state.downloadDestSaveError = 'Enter the secret above before saving it to the vault'
-    return
-  }
   const id = state.downloadDestProfileSelectedId ?? crypto.randomUUID()
   const now = new Date().toISOString()
   const existing = state.transferSourceProfiles.find((p) => p.id === id)
+  const hasExistingVaultSecret = existing?.secretRef === 'vault'
+  const typedSecret = state.downloadDestSecretValue.trim()
+  if (state.downloadDestSaveToVault && !typedSecret && !hasExistingVaultSecret) {
+    state.downloadDestSaveError = 'Enter the secret above before saving it to the vault'
+    return
+  }
   try {
-    // Vault write happens BEFORE the profile record is saved, mirrors
-    // saveCurrentAsTransferSourceProfile's own ordering fix: a failed
-    // keychain write must never leave a JSON record claiming secretRef
-    // "vault" for an entry that doesn't actually exist.
-    if (storeInVault) {
-      await setTransferSourceProfileSecret(id, state.downloadDestSecretValue.trim())
+    // Vault write/delete happens BEFORE the profile record is saved,
+    // mirrors saveCurrentAsTransferSourceProfile's own ordering fix and
+    // vault-downgrade handling: a failed keychain write must never leave a
+    // JSON record claiming a secretRef the keychain doesn't actually
+    // match, and unchecking "Store in vault" for a profile that currently
+    // has one is a real downgrade, not a silent no-op.
+    if (state.downloadDestSaveToVault && typedSecret) {
+      await setTransferSourceProfileSecret(id, typedSecret)
+    } else if (!state.downloadDestSaveToVault && hasExistingVaultSecret) {
+      await deleteTransferSourceProfileSecret(id)
     }
     const saved = await saveTransferSourceProfile({
       id,
@@ -2429,7 +2463,7 @@ export async function saveDownloadDestAsTransferProfile() {
       region: state.downloadDestRegion.trim() || undefined,
       account: state.downloadDestAccount.trim() || undefined,
       accessKeyId: state.downloadDestAccessKeyId.trim() || undefined,
-      secretRef: storeInVault || existing?.secretRef === 'vault' ? 'vault' : 'prompt',
+      secretRef: state.downloadDestSaveToVault ? 'vault' : 'prompt',
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     })
@@ -2816,9 +2850,8 @@ export async function selectDownloadInstance(instance: MountInstance) {
   state.downloadSourceProfileId = null
   resetDownloadForm()
   // requestDownloadFromInstance jumps straight here, bypassing
-  // enterDownloadCreate entirely, so the saved-destination list would
-  // otherwise never load on that entry path, mirrors selectUploadInstance's
-  // own fix.
+  // enterDownloadCreate entirely, so the saved-destination list must be
+  // loaded on this entry path too, mirrors selectUploadInstance.
   void loadTransferSourceProfiles()
   const backend = instance.backend ?? 'auto'
   state.downloadSourceInstance = { mountPath: instance.mountPath, backend, discoveryUrl: '', fork: '', volume: '', accessKeyId: '' }
@@ -2908,7 +2941,7 @@ function validateDownloadDestAndSecret(): string {
   // secret straight from the keychain (see startDownload's own doc comment).
   if (!state.downloadDestSecretValue.trim() && !downloadDestProfileUsesVault()) {
     return state.downloadDestProvider.trim() === 'gcs'
-      ? 'A service-account key (JSON) is required -- paste its content into the secret field'
+      ? 'A service-account key (JSON) is required. Paste its content into the secret field'
       : 'A secret is required'
   }
   return ''

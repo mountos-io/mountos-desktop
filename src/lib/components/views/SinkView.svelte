@@ -47,6 +47,7 @@
     runSinkList,
     runSinkStart,
     runSinkStatus,
+    schedulePoll,
     selectSinkInstance,
     selectSinkProfile,
     setJobPanelCollapsed,
@@ -73,7 +74,11 @@
     }
   })
 
-  // Ticks so "Updated Xs ago" stays live without a real refetch, mirrors
+  // Auto-refreshes the job list while this view is active, mirrors
+  // UploadsView's own schedulePoll effect exactly.
+  $effect(() => schedulePoll(() => void runSinkList()))
+
+  // Ticks so "Updated Xs ago" stays live between refetches, mirrors
   // UploadsView's identical staleness indicator.
   let now = $state(Date.now())
   $effect(() => {
