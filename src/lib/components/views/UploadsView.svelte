@@ -83,7 +83,7 @@
   const stateBadgeVariant: Record<string, BadgeVariant> = {
     running: 'success',
     halted: 'destructive',
-    completed: 'secondary',
+    completed: 'primary',
     'completed (failures)': 'warning',
     resumable: 'warning',
   }

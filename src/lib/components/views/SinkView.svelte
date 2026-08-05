@@ -83,10 +83,10 @@
   const stateBadgeVariant: Record<string, BadgeVariant> = {
     running: 'success',
     halted: 'destructive',
-    completed: 'secondary',
+    completed: 'primary',
     // `sink finish`'s own terminal state: distinct from 'resumable', same
-    // neutral treatment as 'completed' since both are non-error endpoints.
-    finished: 'secondary',
+    // treatment as 'completed' since both are non-error endpoints.
+    finished: 'primary',
     resumable: 'warning',
   }
 
