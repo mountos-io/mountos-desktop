@@ -4,6 +4,7 @@
   import * as Dialog from '$lib/components/ui/dialog'
   import { Button } from '$lib/components/ui/button'
   import { appState, closeJobPanelFloating } from '$lib/app-state.svelte'
+  import { cn } from '$lib/utils'
 
   // Shared collapse/expand/floating-quick-select chrome around a job-list
   // panel (Uploads/Downloads/Sink/Profiles today, any future job-list view
@@ -39,6 +40,15 @@
 
   const collapsed = $derived(appState.jobPanelCollapsed[id] ?? false)
   const floating = $derived(appState.jobPanelFloatingId === id)
+  // Which grid column this panel occupies in its view's 2-column grid.
+  // Explicit grid-column, not `order`: the detail pane only renders when a
+  // job is selected, and `order` only affects placement sequence relative to
+  // OTHER items present -- with the detail pane absent, an order-only panel
+  // would just fall into whichever track auto-placement fills first,
+  // ignoring side. Explicit placement pins it correctly either way. The
+  // detail pane (owned by the view, not this component) takes the opposite
+  // column -- see each view's own detail pane wrapper and grid-template-columns.
+  const side = $derived(appState.jobPanelSide[id] ?? 'left')
 
   let searchQuery = $state('')
   let searchInput: HTMLInputElement | undefined = $state()
@@ -64,11 +74,33 @@
 
 </script>
 
-{#if !collapsed}
-  <section class="surface min-w-0 overflow-hidden p-4">
-    {@render children('', false)}
-  </section>
-{/if}
+<!-- Always mounted, even while collapsed: the surrounding grid section's
+     column track animates 280px/240px -> 0px (see each view's
+     grid-template-columns), and this item stretches to fill that track by
+     default, so overflow-hidden clips it smoothly in sync with the track
+     shrinking, instead of the content just vanishing the instant collapsed
+     flips true while an empty track animates shut on its own. inert (not
+     just visual hiding) keeps a 0-width panel out of both the tab order and
+     the accessibility tree while collapsed.
+
+     Collapsing relies on the ancestor grid track shrinking to 0px, but the
+     section's own content (job rows, a `w-full` "New X" button, none of it
+     `min-w-0`) never actually gets a zero-width box of its own to size
+     against -- it only renders inside whatever the grid hands this item, and
+     a single overflow-hidden layer clipping a nonzero-height/zero-width box
+     against content with real intrinsic minimums is exactly the kind of
+     combination that leaks a rendering sliver in WebView engines. Forcing
+     width/padding/border to 0 directly on this box, not just via the track,
+     removes that ambiguity instead of trusting the clip alone. -->
+<section
+  class={cn('surface min-w-0 overflow-hidden', collapsed ? 'w-0 border-0 p-0' : 'p-4')}
+  style:grid-column={side === 'left' ? '1' : '2'}
+  style:grid-row="1"
+  inert={collapsed}
+  aria-hidden={collapsed}
+>
+  {@render children('', false)}
+</section>
 
 <Dialog.Root open={floating} onOpenChange={(next) => { if (!next) closeJobPanelFloating() }}>
   <Dialog.Content

@@ -8,6 +8,7 @@
     ExternalLink,
     OctagonX,
     PanelLeftClose,
+    PanelRightClose,
     Plus,
     Radio,
     RefreshCw,
@@ -52,7 +53,7 @@
     withSinkSnapshotCached,
   } from '$lib/app-state.svelte'
   import type { MountInstance, MountProfile, SinkSnapshot } from '$lib/types'
-  import { formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
+  import { cn, formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
 
   // Fetch at most once per mount, mirrors UploadsView/DownloadsView's own
   // fetchedOnce gate (an empty job list is the normal first-run state, so
@@ -90,6 +91,7 @@
   }
 
   const selectedJob = $derived(appState.sinks.find((job) => job.jobId === appState.sinkSelectedJobId) ?? null)
+  const panelSide = $derived(appState.jobPanelSide.sink ?? 'left')
 
   $effect(() => {
     if (appState.sinkSelectedJobId && !computed.sinkVisibleJobs.some((job) => job.jobId === appState.sinkSelectedJobId)) {
@@ -522,20 +524,27 @@ Default: the smaller of 2 GiB and 25% of free disk." />
   </section>
 {:else}
   <section
-    class="grid flex-1 grid-rows-1 gap-4 m-[22px] outline-hidden"
-    style:grid-template-columns={appState.jobPanelCollapsed.sink ? 'minmax(0,1fr)' : '280px minmax(0,1fr)'}
+    class="grid flex-1 grid-rows-1 m-[22px] outline-hidden transition-[grid-template-columns,column-gap] duration-200 ease-out"
+    style:grid-template-columns={panelSide === 'left'
+      ? appState.jobPanelCollapsed.sink ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'
+      : appState.jobPanelCollapsed.sink ? 'minmax(0,1fr) 0px' : 'minmax(0,1fr) 280px'}
+    style:column-gap={appState.jobPanelCollapsed.sink ? '0px' : '1rem'}
     tabindex="-1"
     use:focusOnMount
   >
     <JobPanel id="sink" searchPlaceholder="Search ingest jobs...">
       {#snippet children(query, floating)}
         {@const filteredJobs = computed.sinkVisibleJobs.filter((job) => matchesSearch(query, job.name, job.sinkTemplate, job.source, job.jobId))}
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div class={cn('mb-4 flex items-center justify-between gap-2', floating && 'flex-wrap')}>
           <h3 class="flex items-center gap-2"><Radio size={18} aria-hidden="true" /> Ingest jobs</h3>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class={cn('flex items-center gap-1', floating && 'flex-wrap')}>
             {#if !floating}
               <Button type="button" size="icon" variant="ghost" onclick={() => setJobPanelCollapsed('sink', true)} title="Collapse panel" aria-label="Collapse panel">
-                <PanelLeftClose size={15} aria-hidden="true" />
+                {#if panelSide === 'left'}
+                  <PanelLeftClose size={15} aria-hidden="true" />
+                {:else}
+                  <PanelRightClose size={15} aria-hidden="true" />
+                {/if}
               </Button>
             {/if}
             <Button type="button" size="icon" variant="ghost" onclick={runSinkList} disabled={appState.sinksBusy} title="Refresh job list" aria-label="Refresh job list">
@@ -608,7 +617,7 @@ Default: the smaller of 2 GiB and 25% of free disk." />
 
     {#if selectedJob}
       {@const job = selectedJob}
-      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0">
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:grid-column={panelSide === 'left' ? '2' : '1'} style:grid-row="1">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0 flex-1 basis-48">
             <h3 class="flex min-w-0 items-center gap-2">
@@ -651,17 +660,17 @@ Default: the smaller of 2 GiB and 25% of free disk." />
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="grid gap-1 min-w-0 sm:col-span-2">
-            <Label>Stream URL</Label>
-            <p class="truncate" title={job.source}>{job.source}</p>
+            <span class="inline-flex items-center gap-1"><Label>Stream URL</Label><InfoTip text="Redacted by the CLI before it ever reaches this app, to keep embedded credentials or auth tokens out of view -- the ... marks removed characters, not a display truncation." /></span>
+            <p class="wrap-anywhere">{job.source}</p>
           </div>
           <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Destination path</Label>
-            <p class="truncate" title={job.sinkTemplate}>{job.sinkTemplate}</p>
+            <p class="wrap-anywhere">{job.sinkTemplate}</p>
           </div>
           {#if job.currentPath}
             <div class="grid gap-1 min-w-0 sm:col-span-2">
               <Label>Current file</Label>
-              <p class="truncate" title={job.currentPath}>{job.currentPath}</p>
+              <p class="wrap-anywhere">{job.currentPath}</p>
             </div>
           {/if}
           <div class="grid gap-1">

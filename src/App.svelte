@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Command, Download, HardDrive, MonitorDot, PanelLeft, PanelLeftOpen, Plus, Radio, RefreshCw, Settings, Upload } from '@lucide/svelte'
+  import { Command, Download, HardDrive, MonitorDot, PanelLeft, PanelLeftClose, PanelRightOpen, Plus, Radio, RefreshCw, Settings, Upload } from '@lucide/svelte'
   import Toaster from '$lib/components/Toaster.svelte'
   import { Button } from '$lib/components/ui/button'
   import * as Breadcrumb from '$lib/components/ui/breadcrumb'
@@ -32,10 +32,14 @@
     computed,
     DEFAULT_POLL_SECONDS,
     drillIntoFork,
+    enterDownloadCreate,
+    enterSinkCreate,
+    enterUploadCreate,
     exitDownloadCreate,
     exitProfileSubView,
     exitSinkCreate,
     exitUploadCreate,
+    expandJobPanel,
     HIDDEN_POLL_MS,
     loadSettings,
     newProfile,
@@ -45,7 +49,6 @@
     runDownloadList,
     runSinkList,
     runUploadList,
-    setJobPanelCollapsed,
     toggleSidebar,
     viewTitle,
     type View,
@@ -336,6 +339,15 @@
           <span class="flex shrink-0 items-stretch border border-border bg-card">
             <button
               type="button"
+              class="flex items-center justify-center border-r border-border px-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              title="Expand as left panel"
+              aria-label="Expand as left panel"
+              onclick={() => expandJobPanel(appState.view, 'left')}
+            >
+              <PanelLeftClose size={15} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
               class={cn(
                 'flex items-center gap-2 px-2.5 text-sm text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
                 chipOpen && 'bg-accent text-primary',
@@ -349,11 +361,11 @@
             <button
               type="button"
               class="flex items-center justify-center border-l border-border px-2 text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              title="Expand panel"
-              aria-label="Expand panel"
-              onclick={() => setJobPanelCollapsed(appState.view, false)}
+              title="Expand as right panel"
+              aria-label="Expand as right panel"
+              onclick={() => expandJobPanel(appState.view, 'right')}
             >
-              <PanelLeftOpen size={15} aria-hidden="true" />
+              <PanelRightOpen size={15} aria-hidden="true" />
             </button>
           </span>
         {/if}
@@ -372,13 +384,32 @@
           </span>
           <kbd class="font-mono text-sm shrink-0">⌘K</kbd>
         </button>
-        <Button variant="ghost" size="icon" title="Refresh" aria-label="Refresh" onclick={() => refresh()} disabled={appState.busy}>
-          <span class={cn(appState.busy && 'animate-spin')}><RefreshCw size={17} aria-hidden="true" /></span>
-        </Button>
-        <Button variant="primary" class="cyberpunk-skewed-sm" onclick={() => newProfile()} disabled={appState.busy}>
-          <Plus size={17} aria-hidden="true" />
-          Profile
-        </Button>
+        {#if appState.view === 'instances'}
+          <Button variant="ghost" size="icon" title="Refresh" aria-label="Refresh" onclick={() => refresh()} disabled={appState.busy}>
+            <span class={cn(appState.busy && 'animate-spin')}><RefreshCw size={17} aria-hidden="true" /></span>
+          </Button>
+        {/if}
+        {#if appState.view === 'instances' || appState.view === 'profiles'}
+          <Button variant="primary" class="cyberpunk-skewed-sm" onclick={() => newProfile()} disabled={appState.busy}>
+            <Plus size={17} aria-hidden="true" />
+            Profile
+          </Button>
+        {:else if appState.view === 'uploads' && appState.uploadSubView === 'list'}
+          <Button variant="primary" class="cyberpunk-skewed-sm" onclick={() => enterUploadCreate()} disabled={appState.busy}>
+            <Plus size={17} aria-hidden="true" />
+            New upload
+          </Button>
+        {:else if appState.view === 'downloads' && appState.downloadSubView === 'list'}
+          <Button variant="primary" class="cyberpunk-skewed-sm" onclick={() => enterDownloadCreate()} disabled={appState.busy}>
+            <Plus size={17} aria-hidden="true" />
+            New download
+          </Button>
+        {:else if appState.view === 'sink' && appState.sinkSubView === 'list'}
+          <Button variant="primary" class="cyberpunk-skewed-sm" onclick={() => enterSinkCreate()} disabled={appState.busy}>
+            <Plus size={17} aria-hidden="true" />
+            New ingest
+          </Button>
+        {/if}
       </div>
     </header>
 

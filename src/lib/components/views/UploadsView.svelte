@@ -10,6 +10,7 @@
     ListChecks,
     OctagonX,
     PanelLeftClose,
+    PanelRightClose,
     Plus,
     Radar,
     RefreshCw,
@@ -56,7 +57,7 @@
     setJobPanelCollapsed,
   } from '$lib/app-state.svelte'
   import type { MountInstance, MountProfile, UploadJob } from '$lib/types'
-  import { formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
+  import { cn, formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
 
   // Fetch exactly once per mount, not gated on uploads.length === 0. Unlike
   // forks (every profile always has at least "main", so that gate never
@@ -120,6 +121,7 @@
   }
 
   const selectedJob = $derived(appState.uploads.find((job) => job.jobId === appState.uploadSelectedJobId) ?? null)
+  const panelSide = $derived(appState.jobPanelSide.uploads ?? 'left')
 
   $effect(() => {
     // The selected job can vanish from the list after a refresh (pruned, or
@@ -500,20 +502,27 @@ Check this when you just want the current backlog cleared and the job to finish 
   </section>
 {:else}
   <section
-    class="grid flex-1 grid-rows-1 gap-4 m-[22px] outline-hidden"
-    style:grid-template-columns={appState.jobPanelCollapsed.uploads ? 'minmax(0,1fr)' : '280px minmax(0,1fr)'}
+    class="grid flex-1 grid-rows-1 m-[22px] outline-hidden transition-[grid-template-columns,column-gap] duration-200 ease-out"
+    style:grid-template-columns={panelSide === 'left'
+      ? appState.jobPanelCollapsed.uploads ? '0px minmax(0,1fr)' : '280px minmax(0,1fr)'
+      : appState.jobPanelCollapsed.uploads ? 'minmax(0,1fr) 0px' : 'minmax(0,1fr) 280px'}
+    style:column-gap={appState.jobPanelCollapsed.uploads ? '0px' : '1rem'}
     tabindex="-1"
     use:focusOnMount
   >
     <JobPanel id="uploads" searchPlaceholder="Search uploads...">
       {#snippet children(query, floating)}
         {@const filteredJobs = computed.uploadVisibleJobs.filter((job) => matchesSearch(query, job.name, job.destPath, job.sourcePath, job.jobId))}
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div class={cn('mb-4 flex items-center justify-between gap-2', floating && 'flex-wrap')}>
           <h3 class="flex items-center gap-2"><Upload size={18} aria-hidden="true" /> Uploads</h3>
-          <div class="flex flex-wrap items-center gap-2">
+          <div class={cn('flex items-center gap-1', floating && 'flex-wrap')}>
             {#if !floating}
               <Button type="button" size="icon" variant="ghost" onclick={() => setJobPanelCollapsed('uploads', true)} title="Collapse panel" aria-label="Collapse panel">
-                <PanelLeftClose size={15} aria-hidden="true" />
+                {#if panelSide === 'left'}
+                  <PanelLeftClose size={15} aria-hidden="true" />
+                {:else}
+                  <PanelRightClose size={15} aria-hidden="true" />
+                {/if}
               </Button>
             {/if}
             <Button type="button" size="icon" variant="ghost" onclick={runUploadList} disabled={appState.uploadsBusy} title="Refresh job list" aria-label="Refresh job list">
@@ -592,7 +601,7 @@ Check this when you just want the current backlog cleared and the job to finish 
            CSS grid's default align-content is stretch. Without this, the
            header/detail/progress rows spread apart to fill that height
            instead of staying compact at the top. -->
-      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0">
+      <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:grid-column={panelSide === 'left' ? '2' : '1'} style:grid-row="1">
         <div class="flex flex-wrap items-start justify-between gap-2">
           <div class="min-w-0 flex-1 basis-48">
             <h3 class="flex min-w-0 items-center gap-2">
@@ -631,11 +640,11 @@ Check this when you just want the current backlog cleared and the job to finish 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Source</Label>
-            <p class="truncate" title={job.sourcePath}>{job.sourcePath ?? 'source profile'}</p>
+            <p class="wrap-anywhere">{job.sourcePath ?? 'source profile'}</p>
           </div>
           <div class="grid gap-1 min-w-0 sm:col-span-2">
             <Label>Destination</Label>
-            <p class="truncate" title={job.destPath}>{job.destPath}</p>
+            <p class="wrap-anywhere">{job.destPath}</p>
           </div>
           <div class="grid gap-1">
             <Label>State</Label>

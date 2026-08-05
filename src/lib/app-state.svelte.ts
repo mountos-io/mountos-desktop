@@ -208,6 +208,21 @@ function initialJobPanelCollapsed(): Record<string, boolean> {
   }
 }
 
+export type JobPanelSide = 'left' | 'right'
+
+// Same one-JSON-blob-keyed-by-id shape as jobPanelCollapsed above. Which side
+// a panel docks on is set by which expand button the user clicks on its
+// header chip (App.svelte), not a separate toggle -- see setJobPanelSide.
+function initialJobPanelSide(): Record<string, JobPanelSide> {
+  if (typeof localStorage === 'undefined') return {}
+  try {
+    const raw = localStorage.getItem('mountos-desktop-job-panel-side')
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
 const state = $state({
   view: 'instances' as View,
   loaded: false,
@@ -253,6 +268,10 @@ const state = $state({
   jobPanelCollapsed: initialJobPanelCollapsed() as Record<string, boolean>,
   jobPanelFloatingId: null as string | null,
   jobPanelMounted: {} as Record<string, boolean>,
+  // Which side a panel docks on, persisted like jobPanelCollapsed. Set by
+  // clicking the matching (left/right) expand button on the collapsed
+  // header chip, not a separate toggle.
+  jobPanelSide: initialJobPanelSide() as Record<string, JobPanelSide>,
   tipsOpen: false,
   licensesOpen: false,
   licensesKind: 'rust' as 'rust' | 'js',
@@ -3702,6 +3721,19 @@ export function openJobPanelFloating(id: string) {
 
 export function closeJobPanelFloating() {
   state.jobPanelFloatingId = null
+}
+
+export function setJobPanelSide(id: string, side: JobPanelSide) {
+  state.jobPanelSide[id] = side
+  if (typeof localStorage !== 'undefined') localStorage.setItem('mountos-desktop-job-panel-side', JSON.stringify(state.jobPanelSide))
+}
+
+// Docks the panel on the given side and expands it in one step -- the
+// header chip's two expand buttons each call this with their own side, so
+// clicking either one both picks the layout and reopens the panel.
+export function expandJobPanel(id: string, side: JobPanelSide) {
+  setJobPanelSide(id, side)
+  setJobPanelCollapsed(id, false)
 }
 
 export function showTips() {

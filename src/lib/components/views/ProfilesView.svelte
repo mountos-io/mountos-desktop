@@ -12,6 +12,7 @@
     KeyRound,
     Network,
     PanelLeftClose,
+    PanelRightClose,
     Plus,
     Power,
     Recycle,
@@ -75,6 +76,8 @@
     { value: 'general', label: 'General' },
     { value: 'iceberg', label: 'Iceberg' },
   ]
+
+  const panelSide = $derived(appState.jobPanelSide.profiles ?? 'left')
 </script>
 
 {#if computed.selectedProfile && appState.profileSubView !== 'editor'}
@@ -91,8 +94,11 @@
   {/if}
 {:else}
 <section
-  class="grid gap-4 m-[22px] outline-hidden"
-  style:grid-template-columns={appState.jobPanelCollapsed.profiles ? 'minmax(0,1fr)' : '240px minmax(0,1fr)'}
+  class="grid m-[22px] outline-hidden transition-[grid-template-columns,column-gap] duration-200 ease-out"
+  style:grid-template-columns={panelSide === 'left'
+    ? appState.jobPanelCollapsed.profiles ? '0px minmax(0,1fr)' : '240px minmax(0,1fr)'
+    : appState.jobPanelCollapsed.profiles ? 'minmax(0,1fr) 0px' : 'minmax(0,1fr) 240px'}
+  style:column-gap={appState.jobPanelCollapsed.profiles ? '0px' : '1rem'}
   tabindex="-1"
   use:focusOnMount
 >
@@ -103,7 +109,11 @@
         <h3>Saved Profiles</h3>
         {#if !floating}
           <Button type="button" size="icon" variant="ghost" onclick={() => setJobPanelCollapsed('profiles', true)} title="Collapse panel" aria-label="Collapse panel">
-            <PanelLeftClose size={15} aria-hidden="true" />
+            {#if panelSide === 'left'}
+              <PanelLeftClose size={15} aria-hidden="true" />
+            {:else}
+              <PanelRightClose size={15} aria-hidden="true" />
+            {/if}
           </Button>
         {/if}
       </div>
@@ -138,7 +148,7 @@
 
   {#if computed.selectedProfile}
     {@const selectedProfile = computed.selectedProfile}
-    <form class="surface corner-brackets p-4 grid gap-4" onsubmit={(event) => { event.preventDefault(); void persistSelected() }}>
+    <form class="surface corner-brackets p-4 grid gap-4" style:grid-column={panelSide === 'left' ? '2' : '1'} style:grid-row="1" onsubmit={(event) => { event.preventDefault(); void persistSelected() }}>
       <div class="flex items-start justify-center gap-4">
         <div class="relative flex flex-wrap items-center justify-center gap-2 p-2">
           <div class="tech-grid absolute inset-0 pointer-events-none" aria-hidden="true"></div>
