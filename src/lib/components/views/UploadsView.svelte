@@ -289,7 +289,7 @@
             {/if}
           </div>
         {:else}
-          <div class="grid gap-3 border border-border/40 p-3">
+          <div class="grid gap-3 border border-border p-3">
             {#if appState.transferSourceProfiles.length > 0}
               <div class="grid gap-1.5 max-w-sm">
                 <Label id="upload-source-saved-label">Saved source</Label>

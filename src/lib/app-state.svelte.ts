@@ -1899,6 +1899,11 @@ export async function selectUploadInstance(instance: MountInstance) {
   state.uploadSourceKind = 'instance'
   state.uploadSourceProfileId = null
   resetUploadForm()
+  // requestUploadFromInstance jumps straight here, bypassing
+  // enterUploadCreate entirely, so the saved-source list would otherwise
+  // never load on that entry path and the "Saved source" picker would stay
+  // permanently absent even when profiles exist.
+  void loadTransferSourceProfiles()
   const backend = instance.backend ?? 'auto'
   state.uploadSourceInstance = { mountPath: instance.mountPath, backend, discoveryUrl: '', fork: '', volume: '', accessKeyId: '' }
   try {
@@ -2716,6 +2721,11 @@ export async function selectDownloadInstance(instance: MountInstance) {
   state.downloadSourceKind = 'instance'
   state.downloadSourceProfileId = null
   resetDownloadForm()
+  // requestDownloadFromInstance jumps straight here, bypassing
+  // enterDownloadCreate entirely, so the saved-destination list would
+  // otherwise never load on that entry path, mirrors selectUploadInstance's
+  // own fix.
+  void loadTransferSourceProfiles()
   const backend = instance.backend ?? 'auto'
   state.downloadSourceInstance = { mountPath: instance.mountPath, backend, discoveryUrl: '', fork: '', volume: '', accessKeyId: '' }
   try {

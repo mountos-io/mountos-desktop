@@ -369,7 +369,7 @@ Leave blank to read the fork's current, live content." />
             {/if}
           </div>
         {:else}
-          <div class="grid gap-3 border border-border/40 p-3">
+          <div class="grid gap-3 border border-border p-3">
             {#if appState.transferSourceProfiles.length > 0}
               <div class="grid gap-1.5 max-w-sm">
                 <Label id="download-dest-saved-label">Saved destination</Label>
