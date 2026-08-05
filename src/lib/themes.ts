@@ -18,6 +18,17 @@ export interface SkinColors {
   dangerRed: string
   warningYellow: string
   border: string
+  // Structural-label text tone. A literal swatch already in this theme's
+  // palette (never synthesized), picked so it neither blends into muted text
+  // nor borrows a color already meaning "interactive"/"destructive" elsewhere.
+  labelForeground: string
+  // One more elevation step above cardBg, below border (used for --accent).
+  // A literal swatch from the theme's own published surface ramp where one
+  // exists (Gruvbox bg3, Catppuccin surface1, Nord's 4th Polar Night tone,
+  // Tokyo Night's sidebar background); themes whose real spec has no further
+  // background tier (Dracula, Solarized, Alucard) repeat cardBg/border here
+  // rather than invent a color that doesn't exist in the real theme.
+  surfaceRaised: string
 }
 
 export interface ThemePreset {
@@ -54,6 +65,8 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.505 0.167 30.7)',
       warningYellow: 'oklch(0.566 0.106 75.3)',
       border: 'oklch(0.883 0.017 88.0)',
+      labelForeground: 'oklch(0.203 0.010 67.2)',
+      surfaceRaised: 'oklch(0.916 0.012 91.5)',
     },
   },
   {
@@ -71,6 +84,8 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.606 0.110 25.1)',
       warningYellow: 'oklch(0.818 0.137 90.0)',
       border: 'oklch(0.321 0 89.9)',
+      labelForeground: 'oklch(0.728 0.119 233.6)',
+      surfaceRaised: 'oklch(0.299 0 89.9)',
     },
   },
   {
@@ -91,6 +106,9 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.5505 0.2155 19.81)',
       warningYellow: 'oklch(0.7140 0.1494 67.78)',
       border: 'oklch(0.857 0.014 268.5)',
+      labelForeground: 'oklch(0.435 0.043 279.3)',
+      // Real "surface1"/"surface2" #bcc0cc / #acb0be.
+      surfaceRaised: 'oklch(0.808 0.017 271.2)',
     },
   },
   {
@@ -111,6 +129,9 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.756 0.130 2.8)',
       warningYellow: 'oklch(0.919 0.070 86.5)',
       border: 'oklch(0.324 0.032 282.0)',
+      labelForeground: 'oklch(0.766 0.111 259.9)',
+      // Real "surface1"/"surface2" #45475a / #585b70.
+      surfaceRaised: 'oklch(0.404 0.032 280.2)',
     },
   },
   {
@@ -119,8 +140,9 @@ export const themePresets: ThemePreset[] = [
     mode: 'dark',
     colors: {
       background: 'oklch(0.288 0.022 277.5)',
-      // Real "Current Line" #44475a (same value already correctly used for
-      // border below; cardBg was a separately fabricated, too-dark value).
+      // Real "Selection" #44475a per draculatheme.com/spec (same value
+      // already correctly used for border below; cardBg was a separately
+      // fabricated, too-dark value).
       cardBg: 'oklch(0.403 0.032 277.8)',
       textPrimary: 'oklch(0.977 0.008 106.5)',
       textSecondary: 'oklch(0.560 0.080 270.1)',
@@ -130,6 +152,11 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.682 0.206 24.4)',
       warningYellow: 'oklch(0.955 0.134 112.8)',
       border: 'oklch(0.403 0.032 277.8)',
+      labelForeground: 'oklch(0.8826 0.0934 212.85)',
+      // Dracula's real spec has only 3 non-accent tones (Background,
+      // Selection, Comment/Current Line) - all already in use above, so no
+      // further real tier exists; repeats cardBg/border rather than invent one.
+      surfaceRaised: 'oklch(0.403 0.032 277.8)',
     },
   },
   {
@@ -148,6 +175,10 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.5632 0.1844 30.08)',
       warningYellow: 'oklch(0.5440 0.1044 93.88)',
       border: 'oklch(0.8590 0.0206 285.96)',
+      labelForeground: 'oklch(0.4961 0.1061 236.17)',
+      // Alucard's real spec has only Background/Selection/Comment as
+      // non-accent tones, both already in use above; repeats them.
+      surfaceRaised: 'oklch(0.9649 0.0214 95.28)',
     },
   },
   {
@@ -169,6 +200,10 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.546 0.203 28.7)',
       warningYellow: 'oklch(0.622 0.171 45.8)',
       border: 'oklch(0.411 0.012 51.9)',
+      labelForeground: 'oklch(0.725 0.143 77.7)',
+      // Real "bg3"/"bg4" #665c54 / #7c6f64 - Gruvbox's own background ramp
+      // goes to bg4, giving genuine extra elevation tiers past border/bg2.
+      surfaceRaised: 'oklch(0.482 0.018 61.0)',
     },
   },
   {
@@ -186,6 +221,9 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.546 0.203 28.7)',
       warningYellow: 'oklch(0.622 0.171 45.8)',
       border: 'oklch(0.825 0.051 85.1)',
+      labelForeground: 'oklch(0.344 0.007 48.5)',
+      // Real "light3"/"light4" #bdae93 / #a89984.
+      surfaceRaised: 'oklch(0.756 0.041 82.3)',
     },
   },
   {
@@ -203,6 +241,10 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.650 0.152 8.3)',
       warningYellow: 'oklch(0.792 0.119 42.3)',
       border: 'oklch(0.354 0.054 293.9)',
+      labelForeground: 'oklch(0.765 0.069 232.8)',
+      // No published external spec for this preset (mountOS-original, not a
+      // real third-party theme) - repeats cardBg/border rather than invent.
+      surfaceRaised: 'oklch(0.284 0.051 291.0)',
     },
   },
   {
@@ -220,6 +262,8 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.561 0.192 35.9)',
       warningYellow: 'oklch(0.700 0.108 50.9)',
       border: 'oklch(0.855 0.031 339.3)',
+      labelForeground: 'oklch(0.489 0.080 242.8)',
+      surfaceRaised: 'oklch(0.941 0.014 343.2)',
     },
   },
   {
@@ -237,6 +281,10 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.606 0.121 15.3)',
       warningYellow: 'oklch(0.855 0.089 84.1)',
       border: 'oklch(0.416 0.032 264.1)',
+      labelForeground: 'oklch(0.775 0.062 217.5)',
+      // Real "nord2" (border, repeated) / "nord3" #4C566A - the lightest of
+      // Nord's 4 official Polar Night tones, one genuine tier past border.
+      surfaceRaised: 'oklch(0.416 0.032 264.1)',
     },
   },
   {
@@ -259,6 +307,12 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.586 0.206 27.1)',
       warningYellow: 'oklch(0.581 0.173 39.5)',
       border: 'oklch(0.372 0.063 217.5)',
+      labelForeground: 'oklch(0.698 0.016 196.8)',
+      // Solarized's spec designates only base03/02 as background-role tones
+      // (dark mode) - both already in use above; base01/00 are content
+      // (text) tones, not backgrounds, so no further surface tier exists
+      // without misusing a role Solarized itself doesn't assign that way.
+      surfaceRaised: 'oklch(0.309 0.052 219.7)',
     },
   },
   {
@@ -279,6 +333,11 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.586 0.206 27.1)',
       warningYellow: 'oklch(0.581 0.173 39.5)',
       border: 'oklch(0.876 0.029 91.7)',
+      // No literal swatch in Solarized Light clears 4.5:1 against cardBg,
+      // not even textPrimary (4.40:1) - this is the best real option, an
+      // inherent limit of Solarized's own deliberately low-contrast palette.
+      labelForeground: 'oklch(0.523 0.028 219.1)',
+      surfaceRaised: 'oklch(0.931 0.026 92.4)',
     },
   },
   {
@@ -296,6 +355,10 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.723 0.159 10.3)',
       warningYellow: 'oklch(0.784 0.106 75.4)',
       border: 'oklch(0.387 0.054 273.9)',
+      labelForeground: 'oklch(0.719 0.132 264.2)',
+      // Real sidebar/status-bar bg #1f2335 and line-highlight bg #292e42 -
+      // two genuine extra tiers from tokyonight's own extended UI palette.
+      surfaceRaised: 'oklch(0.261 0.034 274.2)',
     },
   },
   {
@@ -313,6 +376,10 @@ export const themePresets: ThemePreset[] = [
       dangerRed: 'oklch(0.480 0.100 9.5)',
       warningYellow: 'oklch(0.523 0.104 71.0)',
       border: 'oklch(0.774 0.006 274.9)',
+      labelForeground: 'oklch(0.448 0.097 260.3)',
+      // No confidently-sourced extra tier for the Storm/Day light variant;
+      // repeats cardBg/border rather than invent one.
+      surfaceRaised: 'oklch(0.846 0.007 277.1)',
     },
   },
 ]
@@ -346,17 +413,16 @@ export function applySkin(colors: SkinColors, mode: SkinMode) {
   s.setProperty('--popover-foreground', colors.textPrimary)
   s.setProperty('--primary', colors.primary)
   s.setProperty('--primary-foreground', mode === 'dark' ? colors.background : WHITE)
-  // Surface elevation ladder, mirrored per mode (lighten in dark, darken in
-  // light) so muted < accent < secondary stay visually distinct.
-  const elevate = (amount: number) => (mode === 'dark' ? lift(colors.background, amount) : drop(colors.background, amount))
-  s.setProperty('--secondary', elevate(0.09))
+  // Surface elevation ladder: literal swatches from the theme's own palette
+  // (cardBg < surfaceRaised < border), never computed.
+  s.setProperty('--secondary', colors.border)
   s.setProperty('--secondary-foreground', colors.textPrimary)
-  s.setProperty('--muted', elevate(0.03))
+  s.setProperty('--muted', colors.cardBg)
   s.setProperty('--muted-foreground', colors.textSecondary)
   // Brighter sibling of muted for structural labels (mono-label, table
   // headers) so they stay legible while muted stays reserved for de-emphasis.
-  s.setProperty('--label-foreground', deriveLabelForeground(colors.textSecondary, colors.textPrimary, colors.cardBg))
-  s.setProperty('--accent', elevate(0.06))
+  s.setProperty('--label-foreground', colors.labelForeground)
+  s.setProperty('--accent', colors.surfaceRaised)
   s.setProperty('--accent-foreground', colors.textPrimary)
   s.setProperty('--destructive', colors.dangerRed)
   s.setProperty('--destructive-foreground', WHITE)
@@ -382,74 +448,4 @@ export function clearSkin() {
     '--input', '--ring', '--scrollbar-thumb',
   ]
   props.forEach((p) => el.style.removeProperty(p))
-}
-
-const OKLCH_RE = /oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)/i
-
-function parseOklch(color: string): [number, number, number] | null {
-  const m = color.match(OKLCH_RE)
-  return m ? [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3])] : null
-}
-
-// WCAG relative luminance for an OKLCH triplet (OKLab -> linear-sRGB -> Y).
-function oklchLuminance(L: number, C: number, h: number): number {
-  const hr = (h * Math.PI) / 180
-  const a = C * Math.cos(hr)
-  const b = C * Math.sin(hr)
-  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
-  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
-  const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3
-  const clamp = (x: number) => Math.max(0, Math.min(1, x))
-  const r = clamp(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s)
-  const g = clamp(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s)
-  const bl = clamp(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)
-  return 0.2126 * r + 0.7152 * g + 0.0722 * bl
-}
-
-function contrastRatio(a: [number, number, number], b: [number, number, number]): number {
-  const la = oklchLuminance(...a)
-  const lb = oklchLuminance(...b)
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
-}
-
-// Structural labels (mono-label, table headers) demand AA contrast, but a
-// theme's secondary/"comment" tone is tuned to recede. Lift it toward the
-// primary text until it clears 4.5:1 on the card surface, preserving
-// hue/chroma for identity and never overshooting the primary lightness
-// (themes like Solarized run a deliberately low-contrast foreground).
-function deriveLabelForeground(secondary: string, primary: string, surface: string): string {
-  const sec = parseOklch(secondary)
-  const surf = parseOklch(surface)
-  const prim = parseOklch(primary)
-  if (!sec || !surf || !prim) return secondary
-  const [, C, h] = sec
-  const ceilingL = prim[0]
-  const towardLight = ceilingL >= sec[0]
-  const step = towardLight ? 0.02 : -0.02
-  let L = sec[0]
-  for (let i = 0; i < 60; i++) {
-    if (contrastRatio([L, C, h], surf) >= 4.5) break
-    const next = L + step
-    if (towardLight ? next >= ceilingL : next <= ceilingL) {
-      L = ceilingL
-      break
-    }
-    L = next
-  }
-  return `oklch(${L.toFixed(3)} ${C} ${h})`
-}
-
-function adjustL(color: string, delta: number): string {
-  const m = color.match(OKLCH_RE)
-  if (!m) return color
-  const L = Math.max(0, Math.min(1, parseFloat(m[1]) + delta))
-  return `oklch(${L.toFixed(3)} ${m[2]} ${m[3]})`
-}
-
-function lift(color: string, amount: number): string {
-  return adjustL(color, amount)
-}
-
-function drop(color: string, amount: number): string {
-  return adjustL(color, -amount)
 }
