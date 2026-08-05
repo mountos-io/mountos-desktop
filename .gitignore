@@ -7,3 +7,8 @@ src-tauri/gen
 *.log
 *.tsbuildinfo
 .DS_Store
+
+
+# Added by cargo
+
+/target

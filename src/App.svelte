@@ -325,9 +325,9 @@
               {/if}
               <Breadcrumb.Item>
                 {#if crumb.onclick}
-                  <button type="button" class="text-lg text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onclick={crumb.onclick}>{crumb.label}</button>
+                  <button type="button" class="mono-label outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onclick={crumb.onclick}>{crumb.label}</button>
                 {:else}
-                  <Breadcrumb.Page class="text-lg font-semibold">{crumb.label}</Breadcrumb.Page>
+                  <Breadcrumb.Page class="mono-label font-semibold text-foreground">{crumb.label}</Breadcrumb.Page>
                 {/if}
               </Breadcrumb.Item>
             {/each}
