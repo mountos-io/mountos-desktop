@@ -55,6 +55,7 @@
     openSaveDownloadDestTransferProfile,
     removeTransferSourceProfile,
     requestDownloadPrune,
+    requestDownloadRemove,
     requestDownloadResume,
     resetDownloadForm,
     runDownloadCancel,
@@ -818,14 +819,25 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
               <Button type="button" variant="destructive" disabled={appState.downloadsBusy} onclick={() => runDownloadCancel(job)}>
                 <OctagonX size={16} aria-hidden="true" /> Cancel
               </Button>
-            {:else if resumable}
-              {#if isDownloadFinishable(job)}
-                <Button type="button" variant="outline" title="Nothing is pending or downloading, this just needs the terminal state confirmed. No reconnect needed." onclick={() => runDownloadFinish(job)} disabled={appState.downloadsBusy}>
-                  <Check size={16} aria-hidden="true" /> Mark complete
+            {:else}
+              {#if resumable}
+                {#if isDownloadFinishable(job)}
+                  <Button type="button" variant="outline" title="Nothing is pending or downloading, this just needs the terminal state confirmed. No reconnect needed." onclick={() => runDownloadFinish(job)} disabled={appState.downloadsBusy}>
+                    <Check size={16} aria-hidden="true" /> Mark complete
+                  </Button>
+                {/if}
+                <Button type="button" onclick={() => requestDownloadResume(job)} disabled={appState.downloadsBusy}>
+                  <RotateCcw size={16} aria-hidden="true" /> Resume
                 </Button>
               {/if}
-              <Button type="button" onclick={() => requestDownloadResume(job)} disabled={appState.downloadsBusy}>
-                <RotateCcw size={16} aria-hidden="true" /> Resume
+              <Button
+                type="button"
+                variant="destructive"
+                title="Delete this job's local record, whatever its state. Files already downloaded are not touched."
+                onclick={() => requestDownloadRemove(job)}
+                disabled={appState.downloadsBusy}
+              >
+                <Trash2 size={16} aria-hidden="true" /> Remove
               </Button>
             {/if}
             {#if job.counts.failed}

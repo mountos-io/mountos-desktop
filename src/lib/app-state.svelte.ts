@@ -5,6 +5,7 @@ import {
   buildDownloadCancelArgv,
   buildDownloadListArgv,
   buildDownloadPruneArgv,
+  buildDownloadRemoveArgv,
   buildDownloadResumeArgv,
   buildDownloadRetryFailedArgv,
   buildDownloadStartArgv,
@@ -16,12 +17,14 @@ import {
   buildGatewayArgv,
   buildMountArgv,
   buildSinkPruneArgv,
+  buildSinkRemoveArgv,
   buildSinkResumeArgv,
   buildSinkStartArgv,
   buildSnapshotArgv,
   buildUploadCancelArgv,
   buildUploadListArgv,
   buildUploadPruneArgv,
+  buildUploadRemoveArgv,
   buildUploadResumeArgv,
   buildUploadRetryFailedArgv,
   buildUploadStartArgv,
@@ -82,6 +85,7 @@ import {
   ensureUploadBrowseMount,
   listUploads,
   pruneUploads,
+  removeUpload,
   resumeUpload,
   retryFailedUpload,
   finishUpload,
@@ -93,6 +97,7 @@ import {
   retryFailedDownload,
   finishDownload,
   pruneDownloads,
+  removeDownload,
   openDownloadLog,
   listSinks,
   startSink,
@@ -100,6 +105,7 @@ import {
   cancelSink,
   finishSink,
   pruneSinks,
+  removeSink,
   getSinkStatus,
   openSinkLog,
   saveProfile,
@@ -480,6 +486,14 @@ const state = $state({
   uploadPruneKeep: '0',
   uploadPruneError: '',
 
+  // Remove is prune's single-job sibling: it clears a job stuck resumable
+  // because its process was killed before it could stamp a terminal field
+  // (crash, OOM, power loss) -- cancel refuses it (no live process) and
+  // prune skips it (no terminal stamp) -- so it also needs a confirm
+  // dialog, same reasoning as uploadPrunePromptOpen above.
+  uploadRemovePromptFor: null as UploadJob | null,
+  uploadRemoveError: '',
+
   // Downloads: the same top-level view/subview shape as Uploads (list is the
   // default master-detail sub-view; "New download"/"Resume" are their own
   // full-panel sub-views), reversed direction (pull FROM a mountOS volume TO
@@ -594,6 +608,11 @@ const state = $state({
   downloadPruneKeep: '0',
   downloadPruneError: '',
 
+  // Remove is prune's single-job sibling, same reasoning as
+  // uploadRemovePromptFor above.
+  downloadRemovePromptFor: null as DownloadJob | null,
+  downloadRemoveError: '',
+
   // Sink (Media ingest): same top-level view/subview shape as Uploads/
   // Downloads (list is the default master-detail sub-view; "New ingest"/
   // "Resume" are their own full-panel sub-views). A sink job's live state is
@@ -653,6 +672,11 @@ const state = $state({
   sinkPrunePromptOpen: false,
   sinkPruneKeep: '0',
   sinkPruneError: '',
+
+  // Remove is prune's single-job sibling, same reasoning as
+  // uploadRemovePromptFor above.
+  sinkRemovePromptFor: null as SinkJob | null,
+  sinkRemoveError: '',
 
   // Snapshot/Deleted/Version view-mounts: destination is always an explicit
   // folder pick (browseFolder), never free-typed. -m/--destination is
@@ -2624,6 +2648,38 @@ export async function confirmUploadPrune() {
   }
 }
 
+// Remove is prune's single-job sibling: the only way to clear a job stuck
+// resumable because its process was killed before it could stamp a
+// terminal field, since cancel refuses it (no live process) and prune
+// skips it (no terminal stamp). Permanent and irreversible like prune, so
+// it gets the same confirm-dialog treatment rather than running directly
+// from a row button.
+export function requestUploadRemove(job: UploadJob) {
+  state.uploadRemovePromptFor = job
+  state.uploadRemoveError = ''
+}
+
+export function cancelUploadRemove() {
+  state.uploadRemovePromptFor = null
+}
+
+export async function confirmUploadRemove() {
+  const job = state.uploadRemovePromptFor
+  if (!job) return
+  state.uploadsBusy = true
+  state.uploadRemoveError = ''
+  try {
+    await removeUpload(job.jobId)
+    state.uploadRemovePromptFor = null
+    notify(`Upload job ${job.jobId} removed`)
+    await runUploadList()
+  } catch (error) {
+    state.uploadRemoveError = describeError(error)
+  } finally {
+    state.uploadsBusy = false
+  }
+}
+
 export async function runDownloadList() {
   state.downloadsBusy = true
   state.downloadsError = ''
@@ -3106,6 +3162,34 @@ export async function confirmDownloadPrune() {
   }
 }
 
+// Remove is prune's single-job sibling, same reasoning as
+// requestUploadRemove above.
+export function requestDownloadRemove(job: DownloadJob) {
+  state.downloadRemovePromptFor = job
+  state.downloadRemoveError = ''
+}
+
+export function cancelDownloadRemove() {
+  state.downloadRemovePromptFor = null
+}
+
+export async function confirmDownloadRemove() {
+  const job = state.downloadRemovePromptFor
+  if (!job) return
+  state.downloadsBusy = true
+  state.downloadRemoveError = ''
+  try {
+    await removeDownload(job.jobId)
+    state.downloadRemovePromptFor = null
+    notify(`Download job ${job.jobId} removed`)
+    await runDownloadList()
+  } catch (error) {
+    state.downloadRemoveError = describeError(error)
+  } finally {
+    state.downloadsBusy = false
+  }
+}
+
 // Sink (Media ingest): list is authoritative (fetched from `mountos sink
 // list --json`, same "list is authoritative" pattern as runUploadList),
 // while start/resume are session-local launches that re-fetch the list
@@ -3379,6 +3463,38 @@ export async function confirmSinkPrune() {
     await runSinkList()
   } catch (error) {
     state.sinkPruneError = describeError(error)
+  } finally {
+    state.sinksBusy = false
+  }
+}
+
+// Remove is prune's single-job sibling: the only way to clear a job stuck
+// resumable because its process was killed before it could stamp a
+// terminal field (crash, OOM, power loss) -- indistinguishable from a
+// cleanly cancelled job otherwise, and unreachable by cancel (no live
+// process) or prune (no terminal stamp). Same confirm-dialog treatment as
+// requestUploadRemove above.
+export function requestSinkRemove(job: SinkJob) {
+  state.sinkRemovePromptFor = job
+  state.sinkRemoveError = ''
+}
+
+export function cancelSinkRemove() {
+  state.sinkRemovePromptFor = null
+}
+
+export async function confirmSinkRemove() {
+  const job = state.sinkRemovePromptFor
+  if (!job) return
+  state.sinksBusy = true
+  state.sinkRemoveError = ''
+  try {
+    await removeSink(job.jobId)
+    state.sinkRemovePromptFor = null
+    notify(`Ingest job ${job.jobId} removed`)
+    await runSinkList()
+  } catch (error) {
+    state.sinkRemoveError = describeError(error)
   } finally {
     state.sinksBusy = false
   }
@@ -4671,6 +4787,7 @@ export {
   buildDownloadCancelArgv,
   buildDownloadListArgv,
   buildDownloadPruneArgv,
+  buildDownloadRemoveArgv,
   buildDownloadResumeArgv,
   buildDownloadRetryFailedArgv,
   buildDownloadStartArgv,
@@ -4681,12 +4798,14 @@ export {
   buildGatewayArgv,
   buildMountArgv,
   buildSinkPruneArgv,
+  buildSinkRemoveArgv,
   buildSinkResumeArgv,
   buildSinkStartArgv,
   buildSnapshotArgv,
   buildUploadCancelArgv,
   buildUploadListArgv,
   buildUploadPruneArgv,
+  buildUploadRemoveArgv,
   buildUploadResumeArgv,
   buildUploadRetryFailedArgv,
   buildUploadStartArgv,

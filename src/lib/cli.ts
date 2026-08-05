@@ -569,6 +569,14 @@ export function buildUploadPruneArgv(keep: number): string[] {
   return argv
 }
 
+// Mirrors cmd_upload_subcommands.go's `upload remove <job-id>`: deletes a
+// non-running job's local record whatever its state, including resumable
+// -- unlike prune, which only ever sweeps jobs already carrying a terminal
+// stamp.
+export function buildUploadRemoveArgv(jobId: string): string[] {
+  return ['upload', 'remove', jobId]
+}
+
 export interface DownloadStartParams {
   ifExists: 'skip' | 'overwrite' | 'bounce'
   depth: number
@@ -716,6 +724,14 @@ export function buildDownloadPruneArgv(keep: number): string[] {
   return argv
 }
 
+// Mirrors cmd_download_subcommands.go's `download remove <job-id>`: deletes
+// a non-running job's local record whatever its state, including resumable
+// -- unlike prune, which only ever sweeps jobs already carrying a terminal
+// stamp.
+export function buildDownloadRemoveArgv(jobId: string): string[] {
+  return ['download', 'remove', jobId]
+}
+
 export interface SinkStartParams {
   variant?: string
   maxLatency?: string
@@ -793,6 +809,13 @@ export function buildSinkPruneArgv(keep: number): string[] {
   const argv = ['sink', 'prune']
   if (keep > 0) argv.push('--keep', String(keep))
   return argv
+}
+
+// Mirrors cmd_sink.go's `sink remove <job-id>`: deletes a non-running job's
+// local record whatever its state, including resumable -- unlike prune,
+// which only ever sweeps jobs already carrying a terminal stamp.
+export function buildSinkRemoveArgv(jobId: string): string[] {
+  return ['sink', 'remove', jobId]
 }
 
 export function parseArgvInput(input: string): string[] {

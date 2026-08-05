@@ -312,6 +312,16 @@ export async function pruneUploads(keep: number): Promise<string> {
   return invoke<string>('prune_uploads', { keep })
 }
 
+// Deletes one non-running job's local record whatever its state, including
+// resumable -- the only way to clear a job whose process was killed before
+// it could stamp a terminal field (crash, OOM, power loss). cancelUpload
+// refuses it (no live process to signal) and pruneUploads skips it (no
+// terminal stamp), so this is the sole path to clear it.
+export async function removeUpload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('remove_upload', { jobId })
+}
+
 export async function listDownloads(): Promise<DownloadJob[]> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<DownloadJob[]>('list_downloads')
@@ -402,6 +412,16 @@ export async function pruneDownloads(keep: number): Promise<string> {
   return invoke<string>('prune_downloads', { keep })
 }
 
+// Deletes one non-running job's local record whatever its state, including
+// resumable -- the only way to clear a job whose process was killed before
+// it could stamp a terminal field (crash, OOM, power loss). cancelDownload
+// refuses it (no live process to signal) and pruneDownloads skips it (no
+// terminal stamp), so this is the sole path to clear it.
+export async function removeDownload(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('remove_download', { jobId })
+}
+
 export async function listSinks(): Promise<SinkJob[]> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<SinkJob[]>('list_sinks')
@@ -454,6 +474,16 @@ export async function finishSink(jobId: string): Promise<string> {
 export async function pruneSinks(keep: number): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('prune_sinks', { keep })
+}
+
+// Deletes one non-running job's local record whatever its state, including
+// resumable -- the only way to clear a job whose process was killed before
+// it could stamp a terminal field (crash, OOM, power loss). cancelSink
+// refuses it (no live process to signal) and pruneSinks skips it (no
+// terminal stamp), so this is the sole path to clear it.
+export async function removeSink(jobId: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('remove_sink', { jobId })
 }
 
 // The fuller single-job rate/lag snapshot (`sink status --job <id> --json`),

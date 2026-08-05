@@ -23,6 +23,9 @@
   import UploadPruneDialog from '$lib/components/dialogs/UploadPruneDialog.svelte'
   import DownloadPruneDialog from '$lib/components/dialogs/DownloadPruneDialog.svelte'
   import SinkPruneDialog from '$lib/components/dialogs/SinkPruneDialog.svelte'
+  import UploadRemoveDialog from '$lib/components/dialogs/UploadRemoveDialog.svelte'
+  import DownloadRemoveDialog from '$lib/components/dialogs/DownloadRemoveDialog.svelte'
+  import SinkRemoveDialog from '$lib/components/dialogs/SinkRemoveDialog.svelte'
   import TipsDialog from '$lib/components/dialogs/TipsDialog.svelte'
   import ThirdPartyLicensesDialog from '$lib/components/dialogs/ThirdPartyLicensesDialog.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
@@ -445,5 +448,8 @@
 <UploadPruneDialog />
 <DownloadPruneDialog />
 <SinkPruneDialog />
+<UploadRemoveDialog />
+<DownloadRemoveDialog />
+<SinkRemoveDialog />
 <TipsDialog />
 <ThirdPartyLicensesDialog />

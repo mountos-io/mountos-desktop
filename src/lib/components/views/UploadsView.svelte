@@ -53,6 +53,7 @@
     openUploadJobLog,
     removeTransferSourceProfile,
     requestUploadPrune,
+    requestUploadRemove,
     requestUploadResume,
     runUploadCancel,
     runUploadFinish,
@@ -766,14 +767,25 @@ Check this when you just want the current backlog cleared and the job to finish 
               <Button type="button" variant="destructive" disabled={appState.uploadsBusy} onclick={() => runUploadCancel(job)}>
                 <OctagonX size={16} aria-hidden="true" /> Cancel
               </Button>
-            {:else if resumable}
-              {#if isUploadFinishable(job)}
-                <Button type="button" variant="outline" title="Nothing is pending or uploading, this just needs the terminal state confirmed. No reconnect needed." onclick={() => runUploadFinish(job)} disabled={appState.uploadsBusy}>
-                  <Check size={16} aria-hidden="true" /> Mark complete
+            {:else}
+              {#if resumable}
+                {#if isUploadFinishable(job)}
+                  <Button type="button" variant="outline" title="Nothing is pending or uploading, this just needs the terminal state confirmed. No reconnect needed." onclick={() => runUploadFinish(job)} disabled={appState.uploadsBusy}>
+                    <Check size={16} aria-hidden="true" /> Mark complete
+                  </Button>
+                {/if}
+                <Button type="button" onclick={() => requestUploadResume(job)} disabled={appState.uploadsBusy}>
+                  <RotateCcw size={16} aria-hidden="true" /> Resume
                 </Button>
               {/if}
-              <Button type="button" onclick={() => requestUploadResume(job)} disabled={appState.uploadsBusy}>
-                <RotateCcw size={16} aria-hidden="true" /> Resume
+              <Button
+                type="button"
+                variant="destructive"
+                title="Delete this job's local record, whatever its state. Files already uploaded are not touched."
+                onclick={() => requestUploadRemove(job)}
+                disabled={appState.uploadsBusy}
+              >
+                <Trash2 size={16} aria-hidden="true" /> Remove
               </Button>
             {/if}
             {#if job.counts.failed}

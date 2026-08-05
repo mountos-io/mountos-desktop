@@ -40,6 +40,7 @@
     exitSinkCreate,
     openSinkJobLog,
     requestSinkPrune,
+    requestSinkRemove,
     requestSinkResume,
     runSinkCancel,
     runSinkFinish,
@@ -649,9 +650,20 @@ Default: the smaller of 2 GiB and 25% of free disk." />
               >
                 <Check size={16} aria-hidden="true" /> Finish
               </Button>
-            {:else if job.state === 'halted' || job.state === 'resumable'}
-              <Button type="button" onclick={() => requestSinkResume(job)} disabled={appState.sinksBusy}>
-                <RotateCcw size={16} aria-hidden="true" /> Resume
+            {:else}
+              {#if job.state === 'halted' || job.state === 'resumable'}
+                <Button type="button" onclick={() => requestSinkResume(job)} disabled={appState.sinksBusy}>
+                  <RotateCcw size={16} aria-hidden="true" /> Resume
+                </Button>
+              {/if}
+              <Button
+                type="button"
+                variant="destructive"
+                title="Delete this job's local record, whatever its state. Recorded media already committed to the destination is not touched."
+                onclick={() => requestSinkRemove(job)}
+                disabled={appState.sinksBusy}
+              >
+                <Trash2 size={16} aria-hidden="true" /> Remove
               </Button>
             {/if}
           </div>

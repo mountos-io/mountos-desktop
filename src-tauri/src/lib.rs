@@ -1926,6 +1926,20 @@ fn build_upload_cancel_argv(job_id: &str) -> Vec<String> {
     ]
 }
 
+// Mirrors cmd_upload_subcommands.go's `upload remove <job-id>`: deletes a
+// non-running job's local record whatever its state (resumable, halted,
+// completed, finished). Unlike prune, remove accepts a still-resumable job
+// -- the only way to clear one whose process was killed before it could
+// stamp a terminal field, since cancel refuses it (no live process) and
+// prune skips it (no terminal stamp).
+fn build_upload_remove_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "upload".to_string(),
+        "remove".to_string(),
+        job_id.to_string(),
+    ]
+}
+
 fn build_upload_retry_failed_argv(job_id: &str) -> Vec<String> {
     vec![
         "upload".to_string(),
@@ -2098,6 +2112,20 @@ fn build_download_cancel_argv(job_id: &str) -> Vec<String> {
     ]
 }
 
+// Mirrors cmd_download_subcommands.go's `download remove <job-id>`: deletes
+// a non-running job's local record whatever its state (resumable, halted,
+// completed, finished). Unlike prune, remove accepts a still-resumable job
+// -- the only way to clear one whose process was killed before it could
+// stamp a terminal field, since cancel refuses it (no live process) and
+// prune skips it (no terminal stamp).
+fn build_download_remove_argv(job_id: &str) -> Vec<String> {
+    vec![
+        "download".to_string(),
+        "remove".to_string(),
+        job_id.to_string(),
+    ]
+}
+
 fn build_download_retry_failed_argv(job_id: &str) -> Vec<String> {
     vec![
         "download".to_string(),
@@ -2201,6 +2229,16 @@ fn build_sink_list_argv() -> Vec<String> {
 
 fn build_sink_cancel_argv(job_id: &str) -> Vec<String> {
     vec!["sink".to_string(), "cancel".to_string(), job_id.to_string()]
+}
+
+// Mirrors cmd_sink.go's `sink remove <job-id>`: deletes a non-running job's
+// local record whatever its state (resumable, halted, completed, finished).
+// Unlike prune, remove accepts a still-resumable job -- the only way to
+// clear one whose process was killed before it could stamp a terminal
+// field, since cancel refuses it (no live process) and prune skips it (no
+// terminal stamp).
+fn build_sink_remove_argv(job_id: &str) -> Vec<String> {
+    vec!["sink".to_string(), "remove".to_string(), job_id.to_string()]
 }
 
 // Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running
@@ -4624,6 +4662,22 @@ async fn prune_uploads(keep: u32) -> Result<String, DesktopError> {
         .map_err(|error| DesktopError::Message(format!("prune uploads task failed: {error}")))?
 }
 
+fn remove_upload_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    upload_command_blocking(build_upload_remove_argv(job_id), FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn remove_upload(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || remove_upload_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("remove upload task failed: {error}")))?
+}
+
 // entry.get("kind") == "download" here comes from `mountos list --json`
 // mixing mount + gateway + upload + download kinds unconditionally (--kind
 // is a CLI-side filter only). Filtered defensively even though this call
@@ -5000,6 +5054,22 @@ async fn prune_downloads(keep: u32) -> Result<String, DesktopError> {
         .map_err(|error| DesktopError::Message(format!("prune downloads task failed: {error}")))?
 }
 
+fn remove_download_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    download_command_blocking(build_download_remove_argv(job_id), None, FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn remove_download(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || remove_download_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("remove download task failed: {error}")))?
+}
+
 // `sink list --json` returns a plain array of sinkListEntry directly (no
 // "kind" field to filter on, unlike parse_uploads_value/parse_downloads_value).
 // Confirmed against cmd_list_sink.go: sink list is its own subcommand,
@@ -5285,6 +5355,22 @@ async fn prune_sinks(keep: u32) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || prune_sinks_blocking(keep))
         .await
         .map_err(|error| DesktopError::Message(format!("prune sinks task failed: {error}")))?
+}
+
+fn remove_sink_blocking(job_id: String) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    sink_command_blocking(build_sink_remove_argv(job_id), FORK_COMMAND_TIMEOUT)
+}
+
+#[tauri::command]
+async fn remove_sink(job_id: String) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || remove_sink_blocking(job_id))
+        .await
+        .map_err(|error| DesktopError::Message(format!("remove sink task failed: {error}")))?
 }
 
 // Go's zero time.Time ("0001-01-01T00:00:00Z") means "never happened yet
@@ -7415,6 +7501,7 @@ pub fn run() {
             retry_failed_upload,
             finish_upload,
             prune_uploads,
+            remove_upload,
             list_downloads,
             start_download,
             ensure_download_browse_mount,
@@ -7423,12 +7510,14 @@ pub fn run() {
             retry_failed_download,
             finish_download,
             prune_downloads,
+            remove_download,
             list_sinks,
             start_sink,
             resume_sink,
             cancel_sink,
             finish_sink,
             prune_sinks,
+            remove_sink,
             get_sink_status,
             open_snapshot_view,
             open_deleted_view,
