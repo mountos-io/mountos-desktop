@@ -67,14 +67,13 @@ describe('cli helpers', () => {
   it('builds managed mount argv without the secret value', () => {
     expect(buildMountArgv(profile)).toEqual([
       'mount',
+      '/Volumes/MountOS/Demo',
       '--discovery-url',
       'https://hub.example.com',
       '--volname',
       'vol-1',
       '--fork-name',
       'main',
-      '-m',
-      '/Volumes/MountOS/Demo',
       '-a',
       'ABCDEFGHIJKLMNOPQRST',
       '-s',
@@ -223,18 +222,21 @@ describe('cli helpers', () => {
     expect(classifyMountError('did not become ready within 30s')).toBe('indeterminate')
   })
 
-  it('builds snapshot argv with -m and a fused timestamp flag', () => {
+  it('builds snapshot argv with a positional destination and a fused timestamp flag', () => {
     const argv = buildSnapshotArgv(profile, '/tmp/snap-view', '-1d')
-    expect(argv).toContain('snapshot')
-    expect(argv).toEqual(expect.arrayContaining(['-m', '/tmp/snap-view']))
+    expect(argv[0]).toBe('snapshot')
+    expect(argv[1]).toBe('/tmp/snap-view')
     expect(argv).toContain('--timestamp=-1d')
+    expect(argv).not.toContain('-m')
     expect(argv).not.toContain('--destination')
   })
 
-  it('builds deleted argv with --destination and omits optional flags when blank', () => {
+  it('builds deleted argv with a positional destination and omits optional flags when blank', () => {
     const bare = buildDeletedArgv(profile, '/tmp/deleted-view')
-    expect(bare).toEqual(expect.arrayContaining(['--destination', '/tmp/deleted-view']))
+    expect(bare[0]).toBe('deleted')
+    expect(bare[1]).toBe('/tmp/deleted-view')
     expect(bare).not.toContain('-m')
+    expect(bare).not.toContain('--destination')
     expect(bare.some((arg) => arg.startsWith('--from'))).toBe(false)
 
     const full = buildDeletedArgv(profile, '/tmp/deleted-view', '30d', '1h')
@@ -247,8 +249,11 @@ describe('cli helpers', () => {
     expect(padded).toContain('--idle-timeout=1h')
   })
 
-  it('builds version argv with --destination, -i, and omits the default format', () => {
+  it('builds version argv with a positional destination, -i, and omits the default format', () => {
     const argv = buildVersionArgv(profile, '/tmp/version-view', { inode: '9007199254740993' })
+    expect(argv[0]).toBe('version')
+    expect(argv[1]).toBe('/tmp/version-view')
+    expect(argv).not.toContain('--destination')
     expect(argv).toEqual(expect.arrayContaining(['-i', '9007199254740993']))
     expect(argv.some((arg) => arg.startsWith('--version-format'))).toBe(false)
     expect(argv).not.toContain('--full-chain')

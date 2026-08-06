@@ -99,8 +99,9 @@ export function isValidFolderName(name: string): boolean {
 // with the same hand-synced-duplicate caveat as the flag allowlists above; the Rust
 // side independently re-validates.
 export function validateMountPathForBackend(backend: Backend, mountPath: string): string | null {
-  // Empty stays legal: buildMountArgv omits -m and the mountos CLI picks its
-  // own default. A non-empty value has to actually be an absolute path.
+  // Empty stays legal: buildMountArgv omits the positional path and the
+  // mountos CLI picks its own default. A non-empty value has to actually be
+  // an absolute path.
   if (mountPath && !isAbsolutePath(mountPath)) {
     return 'Mount path must be an absolute filesystem path'
   }
@@ -161,10 +162,10 @@ export function validateExtraArgs(args: string[]): string[] {
 export function buildMountArgv(profile: MountProfile): string[] {
   const argv = ['mount']
 
+  if (profile.mountPath) argv.push(profile.mountPath)
   if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
   if (profile.volume) argv.push('--volname', profile.volume)
   if (profile.fork) argv.push('--fork-name', profile.fork)
-  if (profile.mountPath) argv.push('-m', profile.mountPath)
   if (profile.accessKeyId) argv.push('-a', profile.accessKeyId, '-s')
   if (profile.readOnly) argv.push('--read-only')
   if (profile.temporaryFork) argv.push('--temporary-fork')
@@ -194,8 +195,9 @@ function satelliteVolname(profile: MountProfile, kind: string): string {
   return profile.volume ? `${profile.volume}-${abbrev}-${suffix}` : `mountOS-${abbrev}-${suffix}`
 }
 
-function buildSatellitePrefix(subcommand: string, profile: MountProfile, kind: string): string[] {
+function buildSatellitePrefix(subcommand: string, profile: MountProfile, kind: string, path: string): string[] {
   const argv = [subcommand]
+  if (path) argv.push(path)
   if (profile.discoveryUrl) argv.push('--discovery-url', profile.discoveryUrl)
   if (profile.fork) argv.push('--fork-name', profile.fork)
   argv.push('--volname', satelliteVolname(profile, kind))
@@ -217,11 +219,9 @@ function pushCacheAndExtraArgs(argv: string[], profile: MountProfile): void {
   argv.push(...profile.extraArgs)
 }
 
-// snapshot has no --destination flag: -m is its only mount-point flag, and it
-// daemonizes normally (unlike deleted/version).
+// snapshot daemonizes normally (unlike deleted/version).
 export function buildSnapshotArgv(profile: MountProfile, destination: string, timestamp: string): string[] {
-  const argv = buildSatellitePrefix('snapshot', profile, 'snapshot')
-  argv.push('-m', destination)
+  const argv = buildSatellitePrefix('snapshot', profile, 'snapshot', destination)
   // Fused form: a leading-minus relative timestamp ("-1d") risks pflag
   // misparsing a separate `--timestamp -1d` token pair as another flag.
   argv.push(`--timestamp=${timestamp.trim()}`)
@@ -237,8 +237,7 @@ export function buildDeletedArgv(
   from?: string,
   idleTimeout?: string,
 ): string[] {
-  const argv = buildSatellitePrefix('deleted', profile, 'deleted')
-  argv.push('--destination', destination)
+  const argv = buildSatellitePrefix('deleted', profile, 'deleted', destination)
   if (from?.trim()) argv.push(`--from=${from.trim()}`)
   if (idleTimeout?.trim()) argv.push(`--idle-timeout=${idleTimeout.trim()}`)
   pushSatelliteCredentials(argv, profile)
@@ -262,8 +261,7 @@ export function buildVersionArgv(
   idleTimeout?: string,
   fullChain?: boolean,
 ): string[] {
-  const argv = buildSatellitePrefix('version', profile, 'version')
-  argv.push('--destination', destination)
+  const argv = buildSatellitePrefix('version', profile, 'version', destination)
   if ('path' in selector) {
     argv.push('--path', selector.path)
   } else {
@@ -321,13 +319,13 @@ export interface GatewayLaunchParams {
   keyPath?: string
 }
 
-// gateway-only uses the standalone `gateway` subcommand (no -m, no backend
-// flag, no --volname, confirmed against cmd_gateway.go/cmd_mount.go, -m is
-// optional whenever --gateway-only is set, there is no FUSE mount at all).
-// The mount+gateway combo instead reuses the full regular `buildMountArgv`
-// output with gateway flags appended, matching the CLI's real combo
-// invocation (`mount -m <dir> --gateway s3,hdfs`, no --gateway-only). Mirrors
-// src-tauri/src/lib.rs's build_gateway_argv.
+// gateway-only uses the standalone `gateway` subcommand (no mount path, no
+// backend flag, no --volname, confirmed against cmd_gateway.go/cmd_mount.go,
+// the mount point is optional whenever --gateway-only is set, there is no
+// FUSE mount at all). The mount+gateway combo instead reuses the full
+// regular `buildMountArgv` output with gateway flags appended, matching the
+// CLI's real combo invocation (`mount <dir> --gateway s3,hdfs`, no
+// --gateway-only). Mirrors src-tauri/src/lib.rs's build_gateway_argv.
 export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchParams): string[] {
   let argv: string[]
   if (params.gatewayOnly) {

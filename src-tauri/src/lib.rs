@@ -1444,6 +1444,9 @@ fn reject_managed_extra_args(profile: &MountProfile) -> Result<(), DesktopError>
 
 fn build_mount_argv(profile: &MountProfile) -> Vec<String> {
     let mut argv = vec!["mount".to_string()];
+    if !profile.mount_path.is_empty() {
+        argv.push(profile.mount_path.clone());
+    }
     if !profile.discovery_url.is_empty() {
         argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
     }
@@ -1452,9 +1455,6 @@ fn build_mount_argv(profile: &MountProfile) -> Vec<String> {
     }
     if !profile.fork.is_empty() {
         argv.extend(["--fork-name".to_string(), profile.fork.clone()]);
-    }
-    if !profile.mount_path.is_empty() {
-        argv.extend(["-m".to_string(), profile.mount_path.clone()]);
     }
     if !profile.access_key_id.is_empty() {
         argv.extend([
@@ -1541,12 +1541,15 @@ fn satellite_volname(profile: &MountProfile, kind: &str) -> String {
     }
 }
 
-// Shared discovery-url/fork-name/volname/credential prefix for the three
-// satellite view subcommands (snapshot/deleted/version). Backend/mount-path
-// flags are appended by each caller since snapshot uses -m while
-// deleted/version use --destination (see build_deleted_argv/build_version_argv).
-fn build_satellite_prefix(subcommand: &str, profile: &MountProfile, kind: &str) -> Vec<String> {
+// Shared positional-path/discovery-url/fork-name/volname/credential prefix
+// for the three satellite view subcommands (snapshot/deleted/version). The
+// destination is a positional argument right after the subcommand name,
+// matching mount's own convention.
+fn build_satellite_prefix(subcommand: &str, profile: &MountProfile, kind: &str, path: &str) -> Vec<String> {
     let mut argv = vec![subcommand.to_string()];
+    if !path.is_empty() {
+        argv.push(path.to_string());
+    }
     if !profile.discovery_url.is_empty() {
         argv.extend(["--discovery-url".to_string(), profile.discovery_url.clone()]);
     }
@@ -1567,12 +1570,9 @@ fn push_satellite_credentials(argv: &mut Vec<String>, profile: &MountProfile) {
     }
 }
 
-// snapshot has no --destination flag (verified against cmd_snapshot.go): -m
-// is its only mount-point flag, and it daemonizes normally (see
-// spawn_daemonizing_and_wait).
+// snapshot daemonizes normally (see spawn_daemonizing_and_wait).
 fn build_snapshot_argv(profile: &MountProfile, destination: &str, timestamp: &str) -> Vec<String> {
-    let mut argv = build_satellite_prefix("snapshot", profile, "snapshot");
-    argv.extend(["-m".to_string(), destination.to_string()]);
+    let mut argv = build_satellite_prefix("snapshot", profile, "snapshot", destination);
     // Trimmed here, not just by the caller: ParseSnapshotTime doesn't trim,
     // so surrounding whitespace would otherwise reach argv as part of a
     // single fused token and fail to parse server-side.
@@ -1586,19 +1586,16 @@ fn build_snapshot_argv(profile: &MountProfile, destination: &str, timestamp: &st
     argv
 }
 
-// deleted/version take --destination (now wired server-side to behave as an
-// -m alias, see mountos-servers cmd_deleted.go/cmd_version.go) and never
-// daemonize (Foreground is hardcoded true server-side), so their readiness
-// is polled rather than awaited on child exit (see
-// spawn_foreground_view_and_poll).
+// deleted/version never daemonize (Foreground is hardcoded true
+// server-side), so their readiness is polled rather than awaited on child
+// exit (see spawn_foreground_view_and_poll).
 fn build_deleted_argv(
     profile: &MountProfile,
     destination: &str,
     from: Option<&str>,
     idle_timeout: Option<&str>,
 ) -> Vec<String> {
-    let mut argv = build_satellite_prefix("deleted", profile, "deleted");
-    argv.extend(["--destination".to_string(), destination.to_string()]);
+    let mut argv = build_satellite_prefix("deleted", profile, "deleted", destination);
     if let Some(from) = from.map(str::trim).filter(|value| !value.is_empty()) {
         argv.push(format!("--from={from}"));
     }
@@ -1628,8 +1625,7 @@ fn build_version_argv(
     idle_timeout: Option<&str>,
     full_chain: bool,
 ) -> Vec<String> {
-    let mut argv = build_satellite_prefix("version", profile, "version");
-    argv.extend(["--destination".to_string(), destination.to_string()]);
+    let mut argv = build_satellite_prefix("version", profile, "version", destination);
     if let Some(path) = path {
         argv.extend(["--path".to_string(), path.to_string()]);
     } else if let Some(inode) = inode {
@@ -2268,14 +2264,15 @@ fn build_sink_prune_argv(keep: u32) -> Vec<String> {
     argv
 }
 
-// gateway-only mode uses the standalone `gateway` subcommand (no -m, no
-// backend flag, no --volname, since there is no FUSE mount at all, confirmed
-// against cmd_gateway.go/cmd_mount.go: -m is optional whenever
-// --gateway-only is set). The mount+gateway combo instead reuses the full
-// regular `mount` argv (build_mount_argv already emits -m/backend/
-// credentials/--read-only/--temporary-fork/cache-dir/extraArgs) with gateway
-// flags appended, confirmed as the CLI's actual combo invocation shape
-// (`mount -m <dir> --gateway s3,hdfs`, no --gateway-only).
+// gateway-only mode uses the standalone `gateway` subcommand (no mount path,
+// no backend flag, no --volname, since there is no FUSE mount at all -
+// confirmed against cmd_gateway.go/cmd_mount.go, the mount point is optional
+// whenever --gateway-only is set). The mount+gateway combo instead reuses
+// the full regular `mount` argv (build_mount_argv already emits the
+// positional path/backend/credentials/--read-only/--temporary-fork/
+// cache-dir/extraArgs) with gateway flags appended, confirmed as the CLI's
+// actual combo invocation shape (`mount <dir> --gateway s3,hdfs`, no
+// --gateway-only).
 fn build_gateway_argv(
     profile: &MountProfile,
     protocols: &[String],
@@ -2354,8 +2351,9 @@ fn validate_mount_path_for_backend(
     backend: &Backend,
     mount_path: &str,
 ) -> Result<(), DesktopError> {
-    // Empty stays legal here: build_mount_argv omits -m entirely in that case
-    // and the mountos CLI picks its own default. What's rejected is a NON-empty
+    // Empty stays legal here: build_mount_argv omits the positional path
+    // entirely in that case and the mountos CLI picks its own default. What's
+    // rejected is a NON-empty
     // value that isn't a real absolute path for this OS (Unix "/..." or a
     // Windows drive-letter path), e.g. a relative path or garbage typed into
     // the field.
@@ -7646,10 +7644,11 @@ mod tests {
         assert!(!argv.iter().any(|arg| arg.len() == 40));
     }
 
-    // Every surviving backend mounts at a real path, so -m is emitted whenever
-    // one is set and omitted only when the field is blank.
+    // Every surviving backend mounts at a real path, emitted positionally
+    // right after "mount" whenever one is set and omitted only when the
+    // field is blank.
     #[test]
-    fn emits_mount_flag_whenever_a_mount_path_is_set() {
+    fn emits_mount_path_positionally_whenever_one_is_set() {
         let mut p = profile();
         p.mount_path = "/some/path".to_string();
         for backend in [
@@ -7661,11 +7660,14 @@ mod tests {
             Backend::Mountosio,
         ] {
             p.backend = backend;
-            assert!(build_mount_argv(&p).contains(&"-m".to_string()));
+            let argv = build_mount_argv(&p);
+            assert_eq!(argv[0], "mount");
+            assert_eq!(argv[1], "/some/path");
+            assert!(!argv.contains(&"-m".to_string()));
         }
 
         p.mount_path = String::new();
-        assert!(!build_mount_argv(&p).contains(&"-m".to_string()));
+        assert!(!build_mount_argv(&p).contains(&"/some/path".to_string()));
     }
 
     // A profile written by an older build can still name a backend that no
@@ -7709,7 +7711,7 @@ mod tests {
 
     #[test]
     fn rejects_non_absolute_mount_paths_for_backends_that_need_one() {
-        // Empty stays legal (build_mount_argv omits -m, CLI picks a default).
+        // Empty stays legal (build_mount_argv omits the positional path, CLI picks a default).
         assert!(validate_mount_path_for_backend(&Backend::Nfs, "").is_ok());
         // A non-empty value has to actually be an absolute path, not garbage.
         assert!(validate_mount_path_for_backend(&Backend::Nfs, "relative/path").is_err());
@@ -7766,9 +7768,9 @@ mod tests {
             validate_extra_args(&["--mount".to_string(), "/tmp/other".to_string()]),
             vec!["--mount".to_string(), "/tmp/other".to_string()]
         );
-        // --destination is a real alias for -m on the deleted/version commands
-        // now, so it must be blocked exactly like --mount, otherwise a
-        // stray value here would silently redirect a satellite view mount.
+        // Blocked defensively even though the CLI no longer has a
+        // --destination flag: the deleted/version destination is owned by
+        // this profile's own field, never the free-text extra-args box.
         assert_eq!(
             validate_extra_args(&["--destination".to_string(), "/tmp/other".to_string()]),
             vec!["--destination".to_string(), "/tmp/other".to_string()]
@@ -7898,15 +7900,15 @@ mod tests {
     }
 
     #[test]
-    fn builds_snapshot_argv_with_fused_timestamp_flag_and_dash_m() {
+    fn builds_snapshot_argv_with_positional_destination_and_fused_timestamp_flag() {
         let argv = build_snapshot_argv(&profile(), "/tmp/snap-view", "-1d");
         // Fused as ONE token: a separate `--timestamp -1d` pair would risk
         // pflag misparsing the leading-minus value as another flag.
         assert!(argv.contains(&"--timestamp=-1d".to_string()));
         assert!(!argv.iter().any(|arg| arg == "--timestamp"));
-        // snapshot has no --destination flag (verified against
-        // cmd_snapshot.go): -m is its only mount-point flag.
-        assert!(argv.windows(2).any(|pair| pair == ["-m", "/tmp/snap-view"]));
+        assert_eq!(argv[0], "snapshot");
+        assert_eq!(argv[1], "/tmp/snap-view");
+        assert!(!argv.contains(&"-m".to_string()));
         assert!(!argv.contains(&"--destination".to_string()));
 
         let padded = build_snapshot_argv(&profile(), "/tmp/snap-view", "  -1d  ");
@@ -7914,12 +7916,12 @@ mod tests {
     }
 
     #[test]
-    fn builds_deleted_argv_uses_destination_and_omits_optional_flags_when_blank() {
+    fn builds_deleted_argv_with_positional_destination_and_omits_optional_flags_when_blank() {
         let bare = build_deleted_argv(&profile(), "/tmp/deleted-view", None, None);
-        assert!(bare
-            .windows(2)
-            .any(|pair| pair == ["--destination", "/tmp/deleted-view"]));
+        assert_eq!(bare[0], "deleted");
+        assert_eq!(bare[1], "/tmp/deleted-view");
         assert!(!bare.contains(&"-m".to_string()));
+        assert!(!bare.contains(&"--destination".to_string()));
         assert!(!bare.iter().any(|arg| arg.starts_with("--from")));
         assert!(!bare.iter().any(|arg| arg.starts_with("--idle-timeout")));
 
@@ -7954,9 +7956,9 @@ mod tests {
         assert!(argv
             .windows(2)
             .any(|pair| pair == ["-i", &u64::MAX.to_string()]));
-        assert!(argv
-            .windows(2)
-            .any(|pair| pair == ["--destination", "/tmp/version-view"]));
+        assert_eq!(argv[0], "version");
+        assert_eq!(argv[1], "/tmp/version-view");
+        assert!(!argv.contains(&"--destination".to_string()));
         // "number" is the CLI's own default; omit the flag rather than
         // stating the default explicitly.
         assert!(!argv.iter().any(|arg| arg.starts_with("--version-format")));
@@ -8166,9 +8168,8 @@ mod tests {
             None,
         );
         assert_eq!(argv[0], "mount");
-        assert!(argv
-            .windows(2)
-            .any(|pair| pair == ["-m", p.mount_path.as_str()]));
+        assert_eq!(argv[1], p.mount_path);
+        assert!(!argv.contains(&"-m".to_string()));
         assert!(argv.windows(2).any(|pair| pair == ["--gateway", "s3,hdfs"]));
         assert!(argv
             .windows(2)
