@@ -370,6 +370,18 @@
           <Button variant="ghost" size="icon" title="Refresh" aria-label="Refresh" onclick={() => refresh()} disabled={appState.busy}>
             <span class={cn(appState.busy && 'animate-spin')}><RefreshCw size={17} aria-hidden="true" /></span>
           </Button>
+        {:else if appState.view === 'uploads'}
+          <Button variant="ghost" size="icon" title="Refresh" aria-label="Refresh" onclick={() => runUploadList()} disabled={appState.uploadsBusy}>
+            <span class={cn(appState.uploadsBusy && 'animate-spin')}><RefreshCw size={17} aria-hidden="true" /></span>
+          </Button>
+        {:else if appState.view === 'downloads'}
+          <Button variant="ghost" size="icon" title="Refresh" aria-label="Refresh" onclick={() => runDownloadList()} disabled={appState.downloadsBusy}>
+            <span class={cn(appState.downloadsBusy && 'animate-spin')}><RefreshCw size={17} aria-hidden="true" /></span>
+          </Button>
+        {:else if appState.view === 'sink'}
+          <Button variant="ghost" size="icon" title="Refresh" aria-label="Refresh" onclick={() => runSinkList()} disabled={appState.sinksBusy}>
+            <span class={cn(appState.sinksBusy && 'animate-spin')}><RefreshCw size={17} aria-hidden="true" /></span>
+          </Button>
         {/if}
         {#if appState.view === 'instances' || appState.view === 'profiles'}
           <Button variant="primary" class="cyberpunk-skewed-sm" onclick={() => newProfile()} disabled={appState.busy}>
