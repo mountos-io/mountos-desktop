@@ -272,7 +272,7 @@
       </div>
     </div>
     <div class="grid gap-1.5">
-      <span class="inline-flex items-center gap-1"><strong>Skin</strong><InfoTip text="Named color palette for the current mode." /></span>
+      <span class="inline-flex items-center gap-1"><strong>Skin</strong><InfoTip text="Sets the color palette for the current mode." /></span>
       <div class="flex flex-wrap gap-2" role="group" aria-label="Skin">
         {#each skinPresets as preset (preset.name)}
           {@const isDefault = preset.name === defaultSkinName}
@@ -336,7 +336,7 @@
   <div class="grid gap-3">
     <h3>Mounting defaults</h3>
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong id="settings-default-backend-label">Default backend</strong><InfoTip text="Used for new profiles; Auto follows the CLI's platform order." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-default-backend-label">Default backend</strong><InfoTip text="Applies to new profiles only. Auto follows the CLI's platform order." /></span>
       <Select
         options={backendOptions}
         value={appState.settings.defaultBackend}
@@ -346,7 +346,7 @@
       />
     </div>
     <div class="grid gap-1.5">
-      <span class="inline-flex items-center gap-1"><strong id="settings-default-discovery-url-label">Default discovery URL</strong><InfoTip text="Seeds new profiles only; existing ones stay unchanged." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-default-discovery-url-label">Default discovery URL</strong><InfoTip text="Applies to new profiles only. Existing profiles keep their own value." /></span>
       <Input
         type="text"
         placeholder="https://hub.example.com"
@@ -356,7 +356,7 @@
       />
     </div>
     <div class="grid gap-1.5">
-      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-dir-label">Default disk cache directory</strong><InfoTip text="Seeds new profiles only; blank uses ~/.mountOS/cache. Safe to share across volumes, each gets its own subfolder." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-dir-label">Default disk cache directory</strong><InfoTip text="Applies to new profiles only. Leave it blank to use ~/.mountOS/cache. Volumes can share this directory. Each volume gets its own subfolder." /></span>
       <div class="flex gap-2">
         <Input
           type="text"
@@ -373,11 +373,11 @@
       </div>
     </div>
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-size-label">Default disk cache size</strong><InfoTip text="Seeds new profiles only. Accepts MiB/GiB/TiB, e.g. 100G." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-default-cache-size-label">Default disk cache size</strong><InfoTip text="Applies to new profiles only. Accepts MiB/GiB/TiB, for example 100G." /></span>
       <div class="flex items-center gap-3">
         <span class="inline-flex items-center gap-1">
           <Checkbox checked={cacheSizeAuto} onchange={(e) => toggleDefaultCacheSizeAuto(e.currentTarget.checked)} label="Auto" />
-          <InfoTip text="Adjusted between 10-100GB based on free disk." />
+          <InfoTip text="Auto sets 10-100GB based on free disk space." />
         </span>
         <Input
           type="text"
@@ -395,7 +395,7 @@
   <div class="grid gap-3">
     <h3>Monitoring &amp; dashboard</h3>
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong id="settings-refresh-interval-label">Refresh interval</strong><InfoTip text="How often mounts refresh. Off disables auto-refresh; use the Refresh button instead." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-refresh-interval-label">Refresh interval</strong><InfoTip text="Sets how often mounts refresh. Off disables auto-refresh. Use the Refresh button instead." /></span>
       <Select
         options={pollOptions}
         value={String(appState.settings.pollSeconds ?? DEFAULT_POLL_SECONDS)}
@@ -405,7 +405,7 @@
       />
     </div>
     <div class="flex items-center justify-between gap-4" id="settings-terminal">
-      <span class="inline-flex items-center gap-1"><strong id="settings-terminal-label">Terminal</strong><InfoTip text="Where the dashboard opens. Falls back to the system default if uninstalled." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-terminal-label">Terminal</strong><InfoTip text="Sets where the dashboard opens. Falls back to the system default if uninstalled." /></span>
       <Select
         options={terminalOptions}
         value={appState.settings.terminal ?? ''}
@@ -431,7 +431,7 @@
       />
     </div>
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong id="settings-allow-force-fork-delete-label">Allow force fork delete</strong><InfoTip text="Adds --force to fork delete, removing the whole subtree from the shared volume." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-allow-force-fork-delete-label">Allow force fork delete</strong><InfoTip text="Adds --force to fork delete. This removes the whole subtree from the shared volume." /></span>
       <Checkbox
         checked={appState.settings.allowForkForceDelete}
         onchange={(e) => changeAllowForkForceDelete(e.currentTarget.checked)}
@@ -442,7 +442,7 @@
       <Callout>--force fork delete acts on the shared volume, not just this profile, and also removes the fork's entire subtree. Deleting a fork is recoverable only within its grace period.</Callout>
     {/if}
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong id="settings-allow-force-unmount-label">Allow force unmount</strong><InfoTip text="Adds a Force option to unmount even while something else is still using it." /></span>
+      <span class="inline-flex items-center gap-1"><strong id="settings-allow-force-unmount-label">Allow force unmount</strong><InfoTip text="Adds a Force option to unmount even if something else uses it." /></span>
       <Checkbox
         checked={appState.settings.allowUnmountForce}
         onchange={(e) => changeAllowUnmountForce(e.currentTarget.checked)}
@@ -513,7 +513,7 @@
 
   {#if appState.systemState.cliPath}
     <div class="flex items-center justify-between gap-4">
-      <span class="inline-flex items-center gap-1"><strong>Signature</strong><InfoTip text="Checks the binary's actual code-signing identity, not just its printed --version string." /></span>
+      <span class="inline-flex items-center gap-1"><strong>Signature</strong><InfoTip text="Checks the binary's actual code-signing identity, not the printed --version string." /></span>
       <span class="flex items-center gap-2">
         {#if appState.cliSignatureStatus}
           <Badge variant={appState.cliSignatureStatus.verified ? 'success' : 'warning'}>

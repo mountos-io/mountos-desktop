@@ -280,7 +280,7 @@
           <span class="inline-flex items-center gap-1">
             <Label for="profile-volume">Volume name</Label>
             {#if selectedProfile.backend === 'fskit'}
-              <InfoTip text="Used as the mount point's folder name under {FSKIT_MOUNT_PREFIX}" />
+              <InfoTip text="This is the folder name under {FSKIT_MOUNT_PREFIX}." />
             {/if}
           </span>
           <Input
@@ -341,7 +341,9 @@
             label="Sandbox"
           />
           <InfoTip
-            text="For trying something out, not for anything you need to keep. Everything you see is a read-only snapshot of the volume, so nothing you inherited is ever at risk. **Only what you create or edit inside this sandbox is at risk**: that data lives on this device alone, is never backed up, and disappears the moment you unmount. If your disk runs low on space, those writes can fail and that data is gone for good. The volume itself is never touched."
+            text="Use this to test things, not to keep them. Everything you see is a read-only snapshot. Your existing data stays safe.
+
+**Only files you create or edit here are at risk.** They stay on this device and never back up. They disappear when you unmount. Low disk space can destroy them for good. The volume itself stays untouched."
           />
         </span>
       </div>

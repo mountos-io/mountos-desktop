@@ -395,7 +395,9 @@
                 </div>
                 <div class="flex items-center gap-1.5">
                   <Checkbox bind:checked={appState.uploadSourceSaveToVault} label="Store secret in OS vault" />
-                  <InfoTip text="Stores the secret in your OS credential store so this source never asks for it again. Leave blank to be prompted next time." />
+                  <InfoTip text="Stores the secret in the OS credential store. The source skips future prompts.
+
+Leave unchecked to be prompted again." />
                 </div>
                 {#if appState.uploadSourceSaveError}
                   <small class="text-destructive text-sm">{appState.uploadSourceSaveError}</small>
@@ -450,11 +452,11 @@
               <Checkbox bind:checked={appState.uploadOnce} label="Settle and exit" />
               <InfoTip text="Runs until a rescan finds nothing new, then exits (`--once`).
 
-Without it, the job keeps running in the background and re-scanning the source." />
+Without it, the job runs in the background and rescans forever." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadOverwrite} label="Re-upload changed files" />
-              <InfoTip text="On a rescan, re-uploads a **done** path if its local size has changed (`--overwrite`).
+              <InfoTip text="On a rescan, re-uploads a **done** path if its local size changed (`--overwrite`).
 
 Without this, a done path is never re-checked." />
             </div>
@@ -462,11 +464,11 @@ Without this, a done path is never re-checked." />
               <Checkbox bind:checked={appState.uploadDryRun} label="Dry run" />
               <InfoTip text="Scans and reports the plan only (`--dry-run`).
 
-No connection, no writes at all." />
+Makes no connection and writes no data." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadRestart} label="Force a fresh job" />
-              <InfoTip text="Starts a brand new job (`--restart`), even if a resumable one already matches this **(source, dest)** pair." />
+              <InfoTip text="Starts a new job (`--restart`), even if a resumable job already matches this **(source, dest)** pair." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadFollowSymlinks} label="Follow symlinks" />
@@ -474,14 +476,14 @@ No connection, no writes at all." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadCreateSourceDirectory} label="Nest under source folder name" />
-              <InfoTip text="Uploads into `DEST_PATH/<source-folder-name>/` instead of writing directly into `DEST_PATH` (`--create-source-directory`)." />
+              <InfoTip text="Uploads into `DEST_PATH/<source-folder-name>/` instead of directly into `DEST_PATH` (`--create-source-directory`)." />
             </div>
 
             <div class="grid grid-cols-2 gap-4">
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="upload-rescan-interval">Rescan interval</Label>
-                  <InfoTip text="How often to re-walk the source for new/changed files while the job keeps running.
+                  <InfoTip text="How often the job rescans the source for new or changed files.
 
 Default: `30s`." />
                 </span>
@@ -502,9 +504,7 @@ Default: `30s`." />
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="upload-include">Include globs (one per line)</Label>
-                  <InfoTip text="Only upload paths matching one of these globs.
-
-Repeatable, one pattern per line, e.g. `*.jpg`." />
+                  <InfoTip text="Only upload paths matching one of these globs, e.g. `*.jpg`." />
                 </span>
                 <Textarea id="upload-include" bind:value={appState.uploadIncludeText} rows={3} placeholder="*.jpg" />
               </div>
@@ -592,11 +592,11 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
 
       <div class="flex items-center gap-1.5">
         <Checkbox bind:checked={appState.uploadResumeOnce} label="Settle and exit (--once)" />
-        <InfoTip text="Once every pending file is uploaded, exits the job with a real completed status (`--once`).
+        <InfoTip text="Exits the job with a completed status once every pending file uploads (`--once`).
 
-**Leave this unchecked** and the job goes back to running as a background daemon. It rescans the source on an interval forever, watching for new/changed files, and never marks itself completed on its own, even once there's nothing left to do. That's the `running` + nothing pending state you'd otherwise see.
+**Unchecked**, the job runs as a background daemon. It rescans on an interval and never completes on its own, even with nothing pending.
 
-Check this when you just want the current backlog cleared and the job to finish for real." />
+Check this to clear the current backlog and finish the job for good." />
       </div>
 
       <div class="grid grid-cols-2 gap-4 max-w-2xl">
@@ -823,7 +823,7 @@ Check this when you just want the current backlog cleared and the job to finish 
                 {#if job.state !== 'completed' && job.state !== 'halted'}
                   <span class="text-muted-foreground inline-flex items-center gap-1 text-xs">
                     (as of last scan)
-                    <InfoTip text="A daemon-mode job keeps discovering more each rescan. These numbers aren't final until it settles." />
+                    <InfoTip text="A daemon-mode job discovers more files on each rescan. These numbers are not final until it settles." />
                   </span>
                 {/if}
               </p>

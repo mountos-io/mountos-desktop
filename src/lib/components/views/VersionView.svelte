@@ -77,7 +77,7 @@
     <details class="text-sm">
       <summary class="cursor-pointer select-none text-muted-foreground">Advanced: enter an inode number instead</summary>
       <div class="grid gap-1.5 pt-2">
-        <span class="inline-flex items-center gap-1"><Label for="version-inode">Inode number</Label><InfoTip text="**ls -i** shows a file's inode. Bypasses Browse; only a plain by-inode lookup (no multi-key discovery)." /></span>
+        <span class="inline-flex items-center gap-1"><Label for="version-inode">Inode number</Label><InfoTip text="**ls -i** shows a file's inode number. This skips Browse. mountOS looks up the file by inode number only." /></span>
         <Input id="version-inode" bind:value={appState.versionInode} inputmode="numeric" placeholder="12345" disabled={Boolean(appState.versionPath)} />
       </div>
     </details>

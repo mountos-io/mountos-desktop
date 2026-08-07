@@ -263,7 +263,7 @@
                       </Button>
                       {#if endpoint.protocol === 's3'}
                         <InfoTip
-                          text="This gateway serves one bucket: use **auto**, or the fork's own name (e.g. 'main'). Any other bucket name is rejected."
+                          text="This gateway serves one bucket. Use **auto**, or the fork's own name, for example 'main'. mountOS rejects any other bucket name."
                         />
                       {/if}
                     </div>

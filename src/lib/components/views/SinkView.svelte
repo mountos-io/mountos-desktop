@@ -332,7 +332,7 @@
       <div class="grid gap-1.5 max-w-sm">
         <span class="inline-flex items-center gap-1">
           <Label>Destination volume</Label>
-          <InfoTip text="The profile or instance to ingest into. Supplies fork, discovery URL, and credentials, same as an upload." />
+          <InfoTip text="The profile or instance to ingest into. It supplies the fork, discovery URL, and credentials, like an upload source." />
         </span>
         <Combobox
           options={sinkTargetOptions}
@@ -358,9 +358,9 @@
         <div class="grid gap-1.5">
           <span class="inline-flex items-center gap-1">
             <Label for="sink-path">Destination path</Label>
-            <InfoTip text="Where the media file and its `.m3u8` sidecar are written, mountOS-relative.
+            <InfoTip text="mountOS writes the media file and its `.m3u8` sidecar here. The path is mountOS-relative.
 
-Always a template: `%Y %m %d %H %M` render per rollover, e.g. `/cams/feed-%Y%m%d-%H.mp4` rolls hourly." />
+The path is always a template. mountOS renders `%Y %m %d %H %M` at each rollover. Example: `/cams/feed-%Y%m%d-%H.mp4` rolls over each hour." />
           </span>
           <Input id="sink-path" bind:value={appState.sinkPath} placeholder="/recordings/feed.mp4" />
           {#if appState.sinkPathError}
@@ -395,16 +395,16 @@ Always a template: `%Y %m %d %H %M` render per rollover, e.g. `/cams/feed-%Y%m%d
                   <Label for="sink-variant">Rendition (optional)</Label>
                   <InfoTip text="Selects one rendition from a master playlist, by bandwidth, resolution, or NAME (`--variant`).
 
-Default: highest bitrate. Ignored when the stream URL already points at a media playlist directly." />
+Default: highest bitrate. mountOS ignores this field when the stream URL points directly at a media playlist." />
                 </span>
                 <Input id="sink-variant" bind:value={appState.sinkVariant} placeholder="highest bitrate" />
               </div>
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="sink-max-latency">Max latency (optional)</Label>
-                  <InfoTip text="The commit loop's under-filled-block flush floor (`--max-latency`).
+                  <InfoTip text="The maximum time the commit loop waits before it flushes a partial block (`--max-latency`).
 
-Default: self-tunes from the source's own target segment duration, floored at 30s." />
+Default: mountOS sets this from the source's target segment duration, with a 30s minimum." />
                 </span>
                 <Input id="sink-max-latency" bind:value={appState.sinkMaxLatency} placeholder="30s" />
               </div>
@@ -412,9 +412,9 @@ Default: self-tunes from the source's own target segment duration, floored at 30
             <div class="grid gap-1.5 max-w-[16rem]">
               <span class="inline-flex items-center gap-1">
                 <Label for="sink-wal-max">WAL disk reservation (optional)</Label>
-                <InfoTip text="How much local disk the write-ahead log is allowed to reserve for outage tolerance (`--wal-max`), e.g. `512M` or `2G`.
+                <InfoTip text="The local disk space the write-ahead log can reserve for outage tolerance (`--wal-max`), e.g. `512M` or `2G`.
 
-Default: the smaller of 2 GiB and 25% of free disk." />
+Default: mountOS reserves the smaller of 2 GiB and 25% of free disk." />
               </span>
               <Input id="sink-wal-max" bind:value={appState.sinkWalMax} placeholder="2G" />
             </div>
@@ -676,7 +676,7 @@ Default: the smaller of 2 GiB and 25% of free disk." />
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="grid gap-1 min-w-0 sm:col-span-2">
-            <span class="inline-flex items-center gap-1"><Label>Stream URL</Label><InfoTip text="Redacted by the CLI to strip embedded credentials. The ... marks removed text, not truncation." /></span>
+            <span class="inline-flex items-center gap-1"><Label>Stream URL</Label><InfoTip text="The CLI redacts this field to strip embedded credentials. `...` marks removed text, not truncation." /></span>
             <p class="wrap-anywhere">{job.source}</p>
           </div>
           <div class="grid gap-1 min-w-0 sm:col-span-2">

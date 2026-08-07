@@ -238,13 +238,13 @@
         label: 'Retrying',
         count: job.counts.retrying,
         tone: 'text-warning',
-        info: 'In backoff after a transient error (quota, lock, temporary read failure). Retries automatically, no action needed.',
+        info: 'Waits in backoff after a transient error (quota, lock, or temporary read failure). Retries automatically. Needs no action.',
       },
       {
         label: 'Failed',
         count: job.counts.failed,
         tone: 'text-destructive',
-        info: "The job gave up on this path and won't retry on its own. Fix the cause, then use Retry failed, or accept the loss.",
+        info: 'The job stopped retrying this path. Fix the cause, then use Retry failed, or accept the loss.',
       },
       { label: 'Skipped', count: job.counts.skipped, tone: '' },
       { label: 'Missing', count: job.counts.missing, tone: '' },
@@ -319,9 +319,7 @@
           <div class="grid gap-1.5">
             <span class="inline-flex items-center gap-1">
               <Label for="download-as-of">As of (optional)</Label>
-              <InfoTip text="Reads from a historical snapshot instead of the fork's live state (`--as-of`).
-
-Leave blank to read the fork's current, live content." />
+              <InfoTip text="Reads from a snapshot instead of the fork's live state (`--as-of`). Leave blank to read the fork's live content." />
             </span>
             <Input id="download-as-of" type="datetime-local" bind:value={appState.downloadAsOfLocal} />
           </div>
@@ -474,7 +472,7 @@ Leave blank to read the fork's current, live content." />
                 </div>
                 <div class="flex items-center gap-1.5">
                   <Checkbox bind:checked={appState.downloadDestSaveToVault} label="Store secret in OS vault" />
-                  <InfoTip text="Stores the secret in your OS credential store so this destination never asks for it again. Leave blank to be prompted next time." />
+                  <InfoTip text="Stores the secret in the OS credential store, so this destination does not ask for it again. Leave the secret field blank to be prompted next time." />
                 </div>
                 {#if appState.downloadDestSaveError}
                   <small class="text-destructive text-sm">{appState.downloadDestSaveError}</small>
@@ -492,25 +490,25 @@ Leave blank to read the fork's current, live content." />
           <div class="grid gap-1.5">
             <span class="inline-flex items-center gap-1">
               <Label id="download-if-exists-label">If a file already exists</Label>
-              <InfoTip text="How to handle a destination path that already exists (`--if-exists`).
+              <InfoTip text="Sets the action for a destination path that already exists (`--if-exists`).
 
-• **Skip** leaves the existing file alone (default).
-• **Overwrite** replaces it.
-• **Bounce** writes alongside it as a numbered copy, e.g. `name (1).ext`.
+• **Skip** keeps the existing file (default).
+• **Overwrite** replaces the existing file.
+• **Bounce** adds a numbered copy, e.g. `name (1).ext`.
 
-There is no error-and-halt option; every case has a defined, non-failing outcome." />
+No option halts with an error." />
             </span>
             <Select options={ifExistsOptions} bind:value={appState.downloadIfExists} ariaLabelledby="download-if-exists-label" />
           </div>
           <div class="grid gap-1.5">
             <span class="inline-flex items-center gap-1">
               <Label for="download-depth">Depth</Label>
-              <InfoTip text="How many directory levels below the source to descend into (`--depth`, `find -maxdepth` semantics).
+              <InfoTip text="Sets how many directory levels to descend below the source (`--depth`, like `find -maxdepth`).
 
-**1** (default) downloads only the source root's direct children; subdirectories are listed but not descended into.
-**0** is unlimited, fully recursive.
+**1** (default) downloads only the source root's direct children. It lists deeper subdirectories but does not enter them.
+**0** removes the limit and descends fully.
 
-Guards against an unbounded pull from a large remote tree by accident." />
+Prevents an accidental full pull of a large remote tree." />
             </span>
             <Input id="download-depth" type="number" min="0" bind:value={appState.downloadDepth} />
           </div>
@@ -539,29 +537,25 @@ Guards against an unbounded pull from a large remote tree by accident." />
           <div class="grid gap-3 border border-border/40 p-3">
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.downloadDryRun} label="Dry run" />
-              <InfoTip text="Discovers and reports the plan only (`--dry-run`).
-
-No writes to local disk." />
+              <InfoTip text="Reports the download plan only (`--dry-run`). Writes nothing to disk." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.downloadRestart} label="Force a fresh job" />
-              <InfoTip text="Starts a brand new job (`--restart`), even if a resumable one already matches this **(source, dest)** pair." />
+              <InfoTip text="Starts a new job (`--restart`), even if a resumable job already matches this **(source, dest)** pair." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.downloadFollowSymlinks} label="Follow symlinks" />
-              <InfoTip text="Dereferences symlinks to regular files instead of skipping them (`--follow-symlinks`)." />
+              <InfoTip text="Follows symlinks to their target files, instead of skipping them (`--follow-symlinks`)." />
             </div>
             <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.downloadCreateSourceDirectory} label="Nest under source folder name" />
-              <InfoTip text="Downloads into `DEST_PATH/<source-folder-name>/` instead of writing directly into `DEST_PATH` (`--create-source-directory`)." />
+              <InfoTip text="Downloads into `DEST_PATH/<source-folder-name>/`, not directly into `DEST_PATH` (`--create-source-directory`)." />
             </div>
 
             <div class="grid gap-1.5 max-w-[16rem]">
               <span class="inline-flex items-center gap-1">
                 <Label for="download-bwlimit">Bandwidth limit, Mbps</Label>
-                <InfoTip text="Caps download bandwidth in Mbps.
-
-`0` or blank means unlimited." />
+                <InfoTip text="Caps download bandwidth in Mbps. `0` or blank sets no limit." />
               </span>
               <Input id="download-bwlimit" type="number" min="0" bind:value={appState.downloadBwlimit} placeholder="0 (unlimited)" />
             </div>
@@ -570,18 +564,14 @@ No writes to local disk." />
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="download-include">Include globs (one per line)</Label>
-                  <InfoTip text="Only download paths matching one of these globs.
-
-Repeatable, one pattern per line, e.g. `*.jpg`." />
+                  <InfoTip text="Downloads only paths that match one of these globs. Enter one pattern per line, e.g. `*.jpg`." />
                 </span>
                 <Textarea id="download-include" bind:value={appState.downloadIncludeText} rows={3} placeholder="*.jpg" />
               </div>
               <div class="grid gap-1.5">
                 <span class="inline-flex items-center gap-1">
                   <Label for="download-exclude">Exclude globs (one per line)</Label>
-                  <InfoTip text="Never download paths matching one of these globs.
-
-**Exclude always wins** over include when both match." />
+                  <InfoTip text="Skips paths that match one of these globs. **Exclude wins** when a path also matches include." />
                 </span>
                 <Textarea id="download-exclude" bind:value={appState.downloadExcludeText} rows={3} placeholder="*.tmp" />
               </div>
@@ -651,7 +641,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
         <div class="grid gap-1.5">
           <span class="inline-flex items-center gap-1">
             <Label for="download-resume-discovery-url">Discovery URL</Label>
-            <InfoTip text="Only needed to resume a profile-sourced job. Leave blank for an instance-sourced job. No credentials needed." />
+            <InfoTip text="Needed only to resume a profile-sourced job. Leave blank for an instance-sourced job. Needs no credentials." />
           </span>
           <Input id="download-resume-discovery-url" bind:value={appState.downloadResumeDiscoveryUrl} placeholder="https://discovery.example.com" />
         </div>
@@ -874,7 +864,7 @@ Repeatable, one pattern per line, e.g. `*.jpg`." />
                 {#if job.state !== 'completed' && job.state !== 'halted'}
                   <span class="text-muted-foreground inline-flex items-center gap-1 text-xs">
                     (as of last scan)
-                    <InfoTip text="A snapshot from the last discovery pass, not final. Stops changing once the job settles." />
+                    <InfoTip text="From the last discovery scan, not final. Stops changing once the job settles." />
                   </span>
                 {/if}
               </p>
