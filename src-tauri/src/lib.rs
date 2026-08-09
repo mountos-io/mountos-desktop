@@ -3044,15 +3044,14 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
         .unwrap_or_default();
     entries
         .into_iter()
-        // "upload"/"download" entries (mountos-servers' `mountos list --json`
-        // mixes mount + gateway + upload + download kinds unconditionally,
-        // `--kind` is a CLI-side filter only) have no mountPath/backend at
-        // all and would otherwise render as broken mount rows here. Every
-        // existing kind check in this codebase is the binary
-        // `kind !== "gateway"`, which treats anything else as a mount.
-        // Uploads/downloads get their own list_uploads/list_downloads
-        // commands instead.
-        .filter(|entry| !matches!(entry.get("kind").and_then(Value::as_str), Some("upload") | Some("download")))
+        // Fetched with `--kind all`, so "upload"/"download"/"sink" entries
+        // are mixed in alongside mount/gateway rows. Those have no
+        // mountPath/backend at all and would otherwise render as broken
+        // mount rows here. Every existing kind check in this codebase is the
+        // binary `kind !== "gateway"`, which treats anything else as a
+        // mount. Uploads/downloads/sinks get their own list_uploads/
+        // list_downloads/list_sinks commands instead.
+        .filter(|entry| !matches!(entry.get("kind").and_then(Value::as_str), Some("upload") | Some("download") | Some("sink")))
         .map(|entry| {
             let mount_path = entry
                 .get("mountPath")
@@ -3632,8 +3631,12 @@ fn get_system_state_blocking(app: AppHandle) -> Result<SystemState, DesktopError
             }],
         ),
     };
+    // mountos-servers' `mountos list --json` defaults to mount-only entries;
+    // --kind all restores the combined mount+gateway+upload+download+sink
+    // view this reads (parse_instances_value filters non-mount kinds back
+    // out except gateway, which the Instances view still wants to show).
     let mut instances =
-        match command_output(&["list", "--json"]).and_then(|output| parse_instances(&output)) {
+        match command_output(&["list", "--kind", "all", "--json"]).and_then(|output| parse_instances(&output)) {
             Ok(instances) => instances,
             Err(error) => {
                 check_ok = false;
@@ -6404,7 +6407,9 @@ async fn stop_gateway_only(pid: u32) -> Result<(), DesktopError> {
 // already use for mount targets: the pid must currently appear as a live
 // "gateway" kind entry before this sends it anything.
 fn stop_gateway_only_blocking(pid: u32) -> Result<(), DesktopError> {
-    let output = command_output(&["list", "--json"])?;
+    // mountos-servers' `mountos list --json` defaults to mount-only entries;
+    // gateway rows only appear with an explicit --kind.
+    let output = command_output(&["list", "--kind", "gateway", "--json"])?;
     if !output.status.success() {
         return Err(DesktopError::Message(format!(
             "mountos list failed: {}",
@@ -7312,7 +7317,9 @@ fn create_diagnostics_bundle_blocking(app: AppHandle) -> Result<DiagnosticsBundl
     ));
 
     let check = command_output(&["check", "--json"]).ok();
-    let list = command_output(&["list", "--json"]).ok();
+    // --kind all: a diagnostics bundle should capture background jobs too,
+    // not just mounts.
+    let list = command_output(&["list", "--kind", "all", "--json"]).ok();
     let profiles = read_profiles(&app).unwrap_or_default();
     let check_output = check.as_ref().map(|output| DiagnosticsCommandOutput {
         status: output.status.code(),
@@ -8871,12 +8878,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_instances_value_excludes_upload_and_download_job_rows() {
+    fn parse_instances_value_excludes_upload_download_and_sink_job_rows() {
         let value: Value = serde_json::from_str(
             r#"[
                 {"kind": "mount", "name": "Team", "mountPath": "/Volumes/MountOS/Team"},
                 {"kind": "upload", "name": "upload-abc123", "jobId": "abc123"},
-                {"kind": "download", "name": "download-def456", "jobId": "def456"}
+                {"kind": "download", "name": "download-def456", "jobId": "def456"},
+                {"kind": "sink", "name": "sink-ghi789", "jobId": "ghi789"}
             ]"#,
         )
         .unwrap();
