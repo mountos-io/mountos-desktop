@@ -269,6 +269,10 @@ struct DiagnosticsContent {
     cli_version: Option<String>,
     check: Option<DiagnosticsCommandOutput>,
     list: Option<DiagnosticsCommandOutput>,
+    // The mountosio kernel driver's counters, hoisted out of the check output
+    // so support reads them without digging through the per-backend array.
+    // Absent means no driver: non-Windows, not installed, or inaccessible.
+    kernel_diagnostics: Option<Value>,
     profiles: Vec<DiagnosticsProfileSummary>,
 }
 
@@ -2455,7 +2459,7 @@ fn is_openable_target(target: &str) -> bool {
     #[cfg(windows)]
     {
         let bytes = target.as_bytes();
-        return bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+        bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
     }
     #[cfg(not(windows))]
     {
@@ -2898,6 +2902,17 @@ fn cli_version() -> Option<String> {
             Some(text)
         }
     })
+}
+
+// Pulls the kernel driver counters out of `mountos check --json`, which emits
+// either a single backend object or an array of them depending on platform.
+fn kernel_diagnostics_from_check(stdout: &Value) -> Option<Value> {
+    match stdout {
+        Value::Array(items) => items
+            .iter()
+            .find_map(|item| item.get("kernelDiagnostics").cloned()),
+        _ => stdout.get("kernelDiagnostics").cloned(),
+    }
 }
 
 fn parse_check(output: &std::process::Output) -> (bool, Vec<CheckIssue>) {
@@ -7299,6 +7314,14 @@ fn create_diagnostics_bundle_blocking(app: AppHandle) -> Result<DiagnosticsBundl
     let check = command_output(&["check", "--json"]).ok();
     let list = command_output(&["list", "--json"]).ok();
     let profiles = read_profiles(&app).unwrap_or_default();
+    let check_output = check.as_ref().map(|output| DiagnosticsCommandOutput {
+        status: output.status.code(),
+        stdout: scrub_output(&output.stdout),
+        stderr: scrub_output(&output.stderr),
+    });
+    let kernel_diagnostics = check_output
+        .as_ref()
+        .and_then(|output| kernel_diagnostics_from_check(&output.stdout));
     let content = DiagnosticsContent {
         created_at_unix: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -7306,16 +7329,13 @@ fn create_diagnostics_bundle_blocking(app: AppHandle) -> Result<DiagnosticsBundl
             .as_secs(),
         cli_path: mountos_path().ok().map(|path| path.display().to_string()),
         cli_version: cli_version(),
-        check: check.as_ref().map(|output| DiagnosticsCommandOutput {
-            status: output.status.code(),
-            stdout: scrub_output(&output.stdout),
-            stderr: scrub_output(&output.stderr),
-        }),
+        check: check_output,
         list: list.as_ref().map(|output| DiagnosticsCommandOutput {
             status: output.status.code(),
             stdout: scrub_output(&output.stdout),
             stderr: scrub_output(&output.stderr),
         }),
+        kernel_diagnostics,
         profiles: profiles
             .into_iter()
             .map(|profile| DiagnosticsProfileSummary {

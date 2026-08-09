@@ -380,12 +380,22 @@ export interface DiagnosticsProfileSummary {
   autoRemount: boolean
 }
 
+// mountosio kernel driver counters. Absent on non-Windows, or when the driver
+// is not installed / its control device is inaccessible.
+export interface KernelDiagnostics {
+  invariantTotal: number
+  irpDoubleCompletions: number
+  faultInjections: number
+  invariantSites?: Record<string, number>
+}
+
 export interface DiagnosticsContent {
   createdAtUnix: number
   cliPath?: string
   cliVersion?: string
   check?: DiagnosticsCommandOutput
   list?: DiagnosticsCommandOutput
+  kernelDiagnostics?: KernelDiagnostics
   profiles: DiagnosticsProfileSummary[]
 }
 

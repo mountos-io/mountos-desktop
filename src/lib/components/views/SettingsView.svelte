@@ -622,7 +622,7 @@
   {/if}
 
   <div class="flex items-center justify-between gap-4" id="settings-diagnostics-bundle">
-    <span class="inline-flex items-center gap-1"><strong>Diagnostics bundle</strong><InfoTip text="Writes a JSON file with CLI info, check/list output, and saved profiles." /></span>
+    <span class="inline-flex items-center gap-1"><strong>Diagnostics bundle</strong><InfoTip text="Writes a JSON file with CLI info, check and list output, saved profiles, and the kernel driver counters on Windows." /></span>
     <Button type="button" onclick={createBundle} disabled={appState.busy}>
       <FileArchive size={16} aria-hidden="true" />
       Create
