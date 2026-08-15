@@ -376,6 +376,10 @@ struct UploadJob {
     name: String,
     source_path: Option<String>,
     dest_path: Option<String>,
+    // Optional cosmetic display label for this job's source provider (e.g.
+    // "gcp"), set via --source-provider-hint at job creation, echoed back
+    // unchanged; never fabricated when the job carries none.
+    provider_hint: Option<String>,
     fork_name: Option<String>,
     // running | halted | completed | resumable
     state: String,
@@ -425,6 +429,9 @@ struct UploadStartParams {
     // write_temp_secret_file, which never round-trips through this
     // Deserialize-derived, frontend-supplied struct.
     source_provider: Option<String>,
+    // Optional cosmetic display label (e.g. "gcp"), never validated or used
+    // for dispatch, see cli.ts's resolveProviderHint.
+    source_provider_hint: Option<String>,
     source_endpoint: Option<String>,
     source_region: Option<String>,
     source_account: Option<String>,
@@ -444,6 +451,10 @@ struct DownloadJob {
     name: String,
     source_path: Option<String>,
     dest_path: Option<String>,
+    // Optional cosmetic display label for this job's dest provider (e.g.
+    // "gcp"), set via --dest-provider-hint at job creation, echoed back
+    // unchanged; never fabricated when the job carries none.
+    provider_hint: Option<String>,
     fork_name: Option<String>,
     // running | halted | completed | resumable
     state: String,
@@ -496,6 +507,9 @@ struct DownloadStartParams {
     // parameter and write_temp_secret_file, which never round-trips through
     // this Deserialize-derived, frontend-supplied struct.
     dest_provider: Option<String>,
+    // Optional cosmetic display label (e.g. "gcp"), never validated or used
+    // for dispatch, see cli.ts's resolveProviderHint.
+    dest_provider_hint: Option<String>,
     dest_endpoint: Option<String>,
     dest_region: Option<String>,
     dest_account: Option<String>,
@@ -1852,6 +1866,10 @@ fn build_upload_start_argv(
     // mountos CLI's --source-temporary-secret-file contract exactly.
     for (flag, value) in [
         ("--source-provider", params.source_provider.as_deref()),
+        (
+            "--source-provider-hint",
+            params.source_provider_hint.as_deref(),
+        ),
         ("--source-endpoint", params.source_endpoint.as_deref()),
         ("--source-region", params.source_region.as_deref()),
         ("--source-account", params.source_account.as_deref()),
@@ -2050,6 +2068,7 @@ fn build_download_start_argv(
     // place a resolved destination secret reaches this builder.
     for (flag, value) in [
         ("--dest-provider", params.dest_provider.as_deref()),
+        ("--dest-provider-hint", params.dest_provider_hint.as_deref()),
         ("--dest-endpoint", params.dest_endpoint.as_deref()),
         ("--dest-region", params.dest_region.as_deref()),
         ("--dest-account", params.dest_account.as_deref()),
@@ -4239,6 +4258,10 @@ fn parse_uploads_value(value: &Value) -> Vec<UploadJob> {
                     .get("destPath")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
+                provider_hint: entry
+                    .get("providerHint")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 fork_name: entry
                     .get("forkName")
                     .and_then(Value::as_str)
@@ -4741,6 +4764,10 @@ fn parse_downloads_value(value: &Value) -> Vec<DownloadJob> {
                     .map(ToString::to_string),
                 dest_path: entry
                     .get("destPath")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                provider_hint: entry
+                    .get("providerHint")
                     .and_then(Value::as_str)
                     .map(ToString::to_string),
                 fork_name: entry
@@ -8395,6 +8422,7 @@ mod tests {
             follow_symlinks: false,
             create_source_directory: false,
             source_provider: None,
+            source_provider_hint: None,
             source_endpoint: None,
             source_region: None,
             source_account: None,
@@ -8480,6 +8508,7 @@ mod tests {
     fn build_upload_start_argv_emits_source_provider_fields_when_set() {
         let mut params = upload_params();
         params.source_provider = Some("s3compatible".to_string());
+        params.source_provider_hint = Some(" gcp ".to_string());
         params.source_endpoint = Some(" https://example.com ".to_string());
         params.source_region = Some("us-east-1".to_string());
         params.source_account = Some("myaccount".to_string());
@@ -8489,6 +8518,9 @@ mod tests {
             .windows(2)
             .any(|a| a == ["--source-provider", "s3compatible"]));
         // Trimmed, same as --rescan-interval/--include/--exclude above.
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--source-provider-hint", "gcp"]));
         assert!(argv
             .windows(2)
             .any(|a| a == ["--source-endpoint", "https://example.com"]));
@@ -8506,6 +8538,7 @@ mod tests {
         let argv = build_upload_start_argv(&profile(), "/src", "/dst", &upload_params(), None);
         for flag in [
             "--source-provider",
+            "--source-provider-hint",
             "--source-endpoint",
             "--source-region",
             "--source-account",
@@ -8923,6 +8956,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_uploads_value_carries_provider_hint() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc",
+                 "state": "running", "providerHint": "gcp"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].provider_hint, Some("gcp".to_string()));
+    }
+
+    #[test]
+    fn parse_uploads_value_defaults_provider_hint_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_uploads_value(&value);
+        assert_eq!(jobs[0].provider_hint, None);
+    }
+
+    #[test]
     fn parse_uploads_value_carries_created_and_completed_at() {
         let value: Value = serde_json::from_str(
             r#"[{"kind": "upload", "name": "upload-abc", "jobId": "abc",
@@ -9006,6 +9060,7 @@ mod tests {
             follow_symlinks: false,
             create_source_directory: false,
             dest_provider: None,
+            dest_provider_hint: None,
             dest_endpoint: None,
             dest_region: None,
             dest_account: None,
@@ -9134,6 +9189,7 @@ mod tests {
     fn build_download_start_argv_emits_dest_provider_fields_when_set() {
         let mut params = download_params();
         params.dest_provider = Some("s3compatible".to_string());
+        params.dest_provider_hint = Some("gcp".to_string());
         params.dest_endpoint = Some("https://minio.example.com".to_string());
         params.dest_region = Some("us-east-1".to_string());
         params.dest_account = Some("acct".to_string());
@@ -9149,6 +9205,9 @@ mod tests {
         assert!(argv
             .windows(2)
             .any(|a| a == ["--dest-provider", "s3compatible"]));
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--dest-provider-hint", "gcp"]));
         assert!(argv
             .windows(2)
             .any(|a| a == ["--dest-endpoint", "https://minio.example.com"]));
@@ -9171,6 +9230,7 @@ mod tests {
         );
         for flag in [
             "--dest-provider",
+            "--dest-provider-hint",
             "--dest-endpoint",
             "--dest-region",
             "--dest-account",
@@ -9271,6 +9331,27 @@ mod tests {
         let value: Value =
             serde_json::from_str(r#"[{"kind": "download", "name": "broken"}]"#).unwrap();
         assert!(parse_downloads_value(&value).is_empty());
+    }
+
+    #[test]
+    fn parse_downloads_value_carries_provider_hint() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc",
+                 "state": "running", "providerHint": "gcp"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs[0].provider_hint, Some("gcp".to_string()));
+    }
+
+    #[test]
+    fn parse_downloads_value_defaults_provider_hint_to_none() {
+        let value: Value = serde_json::from_str(
+            r#"[{"kind": "download", "name": "download-abc", "jobId": "abc", "state": "running"}]"#,
+        )
+        .unwrap();
+        let jobs = parse_downloads_value(&value);
+        assert_eq!(jobs[0].provider_hint, None);
     }
 
     #[test]

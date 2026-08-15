@@ -67,6 +67,7 @@
     selectUploadInstance,
     selectUploadProfile,
     selectUploadSourceType,
+    transferSourceProfileNeedsReentry,
     uploadSourceProfileUsesVault,
     closeJobPanelFloating,
     setJobPanelCollapsed,
@@ -81,7 +82,10 @@
   const NEW_SOURCE_OPTION = '__new__'
   const savedSourceOptions = $derived([
     { value: NEW_SOURCE_OPTION, label: '+ New source' },
-    ...appState.transferSourceProfiles.map((p) => ({ value: p.id, label: p.name })),
+    ...appState.transferSourceProfiles.map((p) => ({
+      value: p.id,
+      label: transferSourceProfileNeedsReentry(p) ? `(needs re-entry) ${p.name}` : p.name,
+    })),
   ])
 
   // Fetch exactly once per mount, not gated on uploads.length === 0. Unlike
@@ -331,22 +335,30 @@
                 <Input id="upload-source-prefix" bind:value={appState.uploadSourcePrefix} placeholder="photos/2026" autocomplete="off" />
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="grid gap-1.5">
-                <Label for="upload-source-endpoint">Endpoint{appState.uploadSourceProvider === 's3compatible' ? ' (required)' : ''}</Label>
-                <Input id="upload-source-endpoint" bind:value={appState.uploadSourceEndpoint} placeholder={appState.uploadSourceProvider === 's3compatible' ? 'https://...' : 'auto-derived if left blank'} />
+            {#if appState.uploadSourceProvider !== 'gcs'}
+              <div class="grid grid-cols-2 gap-3">
+                <div class="grid gap-1.5">
+                  <Label for="upload-source-endpoint">Endpoint{appState.uploadSourceProvider === 's3compatible' ? ' (required)' : ''}</Label>
+                  <Input id="upload-source-endpoint" bind:value={appState.uploadSourceEndpoint} placeholder={appState.uploadSourceProvider === 's3compatible' ? 'https://...' : 'auto-derived if left blank'} />
+                </div>
+                <div class="grid gap-1.5">
+                  <Label for="upload-source-region">Region</Label>
+                  <Input id="upload-source-region" bind:value={appState.uploadSourceRegion} />
+                </div>
               </div>
-              <div class="grid gap-1.5">
-                <Label for="upload-source-region">Region</Label>
-                <Input id="upload-source-region" bind:value={appState.uploadSourceRegion} />
+            {/if}
+            {#if appState.uploadSourceProvider === 's3compatible'}
+              <div class="grid gap-1.5 max-w-sm">
+                <Label for="upload-source-provider-hint">Provider name (optional)</Label>
+                <Input id="upload-source-provider-hint" bind:value={appState.uploadSourceProviderHint} placeholder="e.g. my internal MinIO" autocomplete="off" />
               </div>
-            </div>
+            {/if}
             {#if appState.uploadSourceProvider === 'azure'}
               <div class="grid gap-1.5">
                 <Label for="upload-source-account">Storage account name</Label>
                 <Input id="upload-source-account" bind:value={appState.uploadSourceAccount} />
               </div>
-            {:else if appState.uploadSourceProvider !== 'gcs'}
+            {:else}
               <div class="grid gap-1.5">
                 <Label for="upload-source-access-key-id">Access key id</Label>
                 <Input id="upload-source-access-key-id" bind:value={appState.uploadSourceAccessKeyId} autocomplete="off" />
@@ -354,14 +366,10 @@
             {/if}
             <div class="grid gap-1.5">
               <Label for="upload-source-secret">
-                {appState.uploadSourceProvider === 'gcs' ? 'Service-account key (JSON)' : 'Secret access key'}
+                Secret access key
                 {#if uploadSourceProfileUsesVault()}<span class="text-muted-foreground font-normal">(optional, using saved vault credential)</span>{/if}
               </Label>
-              {#if appState.uploadSourceProvider === 'gcs'}
-                <Textarea id="upload-source-secret" bind:value={appState.uploadSourceSecretValue} rows={4} placeholder={uploadSourceProfileUsesVault() ? 'Leave blank to use the saved vault credential' : '{"type": "service_account", ...}'} />
-              {:else}
-                <Input id="upload-source-secret" type="password" bind:value={appState.uploadSourceSecretValue} autocomplete="off" placeholder={uploadSourceProfileUsesVault() ? 'Leave blank to use the saved vault credential' : ''} />
-              {/if}
+              <Input id="upload-source-secret" type="password" bind:value={appState.uploadSourceSecretValue} autocomplete="off" placeholder={uploadSourceProfileUsesVault() ? 'Leave blank to use the saved vault credential' : ''} />
             </div>
             {#if appState.uploadSourceError}
               <small class="text-destructive text-sm">{appState.uploadSourceError}</small>
@@ -762,6 +770,9 @@ Check this to clear the current backlog and finish the job for good." />
               <Upload size={19} aria-hidden="true" class="shrink-0" />
               <span class="min-w-0 flex-1 truncate">{job.name || job.destPath || job.jobId}</span>
               <Badge variant="secondary" class="shrink-0" title="Fork name">{job.forkName || 'main'}</Badge>
+              {#if job.providerHint}
+                <Badge variant="secondary" class="shrink-0" title="Provider">{job.providerHint}</Badge>
+              {/if}
               <Badge variant="secondary" class="ml-auto min-w-0 shrink truncate" title="Job ID">
                 <Tag size={12} aria-hidden="true" class="shrink-0" />
                 {job.jobId}

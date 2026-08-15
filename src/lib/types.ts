@@ -83,6 +83,10 @@ export interface UploadJob {
   name: string
   sourcePath?: string
   destPath?: string
+  // Optional cosmetic display label for this job's source provider (e.g.
+  // "gcp"), set via --source-provider-hint at job creation, echoed back
+  // unchanged; never fabricated when the job carries none.
+  providerHint?: string
   forkName?: string
   // running | halted | completed | resumable
   state: string
@@ -125,6 +129,10 @@ export interface DownloadJob {
   name: string
   sourcePath?: string
   destPath?: string
+  // Optional cosmetic display label for this job's dest provider (e.g.
+  // "gcp"), set via --dest-provider-hint at job creation, echoed back
+  // unchanged; never fabricated when the job carries none.
+  providerHint?: string
   forkName?: string
   // running | halted | completed | resumable
   state: string

@@ -34,6 +34,9 @@ import {
   isAbsolutePath,
   isValidFolderName,
   parseArgvInput,
+  resolveProviderHint,
+  resolveWireEndpoint,
+  resolveWireProvider,
   validateExternalSourceFields,
   validateExtraArgs,
   validateGlobPattern,
@@ -458,6 +461,10 @@ const state = $state({
   uploadSourceRegion: '',
   uploadSourceAccount: '',
   uploadSourceAccessKeyId: '',
+  // Optional display label for a literal 's3compatible' selection (e.g. "my
+  // internal MinIO"); not rendered/used for a 'gcs' selection, whose hint is
+  // fixed to 'gcp'. See resolveProviderHint.
+  uploadSourceProviderHint: '',
   // Plaintext secret held only in memory for the duration of a Start or Test
   // call (see runUploadStart/runUploadSourceTest: passed straight to
   // startUpload, never persisted, never logged) -- Rust writes it to a
@@ -592,6 +599,9 @@ const state = $state({
   downloadDestRegion: '',
   downloadDestAccount: '',
   downloadDestAccessKeyId: '',
+  // Optional display label for a literal 's3compatible' selection, mirrors
+  // uploadSourceProviderHint on the destination side.
+  downloadDestProviderHint: '',
   // Plaintext secret held only in memory for the duration of a Start or Test
   // call (see runDownloadStart/runDownloadDestTest: passed straight to
   // startDownload, never persisted, never logged) -- Rust writes it to a
@@ -2016,9 +2026,14 @@ export function uploadStartParams(): UploadStartParams {
     // Only meaningful (and only rendered in the form) for a URI Source --
     // isExternalUploadSource gates whether these are ever non-empty in
     // practice, but they're harmless to include unconditionally since
-    // buildUploadStartArgv already skips blank values.
-    sourceProvider: state.uploadSourceProvider.trim() || undefined,
-    sourceEndpoint: state.uploadSourceEndpoint.trim() || undefined,
+    // buildUploadStartArgv already skips blank values. A 'gcs' selection is
+    // remapped onto the wire as 's3compatible' against GCS's S3-compatible
+    // endpoint (resolveWireProvider/resolveWireEndpoint) with providerHint
+    // 'gcp', so the CLI's native (build-flag-gated) gcs path is never
+    // exercised from this app, see cli.ts's own doc comments.
+    sourceProvider: resolveWireProvider(state.uploadSourceProvider.trim()) || undefined,
+    sourceProviderHint: resolveProviderHint(state.uploadSourceProvider.trim(), state.uploadSourceProviderHint),
+    sourceEndpoint: resolveWireEndpoint(state.uploadSourceProvider.trim(), state.uploadSourceEndpoint.trim()) || undefined,
     sourceRegion: state.uploadSourceRegion.trim() || undefined,
     sourceAccount: state.uploadSourceAccount.trim() || undefined,
     sourceAccessKeyId: state.uploadSourceAccessKeyId.trim() || undefined,
@@ -2065,9 +2080,7 @@ function validateUploadSourceAndSecret(): string {
   // Only when there's no vault backing it does a blank field mean "no
   // secret at all", the same failure an ad hoc unsaved source would have.
   if (!state.uploadSourceSecretValue.trim() && !uploadSourceProfileUsesVault()) {
-    return state.uploadSourceProvider.trim() === 'gcs'
-      ? 'A service-account key (JSON) is required. Paste its content into the secret field'
-      : 'A secret is required'
+    return 'A secret is required'
   }
   return ''
 }
@@ -2173,6 +2186,20 @@ export async function loadTransferSourceProfiles() {
   }
 }
 
+// transferSourceProfileNeedsReentry flags a saved gcs profile from before
+// this app switched GCP from a pasted service-account JSON key to an HMAC
+// access key/secret pair (see resolveWireProvider). Such a profile never had
+// an accessKeyId collected, and validateExternalSourceFields now requires
+// one for every non-azure provider including gcs, so Start/Test on it would
+// otherwise fail with an unexplained "Access key id is required". Purely
+// derived from the profile's own existing fields, no new persisted field,
+// no schema-version bump. A profile saved after this change always carries
+// an accessKeyId (the save-time validation already enforces it), so this
+// heuristic never misflags a freshly-saved one.
+export function transferSourceProfileNeedsReentry(profile: TransferSourceProfile): boolean {
+  return profile.provider === 'gcs' && !profile.accessKeyId
+}
+
 // selectTransferSourceProfile fills the form's structured fields from a
 // saved profile. The secret is deliberately NOT populated here even for a
 // "vault" profile -- this app never round-trips a decrypted vault secret
@@ -2192,6 +2219,9 @@ export function selectTransferSourceProfile(id: string) {
   state.uploadSourceRegion = profile.region ?? ''
   state.uploadSourceAccount = profile.account ?? ''
   state.uploadSourceAccessKeyId = profile.accessKeyId ?? ''
+  // Never persisted on TransferSourceProfile, always starts blank, same as
+  // clearTransferSourceProfileSelection; the user retypes one if they want.
+  state.uploadSourceProviderHint = ''
   state.uploadSourceSecretValue = ''
   state.uploadSourceError = ''
   state.uploadSourceSaveOpen = false
@@ -2213,6 +2243,7 @@ export function clearTransferSourceProfileSelection() {
   state.uploadSourceRegion = ''
   state.uploadSourceAccount = ''
   state.uploadSourceAccessKeyId = ''
+  state.uploadSourceProviderHint = ''
   state.uploadSourceSecretValue = ''
   state.uploadSourceSaveOpen = false
   state.uploadSourceSaveName = ''
@@ -2362,6 +2393,9 @@ export function selectDownloadDestTransferProfile(id: string) {
   state.downloadDestRegion = profile.region ?? ''
   state.downloadDestAccount = profile.account ?? ''
   state.downloadDestAccessKeyId = profile.accessKeyId ?? ''
+  // Never persisted on TransferSourceProfile, always starts blank, same as
+  // clearDownloadDestProfileSelection; the user retypes one if they want.
+  state.downloadDestProviderHint = ''
   state.downloadDestSecretValue = ''
   state.downloadDestError = ''
   state.downloadDestSaveOpen = false
@@ -2382,6 +2416,7 @@ export function clearDownloadDestProfileSelection() {
   state.downloadDestRegion = ''
   state.downloadDestAccount = ''
   state.downloadDestAccessKeyId = ''
+  state.downloadDestProviderHint = ''
   state.downloadDestSecretValue = ''
   state.downloadDestSaveOpen = false
   state.downloadDestSaveName = ''
@@ -2896,9 +2931,11 @@ export function downloadStartParams(): DownloadStartParams {
     // Only meaningful (and only rendered in the form) for a URI DEST_PATH --
     // isExternalDownloadDest gates whether these are ever non-empty in
     // practice, but they're harmless to include unconditionally since
-    // buildDownloadStartArgv already skips blank values.
-    destProvider: state.downloadDestProvider.trim() || undefined,
-    destEndpoint: state.downloadDestEndpoint.trim() || undefined,
+    // buildDownloadStartArgv already skips blank values. Mirrors
+    // uploadStartParams' own 'gcs'-onto-'s3compatible' remap exactly.
+    destProvider: resolveWireProvider(state.downloadDestProvider.trim()) || undefined,
+    destProviderHint: resolveProviderHint(state.downloadDestProvider.trim(), state.downloadDestProviderHint),
+    destEndpoint: resolveWireEndpoint(state.downloadDestProvider.trim(), state.downloadDestEndpoint.trim()) || undefined,
     destRegion: state.downloadDestRegion.trim() || undefined,
     destAccount: state.downloadDestAccount.trim() || undefined,
     destAccessKeyId: state.downloadDestAccessKeyId.trim() || undefined,
@@ -2940,9 +2977,7 @@ function validateDownloadDestAndSecret(): string {
   // A selected "vault" profile needs nothing re-typed -- Rust resolves its
   // secret straight from the keychain (see startDownload's own doc comment).
   if (!state.downloadDestSecretValue.trim() && !downloadDestProfileUsesVault()) {
-    return state.downloadDestProvider.trim() === 'gcs'
-      ? 'A service-account key (JSON) is required. Paste its content into the secret field'
-      : 'A secret is required'
+    return 'A secret is required'
   }
   return ''
 }

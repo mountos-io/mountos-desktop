@@ -71,6 +71,7 @@
     selectDownloadInstance,
     selectDownloadProfile,
     setJobPanelCollapsed,
+    transferSourceProfileNeedsReentry,
   } from '$lib/app-state.svelte'
   import type { DownloadJob, MountInstance, MountProfile } from '$lib/types'
   import { cn, formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
@@ -82,7 +83,10 @@
   const NEW_DEST_OPTION = '__new__'
   const savedDestOptions = $derived([
     { value: NEW_DEST_OPTION, label: '+ New destination' },
-    ...appState.transferSourceProfiles.map((p) => ({ value: p.id, label: p.name })),
+    ...appState.transferSourceProfiles.map((p) => ({
+      value: p.id,
+      label: transferSourceProfileNeedsReentry(p) ? `(needs re-entry) ${p.name}` : p.name,
+    })),
   ])
 
   // Fetch exactly once per mount, mirrors UploadsView's own fetchedOnce
@@ -408,22 +412,30 @@
                 <Input id="download-dest-prefix" bind:value={appState.downloadDestPrefix} placeholder="backups/2026" autocomplete="off" />
               </div>
             </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="grid gap-1.5">
-                <Label for="download-dest-endpoint">Endpoint{appState.downloadDestProvider === 's3compatible' ? ' (required)' : ''}</Label>
-                <Input id="download-dest-endpoint" bind:value={appState.downloadDestEndpoint} placeholder={appState.downloadDestProvider === 's3compatible' ? 'https://...' : 'auto-derived if left blank'} />
+            {#if appState.downloadDestProvider !== 'gcs'}
+              <div class="grid grid-cols-2 gap-3">
+                <div class="grid gap-1.5">
+                  <Label for="download-dest-endpoint">Endpoint{appState.downloadDestProvider === 's3compatible' ? ' (required)' : ''}</Label>
+                  <Input id="download-dest-endpoint" bind:value={appState.downloadDestEndpoint} placeholder={appState.downloadDestProvider === 's3compatible' ? 'https://...' : 'auto-derived if left blank'} />
+                </div>
+                <div class="grid gap-1.5">
+                  <Label for="download-dest-region">Region</Label>
+                  <Input id="download-dest-region" bind:value={appState.downloadDestRegion} />
+                </div>
               </div>
-              <div class="grid gap-1.5">
-                <Label for="download-dest-region">Region</Label>
-                <Input id="download-dest-region" bind:value={appState.downloadDestRegion} />
+            {/if}
+            {#if appState.downloadDestProvider === 's3compatible'}
+              <div class="grid gap-1.5 max-w-sm">
+                <Label for="download-dest-provider-hint">Provider name (optional)</Label>
+                <Input id="download-dest-provider-hint" bind:value={appState.downloadDestProviderHint} placeholder="e.g. my internal MinIO" autocomplete="off" />
               </div>
-            </div>
+            {/if}
             {#if appState.downloadDestProvider === 'azure'}
               <div class="grid gap-1.5">
                 <Label for="download-dest-account">Storage account name</Label>
                 <Input id="download-dest-account" bind:value={appState.downloadDestAccount} />
               </div>
-            {:else if appState.downloadDestProvider !== 'gcs'}
+            {:else}
               <div class="grid gap-1.5">
                 <Label for="download-dest-access-key-id">Access key id</Label>
                 <Input id="download-dest-access-key-id" bind:value={appState.downloadDestAccessKeyId} autocomplete="off" />
@@ -431,14 +443,10 @@
             {/if}
             <div class="grid gap-1.5">
               <Label for="download-dest-secret">
-                {appState.downloadDestProvider === 'gcs' ? 'Service-account key (JSON)' : 'Secret access key'}
+                Secret access key
                 {#if downloadDestProfileUsesVault()}<span class="text-muted-foreground font-normal">(optional, using saved vault credential)</span>{/if}
               </Label>
-              {#if appState.downloadDestProvider === 'gcs'}
-                <Textarea id="download-dest-secret" bind:value={appState.downloadDestSecretValue} rows={4} placeholder={downloadDestProfileUsesVault() ? 'Leave blank to use the saved vault credential' : '{"type": "service_account", ...}'} />
-              {:else}
-                <Input id="download-dest-secret" type="password" bind:value={appState.downloadDestSecretValue} autocomplete="off" placeholder={downloadDestProfileUsesVault() ? 'Leave blank to use the saved vault credential' : ''} />
-              {/if}
+              <Input id="download-dest-secret" type="password" bind:value={appState.downloadDestSecretValue} autocomplete="off" placeholder={downloadDestProfileUsesVault() ? 'Leave blank to use the saved vault credential' : ''} />
             </div>
             {#if appState.downloadDestError}
               <small class="text-destructive text-sm">{appState.downloadDestError}</small>
@@ -803,6 +811,9 @@ Prevents an accidental full pull of a large remote tree." />
               <Download size={19} aria-hidden="true" class="shrink-0" />
               <span class="min-w-0 flex-1 truncate">{job.name || job.sourcePath || job.jobId}</span>
               <Badge variant="secondary" class="shrink-0" title="Fork name">{job.forkName || 'main'}</Badge>
+              {#if job.providerHint}
+                <Badge variant="secondary" class="shrink-0" title="Provider">{job.providerHint}</Badge>
+              {/if}
               <Badge variant="secondary" class="ml-auto min-w-0 shrink truncate" title="Job ID">
                 <Tag size={12} aria-hidden="true" class="shrink-0" />
                 {job.jobId}

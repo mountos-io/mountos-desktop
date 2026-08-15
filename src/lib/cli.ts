@@ -360,17 +360,56 @@ export function looksLikeSourceUri(source: string): boolean {
   return idx >= 2
 }
 
+// GCS_S3_ENDPOINT is Google Cloud Storage's S3-compatible interop endpoint.
+// The GCP provider option in the form authenticates with an HMAC access
+// key/secret against this endpoint instead of a service-account JSON key.
+// See resolveWireProvider's own doc comment for why. Not user-editable, the
+// Endpoint field is hidden whenever provider is 'gcs'.
+export const GCS_S3_ENDPOINT = 'https://storage.googleapis.com'
+
+// resolveWireProvider maps the form's 'gcs' selection onto the CLI's
+// 's3compatible' provider. mountos-servers' native GCS client (gcs.go) is an
+// opt-in build (-tags gcp, off by default), so the GUI never depends on it.
+// It always talks to GCS's S3-compatible endpoint (GCS_S3_ENDPOINT) with an
+// HMAC access key/secret pair instead, the same way any other S3-compatible
+// vendor does. Every other provider value passes through unchanged. Applied
+// wherever a 'gcs' UI selection reaches the CLI or its preview, see
+// resolveWireEndpoint/resolveProviderHint, its companions.
+export function resolveWireProvider(uiProvider: string): string {
+  return uiProvider === 'gcs' ? 's3compatible' : uiProvider
+}
+
+// resolveWireEndpoint pairs with resolveWireProvider. A 'gcs' selection
+// always sends GCS_S3_ENDPOINT, never a user-typed one (the Endpoint field is
+// hidden for it). Every other provider sends whatever the user typed.
+export function resolveWireEndpoint(uiProvider: string, userEndpoint: string): string {
+  return uiProvider === 'gcs' ? GCS_S3_ENDPOINT : userEndpoint
+}
+
+// resolveProviderHint is the optional cosmetic label (mountos-servers'
+// --source/dest-provider-hint, echoed back by `list --json`) that lets a job
+// display as "gcp" even though its wire provider is s3compatible. Fixed to
+// 'gcp' for a 'gcs' selection (never user-editable). For a literal
+// 's3compatible' selection the user may optionally type one. Every other
+// provider already names itself, so no hint is sent.
+export function resolveProviderHint(uiProvider: string, userHint: string): string | undefined {
+  if (uiProvider === 'gcs') return 'gcp'
+  if (uiProvider === 's3compatible') return userHint.trim() || undefined
+  return undefined
+}
+
 // buildExternalSourceUri renders the "scheme://bucket/prefix" form from the
 // upload form's structured provider/bucket/prefix fields -- the user never
-// hand-types a URI (and so can never hand a malformed one to the CLI): gcs
-// gets gs://, azure gets az://, every other provider (s3 and every
-// S3-compatible one) gets s3://, mirroring mountos-servers'
+// hand-types a URI (and so can never hand a malformed one to the CLI). The
+// scheme follows resolveWireProvider, not the raw UI provider. azure gets
+// az://, everything else (s3, every S3-compatible vendor, and gcs since it
+// resolves to s3compatible) gets s3://, mirroring mountos-servers'
 // ParseExternalSourceURI's own scheme table exactly in reverse. Returns null
 // when bucket is blank -- there is nothing valid to build yet.
 export function buildExternalSourceUri(provider: string, bucket: string, prefix: string): string | null {
   const trimmedBucket = bucket.trim().replace(/^\/+|\/+$/g, '')
   if (!trimmedBucket) return null
-  const scheme = provider === 'azure' ? 'az' : provider === 'gcs' ? 'gs' : 's3'
+  const scheme = resolveWireProvider(provider) === 'azure' ? 'az' : 's3'
   const trimmedPrefix = prefix.trim().replace(/^\/+|\/+$/g, '')
   const uri = `${scheme}://${trimmedBucket}${trimmedPrefix ? `/${trimmedPrefix}` : ''}`
   // Self-check: this construction must always produce something the CLI's
@@ -402,19 +441,21 @@ export const UPLOAD_SOURCE_PROVIDERS: { value: string; label: string }[] = [
 // fields, mirroring mountos-servers' own hard requirements exactly (so a
 // mistake is caught here, inline, instead of after a process is already
 // spawned and failing): bucket is always required; s3compatible has no
-// default endpoint (resolveEndpoint, mountos-servers) so it must be typed;
-// azure authenticates with account+key so the account name is required;
-// every other provider needs an access-key-id/secret pair, so the id is
-// required too (gcs is the one exception -- its whole credential is the
-// secret, a service-account key, no separate id). The secret itself is
-// validated by the caller (runUploadStart/runUploadSourceTest), which also
-// has uploadSourceSecretValue in scope.
+// default endpoint (resolveEndpoint, mountos-servers) so it must be typed --
+// gcs is exempt from this since its endpoint is fixed internally
+// (GCS_S3_ENDPOINT, never user-typed); azure authenticates with account+key
+// so the account name is required; every other provider (including gcs,
+// which authenticates via GCS's S3-compatible HMAC access key/secret, not a
+// service-account JSON key) needs an access-key-id/secret pair, so the id is
+// required too. The secret itself is validated by the caller
+// (runUploadStart/runUploadSourceTest), which also has uploadSourceSecretValue
+// in scope.
 export function validateExternalSourceFields(provider: string, bucket: string, endpoint: string, account: string, accessKeyId: string): string | null {
   if (!provider.trim()) return 'Provider is required'
   if (!bucket.trim()) return 'Bucket/container name is required'
   if (provider === 's3compatible' && !endpoint.trim()) return 'Endpoint is required for a custom S3-compatible provider'
   if (provider === 'azure' && !account.trim()) return 'Storage account name is required for Azure Blob'
-  if (provider !== 'azure' && provider !== 'gcs' && !accessKeyId.trim()) return 'Access key id is required'
+  if (provider !== 'azure' && !accessKeyId.trim()) return 'Access key id is required'
   return null
 }
 
@@ -436,6 +477,9 @@ export interface UploadStartParams {
   // a file path already written to disk, matching the mountos CLI's
   // --source-temporary-secret-file contract exactly.
   sourceProvider?: string
+  // sourceProviderHint is optional cosmetic display metadata (e.g. "gcp"),
+  // never validated or used for dispatch, see resolveProviderHint.
+  sourceProviderHint?: string
   sourceEndpoint?: string
   sourceRegion?: string
   sourceAccount?: string
@@ -515,6 +559,7 @@ export function buildUploadStartArgv(
   // persistent --source-secret-file flag (the desktop app always uses the
   // single-use --source-temporary-secret-file handoff).
   if (params.sourceProvider?.trim()) argv.push('--source-provider', params.sourceProvider.trim())
+  if (params.sourceProviderHint?.trim()) argv.push('--source-provider-hint', params.sourceProviderHint.trim())
   if (params.sourceEndpoint?.trim()) argv.push('--source-endpoint', params.sourceEndpoint.trim())
   if (params.sourceRegion?.trim()) argv.push('--source-region', params.sourceRegion.trim())
   if (params.sourceAccount?.trim()) argv.push('--source-account', params.sourceAccount.trim())
@@ -599,6 +644,9 @@ export interface DownloadStartParams {
   // already written to disk, matching the mountos CLI's
   // --dest-temporary-secret-file contract exactly.
   destProvider?: string
+  // destProviderHint is optional cosmetic display metadata (e.g. "gcp"),
+  // never validated or used for dispatch, see resolveProviderHint.
+  destProviderHint?: string
   destEndpoint?: string
   destRegion?: string
   destAccount?: string
@@ -667,6 +715,7 @@ export function buildDownloadStartArgv(
   // persistent --dest-secret-file flag (the desktop app always uses the
   // single-use --dest-temporary-secret-file handoff).
   if (params.destProvider?.trim()) argv.push('--dest-provider', params.destProvider.trim())
+  if (params.destProviderHint?.trim()) argv.push('--dest-provider-hint', params.destProviderHint.trim())
   if (params.destEndpoint?.trim()) argv.push('--dest-endpoint', params.destEndpoint.trim())
   if (params.destRegion?.trim()) argv.push('--dest-region', params.destRegion.trim())
   if (params.destAccount?.trim()) argv.push('--dest-account', params.destAccount.trim())
