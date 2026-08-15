@@ -32,9 +32,10 @@
   import CommandPreview from '$lib/components/CommandPreview.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
   import { focusOnMount } from '$lib/actions'
-  import { themeState, setTheme, setSkin, setFontSize, setGrayscale, setBrightness } from '$lib/theme.svelte'
+  import { themeState, setTheme, setSkin, setFontSize, setGrayscale, setBrightness, setAccentHue, setAccentCustomHue, setAccentChroma, resetAccent } from '$lib/theme.svelte'
   import type { Theme, FontSize } from '$lib/theme.svelte'
   import { presetsForMode, defaultSkin } from '$lib/themes'
+  import { ACCENT_PRESETS, MIN_ACCENT_CHROMA, MAX_ACCENT_CHROMA, DEFAULT_ACCENT_CHROMA, accentHueLabel, accentSwatchColor, defaultAccentHue, type AccentMode } from '$lib/accent-palette'
   import type { Backend } from '$lib/types'
   import { FEATURE_REGISTRY } from '$lib/features'
   import type { SettingsTab } from '$lib/app-state.svelte'
@@ -180,6 +181,24 @@
   const skinPresets = $derived(presetsForMode(themeState.resolvedMode))
   const defaultSkinName = $derived(defaultSkin(themeState.resolvedMode))
 
+  // The accent-hue override only applies to the plain mountOS Light/Dark
+  // palette - a third-party skin brings its own hand-tuned accent.
+  const accentEligible = $derived(!themeState.skin || themeState.skin === defaultSkinName)
+  const accentMode = $derived(themeState.resolvedMode as AccentMode)
+  const accentActiveHue = $derived(accentMode === 'dark' ? themeState.accentHueDark : themeState.accentHueLight)
+  const accentCustomHue = $derived(accentMode === 'dark' ? themeState.accentCustomHueDark : themeState.accentCustomHueLight)
+  const accentChroma = $derived(accentMode === 'dark' ? themeState.accentChromaDark : themeState.accentChromaLight)
+  const accentDefaultHue = $derived(defaultAccentHue(accentMode))
+  const accentStrandHue = $derived(accentActiveHue ?? accentDefaultHue)
+  const accentSaturationPct = $derived(Math.round(((accentChroma - MIN_ACCENT_CHROMA) / (MAX_ACCENT_CHROMA - MIN_ACCENT_CHROMA)) * 100))
+
+  // Gradient stops for the accent hue strip, swept across the full hue
+  // circle at the current saturation so the strip previews the real
+  // primary color rather than a separate paler stand-in.
+  function accentStripGradient(chroma: number, mode: AccentMode): string {
+    return Array.from({ length: 13 }, (_, i) => accentSwatchColor(i * 30, chroma, mode)).join(', ')
+  }
+
   const cacheSizeAuto = $derived(!appState.settings.defaultCacheSize)
 
   // Update availability. Additive and non-fatal: an unreachable distribution host or an
@@ -291,6 +310,78 @@
         {/each}
       </div>
     </div>
+    {#if accentEligible}
+    <div class="grid gap-1.5">
+      <div class="flex items-center justify-between gap-4">
+        <span class="inline-flex items-center gap-1"><strong>Accent Color</strong><InfoTip text="Recolors buttons, focus rings, and surfaces to a hue of your choice." /></span>
+        {#if accentActiveHue !== null || accentChroma !== DEFAULT_ACCENT_CHROMA}
+          <Button type="button" size="sm" variant="ghost" onclick={resetAccent}>Reset</Button>
+        {/if}
+      </div>
+      <div class="grid gap-1.5">
+        <input
+          type="range" min="0" max="360" step="1"
+          value={accentStrandHue}
+          oninput={(e) => {
+            const hue = Number(e.currentTarget.value)
+            setAccentHue(hue)
+            setAccentCustomHue(hue)
+          }}
+          aria-label="Accent hue"
+          class="accent-strip w-full cursor-pointer"
+          style="background: linear-gradient(to right, {accentStripGradient(accentChroma, accentMode)}); --aw-thumb: {accentSwatchColor(accentStrandHue, accentChroma, accentMode)};"
+        />
+        <span class="mono-label">{accentActiveHue === null ? 'Default' : accentHueLabel(accentStrandHue)}</span>
+      </div>
+      <div class="flex flex-wrap gap-2" role="group" aria-label="Accent Color">
+        <button
+          type="button"
+          class="accent-swatch {accentActiveHue === null ? 'is-active' : ''}"
+          style="--aw-bg: {accentSwatchColor(accentDefaultHue, DEFAULT_ACCENT_CHROMA, accentMode)}; --aw-mark: {accentMode === 'dark' ? 'oklch(0.15 0 0)' : 'oklch(1 0 0)'};"
+          onclick={resetAccent}
+          aria-label="Default"
+          aria-pressed={accentActiveHue === null}
+          title="Default (mountOS)"
+        ><span class="accent-swatch-default-mark" aria-hidden="true"></span></button>
+        {#each ACCENT_PRESETS as preset (preset.name)}
+          {@const active = accentActiveHue === preset.hue}
+          <button
+            type="button"
+            class="accent-swatch {active ? 'is-active' : ''}"
+            style="--aw-bg: {accentSwatchColor(preset.hue, accentChroma, accentMode)};"
+            onclick={() => setAccentHue(preset.hue)}
+            aria-label={preset.name}
+            aria-pressed={active}
+            title={preset.name}
+          ></button>
+        {/each}
+        {#if accentCustomHue !== null && !ACCENT_PRESETS.some((p) => p.hue === accentCustomHue)}
+          <button
+            type="button"
+            class="accent-swatch {accentActiveHue === accentCustomHue ? 'is-active' : ''}"
+            style="--aw-bg: {accentSwatchColor(accentCustomHue, accentChroma, accentMode)};"
+            onclick={() => setAccentHue(accentCustomHue)}
+            aria-label={accentHueLabel(accentCustomHue)}
+            aria-pressed={accentActiveHue === accentCustomHue}
+            title={accentHueLabel(accentCustomHue)}
+          ></button>
+        {/if}
+      </div>
+      <div class="grid gap-1.5">
+        <div class="flex items-center justify-between gap-4">
+          <span class="text-sm text-muted-foreground">Saturation</span>
+          <span class="mono-label">{accentSaturationPct}%</span>
+        </div>
+        <input
+          type="range" min={MIN_ACCENT_CHROMA} max={MAX_ACCENT_CHROMA} step="0.01"
+          value={accentChroma}
+          oninput={(e) => setAccentChroma(Number(e.currentTarget.value))}
+          aria-label="Accent saturation"
+          class="w-full accent-primary"
+        />
+      </div>
+    </div>
+    {/if}
     <div class="grid gap-1.5">
       <span class="inline-flex items-center gap-1"><strong>Font size</strong><InfoTip text="Scales all text in the app." /></span>
       <div class="flex flex-wrap gap-1.5" role="group" aria-label="Font size">
@@ -688,6 +779,111 @@
     font-weight: 500;
     color: var(--sw-fg);
     white-space: nowrap;
+  }
+
+  .accent-swatch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--aw-bg);
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+
+  .accent-swatch:hover {
+    transform: scale(1.12);
+  }
+
+  .accent-swatch:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* A fixed foreground/background double ring, not var(--ring) or
+     var(--primary) - both of those ARE the swatch's own color once an
+     accent is active, which would make the "selected" indicator blend into
+     the swatch it's marking instead of standing out from it. */
+  .accent-swatch.is-active {
+    box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--foreground);
+  }
+
+  /* --aw-mark is the same fixed white/near-black pairing --primary-foreground
+     itself uses for this mode (white text on light's mid-tone default,
+     near-black on dark's bright default) - not a blend-mode trick, which
+     only collapses to true black/white against an actually-neutral
+     backdrop and reads as a stray hue against any saturated swatch fill
+     like this one. */
+  .accent-swatch-default-mark {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--aw-mark);
+  }
+
+  .accent-strip {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 10px;
+    border-radius: var(--radius);
+    outline: none;
+  }
+
+  .accent-strip:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 4px;
+  }
+
+  .accent-strip::-webkit-slider-thumb {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius);
+    background: var(--aw-thumb);
+    border: 2px solid var(--background);
+    box-shadow: 0 0 0 1px var(--border);
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+
+  .accent-strip::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+  }
+
+  .accent-strip::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius);
+    background: var(--aw-thumb);
+    border: 2px solid var(--background);
+    box-shadow: 0 0 0 1px var(--border);
+    cursor: pointer;
+    transition: transform 0.15s;
+  }
+
+  .accent-strip::-moz-range-thumb:hover {
+    transform: scale(1.1);
+  }
+
+  .accent-strip::-moz-range-track {
+    height: 10px;
+    border-radius: var(--radius);
+  }
+
+  @media (pointer: coarse) {
+    .accent-strip::-webkit-slider-thumb {
+      width: 26px;
+      height: 26px;
+    }
+
+    .accent-strip::-moz-range-thumb {
+      width: 26px;
+      height: 26px;
+    }
   }
 
   /* Discoverability hint for .overflow-y-auto's own auto-hide scrollbar

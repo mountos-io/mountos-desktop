@@ -1,6 +1,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { hasDesktopBridge } from './tauri'
 import { applySkin, clearSkin, familyVariant, findPreset } from './themes'
+import { applyAccent, DEFAULT_ACCENT_CHROMA } from './accent-palette'
 
 export type Theme = 'system' | 'light' | 'dark'
 export type FontSize = 'standard' | 'medium' | 'large' | 'extra-large' | 'jumbo'
@@ -11,6 +12,12 @@ export const SKIN_STORAGE_KEY = 'mountos-desktop-skin'
 export const FONT_SIZE_STORAGE_KEY = 'mountos-desktop-font-size'
 export const GRAYSCALE_STORAGE_KEY = 'mountos-desktop-grayscale'
 export const BRIGHTNESS_STORAGE_KEY = 'mountos-desktop-brightness'
+export const ACCENT_HUE_LIGHT_STORAGE_KEY = 'mountos-desktop-accent-hue-light'
+export const ACCENT_HUE_DARK_STORAGE_KEY = 'mountos-desktop-accent-hue-dark'
+export const ACCENT_CUSTOM_HUE_LIGHT_STORAGE_KEY = 'mountos-desktop-accent-custom-hue-light'
+export const ACCENT_CUSTOM_HUE_DARK_STORAGE_KEY = 'mountos-desktop-accent-custom-hue-dark'
+export const ACCENT_CHROMA_LIGHT_STORAGE_KEY = 'mountos-desktop-accent-chroma-light'
+export const ACCENT_CHROMA_DARK_STORAGE_KEY = 'mountos-desktop-accent-chroma-dark'
 
 // Percentage on <html>'s own font-size (not a rem/px constant), so every
 // Tailwind rem-based size in the app scales proportionally with it.
@@ -70,6 +77,28 @@ function saveBrightness(brightness: number) {
   if (typeof localStorage !== 'undefined') localStorage.setItem(BRIGHTNESS_STORAGE_KEY, String(brightness))
 }
 
+function loadHue(key: string): number | null {
+  if (typeof localStorage === 'undefined') return null
+  const stored = Number(localStorage.getItem(key))
+  return Number.isFinite(stored) && stored >= 0 && stored <= 360 ? stored : null
+}
+
+function saveHue(key: string, hue: number | null) {
+  if (typeof localStorage === 'undefined') return
+  if (hue === null) localStorage.removeItem(key)
+  else localStorage.setItem(key, String(hue))
+}
+
+function loadChroma(key: string): number {
+  if (typeof localStorage === 'undefined') return DEFAULT_ACCENT_CHROMA
+  const stored = Number(localStorage.getItem(key))
+  return Number.isFinite(stored) && stored > 0 && stored <= 0.24 ? stored : DEFAULT_ACCENT_CHROMA
+}
+
+function saveChroma(key: string, chroma: number) {
+  if (typeof localStorage !== 'undefined') localStorage.setItem(key, String(chroma))
+}
+
 function applyFontSize(fontSize: FontSize) {
   if (typeof document === 'undefined') return
   document.documentElement.style.fontSize = FONT_SCALE[fontSize]
@@ -124,6 +153,11 @@ function applyTheme(theme: Theme) {
 // instead of showing a light skin's colors under a dark toggle. No family
 // (or no match) falls back to no skin, i.e. this app's own plain palette.
 function applySkinPreset() {
+  applySkinPresetInner()
+  applyAccentOverride()
+}
+
+function applySkinPresetInner() {
   if (typeof document === 'undefined') return
   const mode = state.resolvedMode
   if (!state.skin) {
@@ -158,6 +192,26 @@ function applySkinPreset() {
   applySkin(preset)
 }
 
+// The accent-hue override only makes sense on the mountOS Light/Dark skins -
+// other skins bring their own hand-tuned accent. Every property applyAccent
+// touches is also one applySkin/clearSkin (always run just before this,
+// same call) fully owns and overwrites for the active skin - so when a
+// non-mountOS skin is active this must do nothing at all, not clear
+// anything. Clearing would remove the skin's own just-applied inline
+// values (same property, same element), not just ours. Called from the end
+// of applySkinPreset() itself so every caller (applyTheme, setSkin) picks
+// it up automatically.
+function applyAccentOverride() {
+  if (typeof document === 'undefined') return
+  const mode = state.resolvedMode
+  const isMountOSDefault = mode === 'dark'
+    ? (!state.skin || state.skin === 'mountOS Dark')
+    : (!state.skin || state.skin === 'mountOS Light')
+  if (!isMountOSDefault) return
+  if (mode === 'dark') applyAccent(state.accentHueDark, state.accentChromaDark, 'dark')
+  else applyAccent(state.accentHueLight, state.accentChromaLight, 'light')
+}
+
 // Reactive across every component in THIS webview (module-level $state is a
 // singleton). Each of App.svelte/TrayPopover.svelte is its own separate Tauri
 // window/webview though, so this does NOT sync between them on its own,
@@ -169,6 +223,18 @@ const state = $state({
   fontSize: loadFontSize(),
   grayscale: loadGrayscale(),
   brightness: loadBrightness(),
+  // Tracked separately per mode - a hue picked for light shouldn't silently
+  // reappear on dark. null = theme default.
+  accentHueLight: loadHue(ACCENT_HUE_LIGHT_STORAGE_KEY),
+  accentHueDark: loadHue(ACCENT_HUE_DARK_STORAGE_KEY),
+  // Last hue picked off the continuous strip, kept even after Reset or
+  // after switching to a preset, so the user can return to it in one click.
+  accentCustomHueLight: loadHue(ACCENT_CUSTOM_HUE_LIGHT_STORAGE_KEY),
+  accentCustomHueDark: loadHue(ACCENT_CUSTOM_HUE_DARK_STORAGE_KEY),
+  // Saturation dial for the accent override; independent of hue so Reset
+  // can restore just the color while keeping the user's preferred intensity.
+  accentChromaLight: loadChroma(ACCENT_CHROMA_LIGHT_STORAGE_KEY),
+  accentChromaDark: loadChroma(ACCENT_CHROMA_DARK_STORAGE_KEY),
 })
 
 export const themeState = state
@@ -202,6 +268,44 @@ export function setBrightness(next: number) {
   state.brightness = Math.max(50, Math.min(150, next))
   saveBrightness(state.brightness)
   applyFilters()
+}
+
+export function setAccentHue(next: number | null) {
+  if (state.resolvedMode === 'dark') {
+    state.accentHueDark = next
+    saveHue(ACCENT_HUE_DARK_STORAGE_KEY, next)
+  } else {
+    state.accentHueLight = next
+    saveHue(ACCENT_HUE_LIGHT_STORAGE_KEY, next)
+  }
+  applyAccentOverride()
+}
+
+export function setAccentCustomHue(next: number | null) {
+  if (state.resolvedMode === 'dark') {
+    state.accentCustomHueDark = next
+    saveHue(ACCENT_CUSTOM_HUE_DARK_STORAGE_KEY, next)
+  } else {
+    state.accentCustomHueLight = next
+    saveHue(ACCENT_CUSTOM_HUE_LIGHT_STORAGE_KEY, next)
+  }
+}
+
+export function setAccentChroma(next: number) {
+  const clamped = Math.max(0.02, Math.min(0.24, next))
+  if (state.resolvedMode === 'dark') {
+    state.accentChromaDark = clamped
+    saveChroma(ACCENT_CHROMA_DARK_STORAGE_KEY, clamped)
+  } else {
+    state.accentChromaLight = clamped
+    saveChroma(ACCENT_CHROMA_LIGHT_STORAGE_KEY, clamped)
+  }
+  applyAccentOverride()
+}
+
+export function resetAccent() {
+  setAccentHue(null)
+  setAccentChroma(DEFAULT_ACCENT_CHROMA)
 }
 
 // Applies the current theme immediately and wires up the two things that can
@@ -238,6 +342,20 @@ export function initThemeSync(): () => void {
         state.grayscale = loadGrayscale()
         state.brightness = loadBrightness()
         applyFilters()
+        return
+      }
+      if (
+        event.key === ACCENT_HUE_LIGHT_STORAGE_KEY || event.key === ACCENT_HUE_DARK_STORAGE_KEY ||
+        event.key === ACCENT_CHROMA_LIGHT_STORAGE_KEY || event.key === ACCENT_CHROMA_DARK_STORAGE_KEY ||
+        event.key === ACCENT_CUSTOM_HUE_LIGHT_STORAGE_KEY || event.key === ACCENT_CUSTOM_HUE_DARK_STORAGE_KEY
+      ) {
+        state.accentHueLight = loadHue(ACCENT_HUE_LIGHT_STORAGE_KEY)
+        state.accentHueDark = loadHue(ACCENT_HUE_DARK_STORAGE_KEY)
+        state.accentCustomHueLight = loadHue(ACCENT_CUSTOM_HUE_LIGHT_STORAGE_KEY)
+        state.accentCustomHueDark = loadHue(ACCENT_CUSTOM_HUE_DARK_STORAGE_KEY)
+        state.accentChromaLight = loadChroma(ACCENT_CHROMA_LIGHT_STORAGE_KEY)
+        state.accentChromaDark = loadChroma(ACCENT_CHROMA_DARK_STORAGE_KEY)
+        applyAccentOverride()
         return
       }
       if (event.key !== STORAGE_KEY && event.key !== SKIN_STORAGE_KEY) return
