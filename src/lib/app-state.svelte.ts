@@ -37,6 +37,8 @@ import {
   resolveProviderHint,
   resolveWireEndpoint,
   resolveWireProvider,
+  asOfRecencyError,
+  relativeAsOfRecencyError,
   validateExternalSourceFields,
   validateExtraArgs,
   validateGlobPattern,
@@ -817,11 +819,16 @@ export const appState = state
 // relative-offset support and no T-separated ISO variant, so the T must be
 // swapped for a space before use.
 const forkCreateAsOf = $derived(state.forkCreateAsOfLocal ? state.forkCreateAsOfLocal.replace('T', ' ') : '')
+// Validated against the raw datetime-local value (still has its 'T'), not
+// the space-swapped forkCreateAsOf: `new Date(...)` only recognizes the
+// offset-less ISO form as local wall-clock, matching state.forkCreateAsOfLocal.
+const forkCreateAsOfError = $derived(asOfRecencyError(state.forkCreateAsOfLocal))
 
 // download's --as-of accepts the same flexible format as fork create's
 // --as-of (see buildDownloadStartArgv's own comment), same datetime-local
 // T-to-space swap as forkCreateAsOf, for the same reason.
 const downloadAsOf = $derived(state.downloadAsOfLocal ? state.downloadAsOfLocal.replace('T', ' ') : '')
+const downloadAsOfError = $derived(asOfRecencyError(state.downloadAsOfLocal))
 
 // snapshot --timestamp accepts both the datetime-local T-separated ISO form
 // and relative offsets ("2h", "3d") directly (ParseSnapshotTime), unlike
@@ -832,6 +839,11 @@ const snapshotTimestampValue = $derived(
     : state.snapshotRelativeQty.trim()
       ? `${state.snapshotRelativeQty.trim()}${state.snapshotRelativeUnit}`
       : '',
+)
+const snapshotAsOfError = $derived(
+  state.snapshotTimeMode === 'absolute'
+    ? asOfRecencyError(state.snapshotAbsoluteValue)
+    : relativeAsOfRecencyError(state.snapshotRelativeQty, state.snapshotRelativeUnit),
 )
 
 const deletedFromValue = $derived(
@@ -1399,10 +1411,12 @@ const volumeNameError = $derived.by(() => {
 // on every access is what keeps consumers in another module reactive.
 export const computed = {
   get forkCreateAsOf() { return forkCreateAsOf },
+  get forkCreateAsOfError() { return forkCreateAsOfError },
   get forkChildren() { return forkChildren },
   get currentFork() { return currentFork },
   get forkBreadcrumbTrail() { return forkBreadcrumbTrail },
   get snapshotTimestampValue() { return snapshotTimestampValue },
+  get snapshotAsOfError() { return snapshotAsOfError },
   get deletedFromValue() { return deletedFromValue },
   get externalDeletedFromValue() { return externalDeletedFromValue },
   get externalDeletedNeedsSecret() { return externalDeletedNeedsSecret },
@@ -1426,6 +1440,7 @@ export const computed = {
   get uploadVisibleJobsTotal() { return uploadVisibleJobsTotal },
   get uploadVisibleJobsTruncated() { return uploadVisibleJobsTruncated },
   get downloadAsOf() { return downloadAsOf },
+  get downloadAsOfError() { return downloadAsOfError },
   get downloadFilteredProfiles() { return downloadFilteredProfiles },
   get downloadSelectedProfile() { return downloadSelectedProfile },
   get downloadEligibleInstances() { return downloadEligibleInstances },
@@ -1788,6 +1803,7 @@ export async function confirmForkCreate() {
   if (!profile) return
   const name = state.forkCreateName.trim()
   if (!name) return
+  if (forkCreateAsOfError) { state.forkCreateError = forkCreateAsOfError; return }
   state.forkBusy = true
   state.forkCreateError = ''
   try {
@@ -2995,6 +3011,10 @@ export async function runDownloadStart() {
     state.downloadStartError = globError
     return
   }
+  if (state.downloadSourceKind === 'profile' && downloadAsOfError) {
+    state.downloadStartError = downloadAsOfError
+    return
+  }
   state.downloadsBusy = true
   state.downloadStartError = ''
   state.downloadDryRunReport = ''
@@ -3089,6 +3109,7 @@ async function browseDownloadSourceFromInstance() {
 async function browseDownloadSourceFromProfile() {
   const profileId = state.downloadSourceProfileId
   if (!profileId) return
+  if (downloadAsOfError) { state.downloadBrowseError = downloadAsOfError; return }
   state.downloadsBusy = true
   state.downloadBrowseError = ''
   try {
@@ -3657,6 +3678,7 @@ export async function browseSnapshotDestination() {
 export async function confirmSnapshotView() {
   const profile = computed.selectedProfile
   if (!profile) return
+  if (snapshotAsOfError) { state.snapshotError = snapshotAsOfError; return }
   state.busy = true
   state.snapshotError = ''
   try {

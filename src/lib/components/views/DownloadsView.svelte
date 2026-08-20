@@ -326,6 +326,9 @@
               <InfoTip text="Reads from a snapshot instead of the fork's live state (`--as-of`). Leave blank to read the fork's live content." />
             </span>
             <Input id="download-as-of" type="datetime-local" bind:value={appState.downloadAsOfLocal} />
+            {#if computed.downloadAsOfError}
+              <small class="text-destructive text-sm">{computed.downloadAsOfError}</small>
+            {/if}
           </div>
         </div>
       {/if}

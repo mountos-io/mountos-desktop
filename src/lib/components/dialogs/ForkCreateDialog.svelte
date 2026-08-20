@@ -38,6 +38,9 @@
               <InfoTip text="Leave blank to branch from the parent's current state." />
             </span>
             <Input id="fork-create-as-of" type="datetime-local" bind:value={appState.forkCreateAsOfLocal} />
+            {#if computed.forkCreateAsOfError}
+              <small class="text-destructive text-sm">{computed.forkCreateAsOfError}</small>
+            {/if}
           </div>
           {#if appState.forkCreatePromptFor.secretRef === 'prompt' || !appState.vaultStatus[appState.forkCreatePromptFor.id]}
             <div class="grid gap-1.5">
@@ -58,7 +61,7 @@
         </div>
         <Dialog.Footer>
           <Button type="button" variant="outline" onclick={cancelForkCreate}>Cancel</Button>
-          <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.forkBusy || !appState.forkCreateName.trim()}>Create</Button>
+          <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.forkBusy || !appState.forkCreateName.trim() || !!computed.forkCreateAsOfError}>Create</Button>
         </Dialog.Footer>
       </form>
     {/if}
