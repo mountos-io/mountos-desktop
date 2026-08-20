@@ -66,6 +66,16 @@ build: node_modules ## Build the production web assets
 desktop-build: node_modules ## Build the packaged desktop application
 	@$(RUST) npm run tauri:build
 
+# Runs the real `npm run build` frontend step (same minified dist/ a release
+# ships), but compiles the Tauri shell in the debug Cargo profile so the
+# WebKit Web Inspector stays available (Cmd+Option+I / right-click > Inspect
+# Element). Use this to reproduce a bug that only shows up against the
+# production frontend bundle, e.g. a class dropped by CSS purging/minification
+# that unminified `desktop-dev` assets never exercise.
+desktop-build-debug: node_modules ## Build a debug binary against production (minified) frontend assets, for reproducing prod-only bugs with devtools
+	@$(RUST) npm run tauri:build -- --debug --no-bundle
+	@echo "Binary: src-tauri/target/debug/mountos-desktop"
+
 cli-smoke: ## Verify the configured mountos CLI public read commands
 	$(MOUNTOS) --version
 	$(MOUNTOS) check --json >/dev/null

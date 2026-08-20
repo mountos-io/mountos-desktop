@@ -11,6 +11,25 @@
   }: Props = $props();
 
   let visible = $state(false);
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Revealing a secret is a deliberate, momentary check, not a standing
+  // state: auto-hide it so it doesn't sit in plaintext on screen after the
+  // user looks away. A manual click while visible hides it immediately and
+  // cancels the pending auto-hide.
+  const REVEAL_DURATION_MS = 4000;
+
+  function toggleVisible() {
+    clearTimeout(hideTimer);
+    if (visible) {
+      visible = false;
+      return;
+    }
+    visible = true;
+    hideTimer = setTimeout(() => (visible = false), REVEAL_DURATION_MS);
+  }
+
+  $effect(() => () => clearTimeout(hideTimer));
 </script>
 
 <div class="relative">
@@ -25,7 +44,7 @@
   <button type="button"
     class="text-muted-foreground hover:text-foreground absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 cursor-pointer transition-colors"
     aria-label={visible ? 'Hide password' : 'Show password'}
-    onclick={() => visible = !visible}>
+    onclick={toggleVisible}>
     {#if visible}
       <EyeOff class="size-4" />
     {:else}

@@ -79,7 +79,13 @@ function saveBrightness(brightness: number) {
 
 function loadHue(key: string): number | null {
   if (typeof localStorage === 'undefined') return null
-  const stored = Number(localStorage.getItem(key))
+  const raw = localStorage.getItem(key)
+  // localStorage.getItem returns null for an absent key, meaning "no
+  // override, use the theme's own default" - Number(null) coerces to 0,
+  // a real, in-range hue (Rose), so that absence must be checked before
+  // the numeric parse or it silently masquerades as an explicit pick.
+  if (raw === null) return null
+  const stored = Number(raw)
   return Number.isFinite(stored) && stored >= 0 && stored <= 360 ? stored : null
 }
 

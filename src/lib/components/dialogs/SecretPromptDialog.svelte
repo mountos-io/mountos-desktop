@@ -2,14 +2,14 @@
   import { KeyRound } from '@lucide/svelte'
   import * as Dialog from '$lib/components/ui/dialog'
   import { Button } from '$lib/components/ui/button'
-  import { Input } from '$lib/components/ui/input'
+  import { SecretInput } from '$lib/components/ui/input'
   import { Checkbox } from '$lib/components/ui/checkbox'
   import CliErrorOutput from '$lib/components/CliErrorOutput.svelte'
   import { appState, cancelSecret, computed, doMount } from '$lib/app-state.svelte'
 </script>
 
 <Dialog.Root bind:open={() => appState.secretPromptFor !== null, (open) => { if (!open) cancelSecret() }}>
-  <Dialog.Content class="sm:max-w-md" aria-describedby={undefined}>
+  <Dialog.Content class="sm:max-w-xl" aria-describedby={undefined}>
     {#if appState.secretPromptFor}
       <form onsubmit={(event) => {
         event.preventDefault()
@@ -26,8 +26,7 @@
         <div class="grid gap-1.5 py-4">
           <span class="sr-only" id="secret-value-label">Secret access key</span>
           <!-- svelte-ignore a11y_autofocus -->
-          <Input
-            type="password"
+          <SecretInput
             bind:value={appState.secretValue}
             autocomplete="current-password"
             autofocus

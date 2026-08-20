@@ -19,7 +19,7 @@
       "packages": [
         {
           "name": "@internationalized/date",
-          "version": "3.12.2",
+          "version": "3.12.3",
           "repository": "https://github.com/adobe/react-spectrum.git#main"
         }
       ]
@@ -96,7 +96,7 @@
       "packages": [
         {
           "name": "@sveltejs/acorn-typescript",
-          "version": "1.0.10",
+          "version": "1.0.13",
           "repository": "https://github.com/sveltejs/acorn-typescript"
         }
       ]
@@ -108,7 +108,7 @@
       "packages": [
         {
           "name": "acorn",
-          "version": "8.17.0",
+          "version": "8.18.0",
           "repository": "https://github.com/acornjs/acorn"
         }
       ]
@@ -132,7 +132,7 @@
       "packages": [
         {
           "name": "devalue",
-          "version": "5.8.1",
+          "version": "5.9.1",
           "repository": "https://github.com/sveltejs/devalue"
         }
       ]
@@ -156,7 +156,7 @@
       "packages": [
         {
           "name": "esrap",
-          "version": "2.2.12",
+          "version": "2.3.5",
           "repository": "https://github.com/sveltejs/esrap"
         }
       ]
@@ -204,7 +204,7 @@
       "packages": [
         {
           "name": "svelte",
-          "version": "5.56.4",
+          "version": "5.56.10",
           "repository": "https://github.com/sveltejs/svelte"
         }
       ]
@@ -313,7 +313,7 @@
       "packages": [
         {
           "name": "@tauri-apps/plugin-dialog",
-          "version": "2.7.1",
+          "version": "2.7.2",
           "repository": "https://github.com/tauri-apps/plugins-workspace"
         }
       ]

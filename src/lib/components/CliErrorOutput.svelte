@@ -37,5 +37,5 @@
       <Copy size={16} aria-hidden="true" />
     </Button>
   </div>
-  <pre class="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{text}</pre>
+  <pre class="m-0 max-h-[35vh] overflow-auto whitespace-pre-wrap break-words font-mono text-xs">{text}</pre>
 </div>
