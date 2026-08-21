@@ -806,6 +806,26 @@ fn cli_path_override() -> Option<PathBuf> {
         .clone()
 }
 
+// Where the official installers actually place the CLI by default -
+// scripts/distribution/mountos.sh.tpl and build-macos-pkg.sh in
+// mountos-servers (/usr/local/bin on macOS), mountos.ps1.tpl (%LOCALAPPDATA%
+// \mountOS\bin on Windows). A same-machine fallback only, for when PATH
+// doesn't carry it: a LaunchServices/Explorer-launched .app gets the OS's
+// minimal default environment, not the shell profile PATH a terminal-
+// launched dev build inherits, so an otherwise perfectly standard install
+// can go unfound. Never overrides an explicit user pin.
+fn platform_default_cli_path() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+        Some(PathBuf::from(local_app_data).join("mountOS").join("bin").join("mountos.exe"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Some(PathBuf::from("/usr/local/bin/mountos"))
+    }
+}
+
 fn mountos_path() -> Result<PathBuf, DesktopError> {
     if let Some(pinned) = cli_path_override() {
         return if pinned.is_file() {
@@ -3229,11 +3249,21 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, DesktopError> {
 
 #[tauri::command]
 fn get_settings(app: AppHandle) -> Result<DesktopSettings, DesktopError> {
-    let settings = match fs::read(settings_path(&app)?) {
+    let mut settings = match fs::read(settings_path(&app)?) {
         Ok(bytes) => serde_json::from_slice(&bytes)?,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => DesktopSettings::default(),
         Err(err) => return Err(err.into()),
     };
+    // No explicit pin and PATH can't find it: if the official installer's own
+    // default location has the binary, adopt it exactly like a manual pin -
+    // persisted to settings.json, not just held for this process - so
+    // Settings -> About reflects it and every later launch skips this check.
+    if settings.cli_path_override.is_none() && which::which("mountos").is_err() {
+        if let Some(default_path) = platform_default_cli_path().filter(|p| p.is_file()) {
+            settings.cli_path_override = Some(default_path.display().to_string());
+            fs::write(settings_path(&app)?, serde_json::to_vec_pretty(&settings)?)?;
+        }
+    }
     set_cli_path_override(settings.cli_path_override.as_ref().map(PathBuf::from));
     Ok(settings)
 }
