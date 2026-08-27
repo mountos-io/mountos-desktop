@@ -100,7 +100,16 @@ export function isValidFolderName(name: string): boolean {
 // recency clamp (out of scope here, applied server-side too): fails fast
 // before the CLI round-trips and rejects it. Not itself a security boundary,
 // same caveat as this file's other UI-only mirrors.
-export const SNAPSHOT_FLOOR_MS = 15 * 60_000
+//
+// A volume's content-edit versioning window is configurable up to 1h
+// (mountos-servers' db.validContentWindowSeconds), so this must be at least
+// that wide - a narrower guess here would let this pre-check pass a request
+// the server then clamps further, a confusing mismatch this mirror exists
+// to avoid, not cause. This file has no per-volume context at the point
+// these validators run (no round-trip yet), so unlike mountos-servers'
+// mfuse client (cmd/mfuse/asof_floor.go), which learns and narrows to the
+// real value once connected, this stays pinned to the worst-case ceiling.
+export const SNAPSHOT_FLOOR_MS = 60 * 60_000
 
 // Validates an absolute datetime-local value ("2025-12-05T14:30", no
 // timezone offset). Parsed as local wall-clock per the Date Time String
