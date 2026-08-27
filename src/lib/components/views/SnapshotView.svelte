@@ -67,9 +67,6 @@
           <Select options={relativeUnitOptions} bind:value={appState.snapshotRelativeUnit} class="shrink-0 w-40" />
         </div>
       {/if}
-      {#if computed.snapshotAsOfError}
-        <small class="text-destructive text-sm">{computed.snapshotAsOfError}</small>
-      {/if}
     </div>
     {#if profile.secretRef === 'prompt' || !appState.vaultStatus[profile.id]}
       <div class="grid gap-1.5">
@@ -85,7 +82,7 @@
     </CommandPreview>
     <div class="flex justify-end gap-2">
       <Button type="button" variant="outline" onclick={exitProfileSubView}>Cancel</Button>
-      <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.busy || !computed.snapshotTimestampValue || !!computed.snapshotAsOfError}>Open</Button>
+      <Button type="submit" variant="primary" class="cyberpunk-skewed-sm" disabled={appState.busy || !computed.snapshotTimestampValue}>Open</Button>
     </div>
   </form>
 </section>

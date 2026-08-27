@@ -95,49 +95,6 @@ export function isValidFolderName(name: string): boolean {
   return !/[/\\\x00-\x1f]/.test(name)
 }
 
-// A snapshot/version-view timestamp must target a moment at least this far
-// in the past. UI-only, immediate-feedback mirror of mountos-servers' own
-// recency clamp (out of scope here, applied server-side too): fails fast
-// before the CLI round-trips and rejects it. Not itself a security boundary,
-// same caveat as this file's other UI-only mirrors.
-//
-// A volume's content-edit versioning window is configurable up to 1h
-// (mountos-servers' db.validContentWindowSeconds), so this must be at least
-// that wide - a narrower guess here would let this pre-check pass a request
-// the server then clamps further, a confusing mismatch this mirror exists
-// to avoid, not cause. This file has no per-volume context at the point
-// these validators run (no round-trip yet), so unlike mountos-servers'
-// mfuse client (cmd/mfuse/asof_floor.go), which learns and narrows to the
-// real value once connected, this stays pinned to the worst-case ceiling.
-export const SNAPSHOT_FLOOR_MS = 60 * 60_000
-
-// Validates an absolute datetime-local value ("2025-12-05T14:30", no
-// timezone offset). Parsed as local wall-clock per the Date Time String
-// Format, matching how the CLI's own ParseSnapshotTime/parseForkAsOf treat
-// an offset-less timestamp. Empty is valid; callers that require a value
-// check that separately.
-export function asOfRecencyError(localValue: string): string {
-  const trimmed = localValue.trim()
-  if (!trimmed) return ''
-  const ms = new Date(trimmed).getTime()
-  if (!Number.isFinite(ms)) return ''
-  const floorMinutes = SNAPSHOT_FLOOR_MS / 60_000
-  return Date.now() - ms < SNAPSHOT_FLOOR_MS ? `Must be at least ${floorMinutes} minutes in the past` : ''
-}
-
-const RELATIVE_ASOF_UNIT_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 }
-
-// Validates a relative "N ago" offset (snapshot view's relative-mode
-// qty+unit, always in the past, see SnapshotView.svelte's
-// relativeUnitOptions labels).
-export function relativeAsOfRecencyError(qty: string, unit: string): string {
-  const n = Number.parseFloat(qty)
-  if (!Number.isFinite(n) || n <= 0) return ''
-  const unitMs = RELATIVE_ASOF_UNIT_MS[unit] ?? RELATIVE_ASOF_UNIT_MS.h
-  const floorMinutes = SNAPSHOT_FLOOR_MS / 60_000
-  return n * unitMs < SNAPSHOT_FLOOR_MS ? `Must be at least ${floorMinutes} minutes in the past` : ''
-}
-
 // UI-only mirror of src-tauri/src/lib.rs's validate_mount_path_for_backend,
 // with the same hand-synced-duplicate caveat as the flag allowlists above; the Rust
 // side independently re-validates.

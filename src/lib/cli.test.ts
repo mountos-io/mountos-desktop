@@ -456,7 +456,9 @@ describe('cli helpers', () => {
     expect(buildExternalSourceUri('s3', 'my-bucket', 'photos/2026')).toBe('s3://my-bucket/photos/2026')
     expect(buildExternalSourceUri('s3compatible', 'my-bucket', '')).toBe('s3://my-bucket')
     expect(buildExternalSourceUri('azure', 'my-container', 'a/b')).toBe('az://my-container/a/b')
-    expect(buildExternalSourceUri('gcs', 'my-bucket', '')).toBe('gs://my-bucket')
+    // gcs resolves to s3compatible (resolveWireProvider) and so gets s3://,
+    // never gs:// -- see buildExternalSourceUri's own doc comment.
+    expect(buildExternalSourceUri('gcs', 'my-bucket', '')).toBe('s3://my-bucket')
   })
 
   it('trims slashes and returns null for a blank bucket when building an external source URI', () => {
@@ -473,9 +475,10 @@ describe('cli helpers', () => {
     expect(validateExternalSourceFields('azure', 'container', '', '', '')).toMatch(/account/i)
     expect(validateExternalSourceFields('azure', 'container', '', 'myaccount', '')).toBeNull()
     expect(validateExternalSourceFields('s3', 'bucket', '', '', '')).toMatch(/access key/i)
-    // gcs needs neither an access-key-id nor an account -- its whole
-    // credential is the service-account secret, validated by the caller.
-    expect(validateExternalSourceFields('gcs', 'bucket', '', '', '')).toBeNull()
+    // gcs authenticates via GCS's S3-compatible HMAC access key/secret, not
+    // a service-account JSON key, so the access key id is required too.
+    expect(validateExternalSourceFields('gcs', 'bucket', '', '', '')).toMatch(/access key/i)
+    expect(validateExternalSourceFields('gcs', 'bucket', '', '', 'GOOG...')).toBeNull()
   })
 
   it('rejects a blank provider instead of silently defaulting to s3', () => {
