@@ -5,6 +5,9 @@ MOUNTOS ?= ../mountos-servers/bin/mountos
 # Packaging & signing. macOS releases are universal binaries; Windows has no
 # universal format, so both architectures are built and signed separately.
 APP_NAME := mountOS Desktop
+# The version tauri stamps into bundle filenames, read from the file the bundler
+# itself reads so a sign/bundle version mismatch is impossible.
+APP_VERSION := $(shell sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -1)
 MAC_TARGET := universal-apple-darwin
 MAC_BUNDLE_DIR := src-tauri/target/$(MAC_TARGET)/release/bundle
 MAC_APP := $(MAC_BUNDLE_DIR)/macos/$(APP_NAME).app
@@ -118,20 +121,24 @@ notarize-macos: ## Notarize + staple the .dmg (env: APPLE_ID APPLE_PASSWORD APPL
 # MSYS_NO_PATHCONV=1: Git Bash rewrites arguments that look like absolute paths,
 # turning /fd into C:/Program Files/Git/fd. signtool then reports "No file digest
 # algorithm specified" even though the flag is right there in the command.
-sign-windows: ## signtool-sign every built NSIS installer, both arches (env: WINDOWS_CERT_THUMBPRINT TIMESTAMP_URL)
+sign-windows: ## signtool-sign the built NSIS installers for one version, both arches (env: WINDOWS_CERT_THUMBPRINT TIMESTAMP_URL, opt: VERSION)
 	@test -n "$(WINDOWS_CERT_THUMBPRINT)" || { echo "error: WINDOWS_CERT_THUMBPRINT (SHA1 thumbprint of the store-imported cert) is required"; exit 1; }
 	@test -n "$(TIMESTAMP_URL)" || { echo "error: TIMESTAMP_URL is required (your CA's RFC 3161 server, e.g. http://time.certum.pl or http://timestamp.digicert.com)"; exit 1; }
 	@test -n "$(SIGNTOOL)" || { echo "error: signtool.exe not found. Install the Windows SDK, or pass SIGNTOOL=/path/to/signtool.exe"; exit 1; }
-	@found=0; \
+	@ver='$(if $(VERSION),$(VERSION),$(APP_VERSION))'; \
+	test -n "$$ver" || { echo "error: no version to sign: could not read one from src-tauri/tauri.conf.json, pass VERSION=X.Y.Z"; exit 1; }; \
+	case "$$ver" in all) pat='*-setup.exe';; *) pat="*_$${ver}_*-setup.exe";; esac; \
+	set --; \
 	for target in $(WIN_TARGETS); do \
-		for exe in src-tauri/target/$$target/release/bundle/nsis/*.exe; do \
+		for exe in src-tauri/target/$$target/release/bundle/nsis/$$pat; do \
 			[ -e "$$exe" ] || continue; \
-			found=1; \
-			MSYS_NO_PATHCONV=1 "$(SIGNTOOL)" sign /fd SHA256 /td SHA256 /tr "$(TIMESTAMP_URL)" /sha1 "$(WINDOWS_CERT_THUMBPRINT)" "$$exe" || exit 1; \
-			MSYS_NO_PATHCONV=1 "$(SIGNTOOL)" verify /pa "$$exe" || exit 1; \
+			set -- "$$@" "$$exe"; \
 		done; \
 	done; \
-	test "$$found" = "1" || { echo "error: no installer under src-tauri/target/<arch>/release/bundle/nsis; run make bundle first"; exit 1; }
+	test "$$#" -gt 0 || { echo "error: no installer matching $$pat under src-tauri/target/<arch>/release/bundle/nsis; run make bundle first"; exit 1; }; \
+	echo "Signing $$# installer(s) for version $$ver"; \
+	MSYS_NO_PATHCONV=1 "$(SIGNTOOL)" sign /fd SHA256 /td SHA256 /tr "$(TIMESTAMP_URL)" /sha1 "$(WINDOWS_CERT_THUMBPRINT)" "$$@" || exit 1; \
+	MSYS_NO_PATHCONV=1 "$(SIGNTOOL)" verify /pa "$$@" || exit 1
 
 release-macos: bundle notarize-macos ## Bundle (signed via env) then notarize for macOS
 release-windows: bundle sign-windows ## Bundle then signtool-sign for Windows
