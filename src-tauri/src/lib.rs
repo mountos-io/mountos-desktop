@@ -120,7 +120,7 @@ struct MountProfile {
 }
 
 // TransferSourceProfile is a saved `upload`/`import` external-object-store
-// source (provider/bucket/prefix/credentials) -- deliberately NOT a
+// source (provider/bucket/prefix/credentials), deliberately not a
 // MountProfile: it names a bucket to pull FROM, never a mountOS volume to
 // mount, has no fork/backend/mount_path/volume_kind concept at all, and its
 // secret is a source credential (S3/Azure key, GCS service-account JSON),
@@ -424,7 +424,7 @@ struct UploadStartParams {
     follow_symlinks: bool,
     create_source_directory: bool,
     // source is a "scheme://bucket/prefix" URI (s3/az/azblob/gs).
-    // The secret pairing with these is NEVER a field here -- see
+    // The secret pairing with these is never a field here. See
     // start_upload's own source_secret parameter and
     // write_temp_secret_file, which never round-trips through this
     // Deserialize-derived, frontend-supplied struct.
@@ -503,7 +503,7 @@ struct DownloadStartParams {
     create_source_directory: bool,
     // dest is a "scheme://bucket/prefix" URI (s3/az/azblob/gs), the export
     // mirror of UploadStartParams' source_* fields. The secret pairing with
-    // these is NEVER a field here -- see start_download's own dest_secret
+    // these is never a field here. See start_download's own dest_secret
     // parameter and write_temp_secret_file, which never round-trips through
     // this Deserialize-derived, frontend-supplied struct.
     dest_provider: Option<String>,
@@ -750,7 +750,7 @@ fn read_profile_secret(
 
 // transfer_source_keyring_entry uses the SAME keyring service as
 // keyring_entry but a distinct key namespace ("transfer-source/" vs
-// "profile/") -- a TransferSourceProfile and a MountProfile can legally
+// "profile/"). A TransferSourceProfile and a MountProfile can legally
 // share the same id string (they're validated/generated independently) and
 // must never collide on the same vault entry.
 fn transfer_source_keyring_entry(id: &str) -> Result<keyring::Entry, DesktopError> {
@@ -888,7 +888,7 @@ fn find_profile(app: &AppHandle, profile_id: &str) -> Result<MountProfile, Deskt
 }
 
 // transfer-source-profiles/ is a sibling of profiles/ under the same
-// app_config_dir, not a subdirectory of it -- the two profile kinds are
+// app_config_dir, not a subdirectory of it. The two profile kinds are
 // peers, neither owns the other, matching the struct-level separation
 // (TransferSourceProfile is not a MountProfile variant).
 fn transfer_source_profile_dir(app: &AppHandle) -> Result<PathBuf, DesktopError> {
@@ -1879,7 +1879,7 @@ fn build_upload_start_argv(
         argv.push("--create-source-directory".to_string());
     }
     // Non-secret identifiers for a URI SOURCE (s3://, az://, azblob://,
-    // gs://) -- the secret itself is never a field on params (see
+    // gs://). The secret itself is never a field on params (see
     // UploadStartParams's own doc comment); source_secret_file is the ONE
     // place a resolved source secret reaches this builder, and only as a
     // file path already written by write_temp_secret_file, matching the
@@ -1966,8 +1966,8 @@ fn build_upload_cancel_argv(job_id: &str) -> Vec<String> {
 
 // Mirrors cmd_upload_subcommands.go's `upload remove <job-id>`: deletes a
 // non-running job's local record whatever its state (resumable, halted,
-// completed, finished). Unlike prune, remove accepts a still-resumable job
-// -- the only way to clear one whose process was killed before it could
+// completed, finished). Unlike prune, remove accepts a still-resumable job,
+// the only way to clear one whose process was killed before it could
 // stamp a terminal field, since cancel refuses it (no live process) and
 // prune skips it (no terminal stamp).
 fn build_upload_remove_argv(job_id: &str) -> Vec<String> {
@@ -2083,7 +2083,7 @@ fn build_download_start_argv(
         argv.push("--create-source-directory".to_string());
     }
     // Non-secret identifiers for a URI DEST_PATH (s3://, az://, azblob://,
-    // gs://) -- the secret itself is never a field on params (see
+    // gs://). The secret itself is never a field on params (see
     // DownloadStartParams' own doc comment); dest_secret_file is the ONE
     // place a resolved destination secret reaches this builder.
     for (flag, value) in [
@@ -2153,8 +2153,8 @@ fn build_download_cancel_argv(job_id: &str) -> Vec<String> {
 
 // Mirrors cmd_download_subcommands.go's `download remove <job-id>`: deletes
 // a non-running job's local record whatever its state (resumable, halted,
-// completed, finished). Unlike prune, remove accepts a still-resumable job
-// -- the only way to clear one whose process was killed before it could
+// completed, finished). Unlike prune, remove accepts a still-resumable job,
+// the only way to clear one whose process was killed before it could
 // stamp a terminal field, since cancel refuses it (no live process) and
 // prune skips it (no terminal stamp).
 fn build_download_remove_argv(job_id: &str) -> Vec<String> {
@@ -2272,7 +2272,7 @@ fn build_sink_cancel_argv(job_id: &str) -> Vec<String> {
 
 // Mirrors cmd_sink.go's `sink remove <job-id>`: deletes a non-running job's
 // local record whatever its state (resumable, halted, completed, finished).
-// Unlike prune, remove accepts a still-resumable job -- the only way to
+// Unlike prune, remove accepts a still-resumable job, the only way to
 // clear one whose process was killed before it could stamp a terminal
 // field, since cancel refuses it (no live process) and prune skips it (no
 // terminal stamp).
@@ -3571,7 +3571,7 @@ fn get_profile_secret_status(profile_id: String) -> Result<SecretStatus, Desktop
 }
 
 // --- Transfer source profiles (saved upload/import external-object-store
-// sources) -- see TransferSourceProfile's own doc comment for why this is a
+// sources). See TransferSourceProfile's own doc comment for why this is a
 // deliberately separate CRUD set from the MountProfile one above, not a
 // variant of it, despite mirroring its shape command-for-command.
 
@@ -4092,10 +4092,9 @@ fn resolve_satellite_secret(
 // --source-temporary-secret-file: mountos-servers' own resolveSecret reads
 // it once and unlinks it immediately on a successful read (main.go), so
 // this function's cleanup responsibility ends the moment the child process
-// is spawned -- no Rust-side delete or timer, deliberately: a GUI-side
+// is spawned. There is no Rust-side delete or timer, deliberately: a GUI-side
 // timer can't cover a crash/kill window between spawn and read the way the
-// CLI's own unlink-after-read can (see the plan's Rev 6/7 observability
-// note). Every caller must still treat the returned path as sensitive until
+// CLI's own unlink-after-read can. Every caller must still treat the returned path as sensitive until
 // the child either reads it (and it vanishes) or fails to start (in which
 // case the OS temp-dir cleanup / next app-cache clear is the only backstop,
 // same residual-file risk as any file-based secret handoff).
@@ -4362,13 +4361,13 @@ fn start_upload_blocking(
     params: UploadStartParams,
     secret: Option<String>,
     source_secret: Option<String>,
-    // Some when a saved TransferSourceProfile was selected in the form --
-    // resolves that profile's secret from the vault (or accepts
+    // Some when a saved TransferSourceProfile was selected in the form.
+    // Resolves that profile's secret from the vault (or accepts
     // source_secret as an override for a "prompt" profile the user just
     // re-typed), the same "profile owns the secret unless one is explicitly
     // provided" rule resolve_satellite_secret already applies to the
     // mountOS destination profile. None means source_secret (if any) is
-    // used as-is -- an ad hoc, unsaved source.
+    // used as-is, for an ad hoc, unsaved source.
     transfer_source_profile_id: Option<String>,
 ) -> Result<String, DesktopError> {
     let profile = resolve_upload_source_profile(&app, profile_id.as_deref(), instance.as_ref())?;
@@ -4393,9 +4392,8 @@ fn start_upload_blocking(
 
     // Every fallible step that doesn't itself depend on the temp secret
     // file is resolved BEFORE that file is written, not after: none of
-    // resolve_satellite_secret/runtime_dir/mountos_path need it, and
-    // ordering them first means a failure here can never orphan the file
-    // the way it used to when they ran between the write and this
+    // resolve_satellite_secret/runtime_dir/mountos_path need it, so a
+    // failure here can never orphan the file between the write and this
     // function's two cleanup_temp_secret_file_on_error call sites.
     //
     // A single profile can legitimately drive multiple concurrent upload
@@ -4435,7 +4433,7 @@ fn start_upload_blocking(
         // is checked before mountOS credentials are even resolved
         // server-side); for a URI SOURCE it DOES connect and list (the
         // one documented exception, see runUploadDryRun's own doc comment
-        // server-side) -- source_secret_file above already covers that
+        // server-side). source_secret_file above already covers that
         // case, no separate secret plumbing needed here. Prints its report
         // to stdout; a one-shot foreground call, same shape as
         // upload_command_blocking, captures and returns exactly that
@@ -4469,10 +4467,10 @@ fn start_upload_blocking(
 // cleanup_temp_secret_file_on_error is a best-effort backstop, not the
 // primary cleanup mechanism: the CLI unlinks the temp secret file itself the
 // moment it successfully reads it (main.go's resolveSecret,
-// mountos-servers), which covers every ordinary run -- for either
+// mountos-servers), which covers every ordinary run, for either
 // --source-temporary-secret-file (upload) or --dest-temporary-secret-file
-// (download). This only matters when the child never got that far -- spawn
-// failed outright, or exited/timed out before reaching the read -- where the
+// (download). This only matters when the child never got that far (spawn
+// failed outright, or exited/timed out before reaching the read), where the
 // file would otherwise linger until the OS temp-dir / app-cache is next
 // cleared. Never called on the success path; T's Ok/Err doesn't matter
 // beyond that, only whether result is an error at all.
@@ -4894,11 +4892,11 @@ fn start_download_blocking(
     secret: Option<String>,
     dest_secret: Option<String>,
     // Some when a saved TransferSourceProfile was selected as DEST_PATH in
-    // the form -- resolves that profile's secret from the vault (or accepts
+    // the form. Resolves that profile's secret from the vault (or accepts
     // dest_secret as an override for a "prompt" profile the user just
     // re-typed), the exact mirror of start_upload_blocking's
     // transfer_source_profile_id. The SAME TransferSourceProfile store is
-    // reused here, not a parallel "destination profile" type -- see that
+    // reused here, not a parallel "destination profile" type. See that
     // struct's own doc comment: a saved external endpoint is equally valid
     // as a place to pull from or push to.
     transfer_dest_profile_id: Option<String>,
@@ -4925,9 +4923,8 @@ fn start_download_blocking(
 
     // Every fallible step that doesn't itself depend on the temp secret
     // file is resolved BEFORE that file is written, not after: none of
-    // resolve_satellite_secret/runtime_dir/mountos_path need it, and
-    // ordering them first means a failure here can never orphan the file
-    // the way it used to when they ran between the write and this
+    // resolve_satellite_secret/runtime_dir/mountos_path need it, so a
+    // failure here can never orphan the file between the write and this
     // function's two cleanup_temp_secret_file_on_error call sites.
     //
     // Mode A (Instance) never resolves a secret, since profile is None, so
@@ -4946,7 +4943,7 @@ fn start_download_blocking(
 
     // Written up front, ahead of the dry-run branch too: a URI DEST_PATH's
     // dry-run genuinely connects to it (dryRunConnectExternalDest,
-    // cmd_download.go -- the destination-side mirror of runUploadDryRun's
+    // cmd_download.go, the destination-side mirror of runUploadDryRun's
     // own external-SOURCE connection), so it needs the secret exactly as
     // much as a real run does.
     let dest_secret_path = dest_secret
@@ -6197,8 +6194,8 @@ fn find_gateway_descriptor_with_retry(pid: u32) -> Option<GatewayDescriptorFile>
 
 // Matches the pinned "<title> started with PID: <pid>" contract both
 // daemon.go and daemon_windows.go print on their parent's stdout right
-// before exiting 0, the same string the original desktop-gui design doc
-// already treats as a stable, documented pinned string for other purposes.
+// before exiting 0. This exact string is a stable, documented contract
+// other code also relies on for the same purpose.
 fn parse_started_pid(text: &str) -> Option<u32> {
     let idx = text.find("started with PID: ")?;
     let rest = &text[idx + "started with PID: ".len()..];
@@ -6280,7 +6277,7 @@ fn open_gateway_blocking(
             )));
         }
     }
-    // Applies to both branches: gateway-only also emits extra_args now (see
+    // Applies to both branches: gateway-only also emits extra_args (see
     // push_cache_and_extra_args), not just the mount+gateway combo.
     reject_managed_extra_args(&profile)?;
     let resolved_secret = resolve_satellite_secret(&profile, secret)?;
@@ -6364,8 +6361,8 @@ async fn open_gateway(
 
 // Scoped, single-purpose stop for a gateway launched via open_gateway.
 // There is no `unmount` equivalent for it (no control socket, no mount
-// entry), and this is deliberately narrower than the general Force-stop
-// pattern reserved for §17.8 (opt-in, any wedged mount). Two independent
+// entry), and this is deliberately narrower than the general, opt-in
+// force-stop pattern reserved for any wedged mount. Two independent
 // checks gate this, not one: `pid` must be in known_gateway_pids() (a pid
 // THIS process itself parsed from its own spawned child's stdout in
 // open_gateway_blocking, never trusted from whatever a frontend caller
@@ -6385,8 +6382,8 @@ async fn open_gateway(
 // (this machine alone runs dozens, see mos-load-*) that stop_gateway would
 // then also be willing to act on. Opportunistic, not exhaustive: still a
 // residual TOCTOU between this call and the next (no cross-platform
-// process-identity/start-time check exists to close it further), but no
-// longer unbounded, since every gateway launch/stop call now re-checks every pid
+// process-identity/start-time check exists to close it further), but
+// bounded, since every gateway launch/stop call re-checks every pid
 // this process still thinks is live.
 fn reconcile_known_gateway_pids() {
     let mut guard = known_gateway_pids()
@@ -7107,10 +7104,10 @@ fn spawn_dashboard_terminal(
     Ok(())
 }
 
-// The chain this launcher already shipped with, now also pickable. Nothing new
-// was added from documentation alone: there was no Linux host here to verify a
-// launch on, and an unverified entry is a dashboard button that opens the wrong
-// thing or nothing.
+// The same terminal-detection chain this launcher already uses, exposed here
+// as a user-pickable list. Nothing was added from documentation alone: there
+// was no Linux host here to verify a launch on, and an unverified entry is a
+// dashboard button that opens the wrong thing or nothing.
 #[cfg(not(any(windows, target_os = "macos")))]
 const KNOWN_TERMINALS: &[(&str, &str, &str)] = &[
     // (id, label, binary to probe on PATH)
@@ -7852,15 +7849,15 @@ mod tests {
             validate_extra_args(&["--mount".to_string(), "/tmp/other".to_string()]),
             vec!["--mount".to_string(), "/tmp/other".to_string()]
         );
-        // Blocked defensively even though the CLI no longer has a
-        // --destination flag: the deleted/version destination is owned by
-        // this profile's own field, never the free-text extra-args box.
+        // Blocked defensively even though the CLI has no --destination flag:
+        // the deleted/version destination is owned by this profile's own
+        // field, never the free-text extra-args box.
         assert_eq!(
             validate_extra_args(&["--destination".to_string(), "/tmp/other".to_string()]),
             vec!["--destination".to_string(), "/tmp/other".to_string()]
         );
-        // --disk-cache-size now has its own MountProfile field; extra_args is
-        // no longer a legal way to set it.
+        // --disk-cache-size has its own MountProfile field; extra_args is
+        // not a legal way to set it.
         assert_eq!(
             validate_extra_args(&["--disk-cache-size".to_string(), "10G".to_string()]),
             vec!["--disk-cache-size".to_string(), "10G".to_string()]
@@ -8481,7 +8478,7 @@ mod tests {
         assert!(argv
             .windows(2)
             .any(|args| args == ["--discovery-url", "https://hub.example.com"]));
-        // Fork is always derived from the profile now (fixture has "main"),
+        // Fork is always derived from the profile (fixture has "main"),
         // never a form field.
         assert!(argv.windows(2).any(|args| args == ["--fork", "main"]));
         assert!(argv.contains(&"-a".to_string()));
@@ -8563,7 +8560,7 @@ mod tests {
 
     #[test]
     fn build_upload_start_argv_omits_source_fields_when_unset() {
-        // upload_params() leaves every source_* field None -- a folder/
+        // upload_params() leaves every source_* field None. A folder/
         // profile SOURCE must never see any of these flags.
         let argv = build_upload_start_argv(&profile(), "/src", "/dst", &upload_params(), None);
         for flag in [
@@ -8591,7 +8588,7 @@ mod tests {
         assert!(argv.windows(2).any(|a| a
             == ["--source-temporary-secret-file", "/tmp/source-secret-abc.tmp"]));
         // Never the plain --source-secret-file (persistent) flag for this
-        // handoff -- the desktop app always uses the single-use one.
+        // handoff: the desktop app always uses the single-use one.
         assert!(!argv.contains(&"--source-secret-file".to_string()));
     }
 

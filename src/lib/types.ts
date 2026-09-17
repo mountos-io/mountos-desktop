@@ -44,7 +44,7 @@ export interface MountProfile {
 }
 
 // TransferSourceProfile is a saved `upload`/`import` external-object-store
-// source (provider/bucket/prefix/credentials) -- deliberately NOT a
+// source (provider/bucket/prefix/credentials), deliberately not a
 // MountProfile: it names a bucket to pull FROM, never a mountOS volume to
 // mount. See src-tauri/src/lib.rs's own doc comment on TransferSourceProfile
 // for why this is a distinct persisted+vaulted entity, not a variant.

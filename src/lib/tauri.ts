@@ -159,7 +159,7 @@ export async function getProfileSecretStatus(profileId: string): Promise<SecretS
 }
 
 // Transfer source profiles (saved upload/import external-object-store
-// sources) -- a deliberately separate CRUD set from the MountProfile one
+// sources), a deliberately separate CRUD set from the MountProfile one
 // above, mirroring it command-for-command; see TransferSourceProfile's own
 // doc comment (types.ts) for why it's not a MountProfile variant.
 export async function listTransferSourceProfiles(): Promise<TransferSourceProfile[]> {
@@ -239,13 +239,13 @@ export async function startUpload(
   dest: string,
   params: UploadStartParams,
   secret?: string,
-  // sourceSecret is the resolved secret for a URI SOURCE (S3/Azure/GCS) --
+  // sourceSecret is the resolved secret for a URI SOURCE (S3/Azure/GCS).
   // start_upload_blocking (Rust) writes it to a private, single-use temp
   // file and passes only that file's PATH to the mountos CLI
   // (--source-temporary-secret-file), the same "no secret in argv" contract
   // every other secret in this app already follows. When
   // transferSourceProfileId is set, sourceSecret is only a fallback/
-  // override (e.g. a re-typed "prompt" secret) -- Rust resolves the saved
+  // override (e.g. a re-typed "prompt" secret). Rust resolves the saved
   // profile's own vault entry itself when this is a "vault" profile, so the
   // decrypted secret is never round-tripped through this JS call at all.
   sourceSecret?: string,
@@ -313,7 +313,7 @@ export async function pruneUploads(keep: number): Promise<string> {
 }
 
 // Deletes one non-running job's local record whatever its state, including
-// resumable -- the only way to clear a job whose process was killed before
+// resumable, the only way to clear a job whose process was killed before
 // it could stamp a terminal field (crash, OOM, power loss). cancelUpload
 // refuses it (no live process to signal) and pruneUploads skips it (no
 // terminal stamp), so this is the sole path to clear it.
@@ -340,13 +340,13 @@ export async function startDownload(
   dest: string,
   params: DownloadStartParams,
   secret?: string,
-  // destSecret is the resolved secret for a URI DEST_PATH (S3/Azure/GCS) --
+  // destSecret is the resolved secret for a URI DEST_PATH (S3/Azure/GCS).
   // start_download_blocking (Rust) writes it to a private, single-use temp
   // file and passes only that file's PATH to the mountos CLI
   // (--dest-temporary-secret-file), the same "no secret in argv" contract
   // startUpload's sourceSecret already follows. When transferDestProfileId
   // is set, destSecret is only a fallback/override (e.g. a re-typed
-  // "prompt" secret) -- Rust resolves the saved profile's own vault entry
+  // "prompt" secret). Rust resolves the saved profile's own vault entry
   // itself when this is a "vault" profile, so the decrypted secret is never
   // round-tripped through this JS call at all.
   destSecret?: string,
@@ -413,7 +413,7 @@ export async function pruneDownloads(keep: number): Promise<string> {
 }
 
 // Deletes one non-running job's local record whatever its state, including
-// resumable -- the only way to clear a job whose process was killed before
+// resumable, the only way to clear a job whose process was killed before
 // it could stamp a terminal field (crash, OOM, power loss). cancelDownload
 // refuses it (no live process to signal) and pruneDownloads skips it (no
 // terminal stamp), so this is the sole path to clear it.
@@ -477,7 +477,7 @@ export async function pruneSinks(keep: number): Promise<string> {
 }
 
 // Deletes one non-running job's local record whatever its state, including
-// resumable -- the only way to clear a job whose process was killed before
+// resumable, the only way to clear a job whose process was killed before
 // it could stamp a terminal field (crash, OOM, power loss). cancelSink
 // refuses it (no live process to signal) and pruneSinks skips it (no
 // terminal stamp), so this is the sole path to clear it.

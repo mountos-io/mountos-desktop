@@ -74,7 +74,7 @@
      just visual hiding) keeps a 0-width panel out of both the tab order and
      the accessibility tree while collapsed.
 
-     Always the grid's first (DOM-order) child, always track 1 -- which side
+     Always the grid's first (DOM-order) child, always track 1. Which side
      of the window that's on is the parent grid's own direction:rtl/ltr (see
      each view's grid-template-columns comment), never this component's
      concern. direction:ltr resets that inherited mirroring so this panel's

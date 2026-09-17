@@ -350,9 +350,9 @@ export function buildGatewayArgv(profile: MountProfile, params: GatewayLaunchPar
 // Mirrors uploadjob.LooksLikeURI (mountos-servers): a "scheme://..." shape,
 // requiring at least 2 chars before "://" so a Windows drive-letter path
 // ("C:\...", or even a stray "c://" typo) never misdetects as a URI scheme.
-// The upload form itself never sniffs a typed string to decide this --
+// The upload form itself never sniffs a typed string to decide this:
 // object-storage vs. local is an explicit toggle (see UploadsView.svelte's
-// Source type selector) -- this is used only as a self-check on
+// Source type selector). This is used only as a self-check on
 // buildExternalSourceUri's OWN output before it's ever sent to argv, never
 // as a security boundary (the CLI's own scheme table is authoritative).
 export function looksLikeSourceUri(source: string): boolean {
@@ -399,13 +399,13 @@ export function resolveProviderHint(uiProvider: string, userHint: string): strin
 }
 
 // buildExternalSourceUri renders the "scheme://bucket/prefix" form from the
-// upload form's structured provider/bucket/prefix fields -- the user never
+// upload form's structured provider/bucket/prefix fields. The user never
 // hand-types a URI (and so can never hand a malformed one to the CLI). The
 // scheme follows resolveWireProvider, not the raw UI provider. azure gets
 // az://, everything else (s3, every S3-compatible vendor, and gcs since it
 // resolves to s3compatible) gets s3://, mirroring mountos-servers'
 // ParseExternalSourceURI's own scheme table exactly in reverse. Returns null
-// when bucket is blank -- there is nothing valid to build yet.
+// when bucket is blank: there is nothing valid to build yet.
 export function buildExternalSourceUri(provider: string, bucket: string, prefix: string): string | null {
   const trimmedBucket = bucket.trim().replace(/^\/+|\/+$/g, '')
   if (!trimmedBucket) return null
@@ -420,7 +420,7 @@ export function buildExternalSourceUri(provider: string, bucket: string, prefix:
 
 // UPLOAD_SOURCE_PROVIDERS is the known --source-provider vocabulary
 // (constants.ProviderType* in mountos-servers), for the form's Provider
-// select -- a real dropdown, not free text, so a typo can never reach argv
+// select: a real dropdown, not free text, so a typo can never reach argv
 // as an unrecognized provider the CLI would only reject after a launch
 // attempt.
 export const UPLOAD_SOURCE_PROVIDERS: { value: string; label: string }[] = [
@@ -441,7 +441,7 @@ export const UPLOAD_SOURCE_PROVIDERS: { value: string; label: string }[] = [
 // fields, mirroring mountos-servers' own hard requirements exactly (so a
 // mistake is caught here, inline, instead of after a process is already
 // spawned and failing): bucket is always required; s3compatible has no
-// default endpoint (resolveEndpoint, mountos-servers) so it must be typed --
+// default endpoint (resolveEndpoint, mountos-servers) so it must be typed.
 // gcs is exempt from this since its endpoint is fixed internally
 // (GCS_S3_ENDPOINT, never user-typed); azure authenticates with account+key
 // so the account name is required; every other provider (including gcs,
@@ -471,7 +471,7 @@ export interface UploadStartParams {
   followSymlinks: boolean
   createSourceDirectory: boolean
   // Non-secret identifiers for a URI SOURCE (s3://, az://, azblob://,
-  // gs://). The secret itself is never a field here -- see
+  // gs://). The secret itself is never a field here. See
   // buildUploadStartArgv's own sourceSecretFile parameter, which is the
   // ONLY place a resolved source secret reaches this builder, and only as
   // a file path already written to disk, matching the mountos CLI's
@@ -554,7 +554,7 @@ export function buildUploadStartArgv(
   if (params.createSourceDirectory) argv.push('--create-source-directory')
   // Non-secret identifiers for a URI SOURCE; sourceSecretFile is the ONLY
   // secret-bearing thing this builder ever touches, and only as a path,
-  // never the secret's own content -- mirrors src-tauri's
+  // never the secret's own content. Mirrors src-tauri's
   // build_upload_start_argv exactly, including never emitting the
   // persistent --source-secret-file flag (the desktop app always uses the
   // single-use --source-temporary-secret-file handoff).
@@ -614,8 +614,8 @@ export function buildUploadPruneArgv(keep: number): string[] {
 }
 
 // Mirrors cmd_upload_subcommands.go's `upload remove <job-id>`: deletes a
-// non-running job's local record whatever its state, including resumable
-// -- unlike prune, which only ever sweeps jobs already carrying a terminal
+// non-running job's local record whatever its state, including resumable,
+// unlike prune, which only ever sweeps jobs already carrying a terminal
 // stamp.
 export function buildUploadRemoveArgv(jobId: string): string[] {
   return ['upload', 'remove', jobId]
@@ -638,7 +638,7 @@ export interface DownloadStartParams {
   createSourceDirectory: boolean
   // Non-secret identifiers for a URI DEST_PATH (s3://, az://, azblob://,
   // gs://), the export mirror of UploadStartParams' source* fields. The
-  // secret itself is never a field here -- see buildDownloadStartArgv's own
+  // secret itself is never a field here. See buildDownloadStartArgv's own
   // destSecretFile parameter, which is the ONLY place a resolved
   // destination secret reaches this builder, and only as a file path
   // already written to disk, matching the mountos CLI's
@@ -710,7 +710,7 @@ export function buildDownloadStartArgv(
   if (params.createSourceDirectory) argv.push('--create-source-directory')
   // Non-secret identifiers for a URI DEST_PATH; destSecretFile is the ONLY
   // secret-bearing thing this builder ever touches, and only as a path,
-  // never the secret's own content -- mirrors buildUploadStartArgv's
+  // never the secret's own content. Mirrors buildUploadStartArgv's
   // sourceSecretFile handling exactly, including never emitting the
   // persistent --dest-secret-file flag (the desktop app always uses the
   // single-use --dest-temporary-secret-file handoff).
@@ -773,8 +773,8 @@ export function buildDownloadPruneArgv(keep: number): string[] {
 }
 
 // Mirrors cmd_download_subcommands.go's `download remove <job-id>`: deletes
-// a non-running job's local record whatever its state, including resumable
-// -- unlike prune, which only ever sweeps jobs already carrying a terminal
+// a non-running job's local record whatever its state, including resumable,
+// unlike prune, which only ever sweeps jobs already carrying a terminal
 // stamp.
 export function buildDownloadRemoveArgv(jobId: string): string[] {
   return ['download', 'remove', jobId]
@@ -860,7 +860,7 @@ export function buildSinkPruneArgv(keep: number): string[] {
 }
 
 // Mirrors cmd_sink.go's `sink remove <job-id>`: deletes a non-running job's
-// local record whatever its state, including resumable -- unlike prune,
+// local record whatever its state, including resumable, unlike prune,
 // which only ever sweeps jobs already carrying a terminal stamp.
 export function buildSinkRemoveArgv(jobId: string): string[] {
   return ['sink', 'remove', jobId]

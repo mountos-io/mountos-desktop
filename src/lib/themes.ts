@@ -311,9 +311,9 @@ function draculaColor(role: CSSColorRole): string {
 
 const alucard = {
   background: 'oklch(0.9869 0.0214 95.28)',
-  // Real Selection #CFCFDE - this was previously stored as a "darkened
-  // Background" approximation (same 95.28deg hue), not the real swatch,
-  // which is a cool lavender-gray (286deg), a different hue family entirely.
+  // Real Selection is #CFCFDE, a cool lavender-gray (286deg). Do not
+  // approximate it as a darkened Background (same 95.28deg hue): that
+  // is a different hue family entirely.
   // The real spec has no separate "border" tone - Dracula's own pattern.
   selection: 'oklch(0.8590 0.0206 285.96)',
   selection2: 'oklch(0.91 0.02 286.07)',

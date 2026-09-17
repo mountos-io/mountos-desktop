@@ -80,10 +80,11 @@
     return Boolean(instance.temporaryFork ?? profileForInstance(instance)?.temporaryFork)
   }
 
-  // "Open folder" moved to a direct action button, so it's no longer the one
-  // unconditional item keeping this menu non-empty. Without this check the
-  // dropdown trigger would open onto nothing for an instance with no other
-  // applicable item (not openable, no deleted/version view, no gateway).
+  // "Open folder" is a direct action button, not one of this menu's items,
+  // so this dropdown needs at least one other applicable item to stay
+  // non-empty. Without this check the dropdown trigger would open onto
+  // nothing for an instance with no other applicable item (not openable, no
+  // deleted/version view, no gateway).
   function hasMoreActions(instance: MountInstance): boolean {
     return canOpen(instance) || canOpenViewsFor(instance) || canUploadFrom(instance) || Boolean(gatewayInfoForInstance(instance)?.pid)
   }

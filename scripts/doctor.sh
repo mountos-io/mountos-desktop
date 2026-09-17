@@ -79,8 +79,8 @@ case "$(uname -s)" in
     # `make bundle` builds every WIN_TARGETS arch, not just the host one, and
     # rustc picks the NEWEST MSVC toolset per target. A toolset that lacks the
     # cross tools sends rustc to bare link.exe on PATH, which in Git Bash is
-    # MSYS coreutils `link` -- the failure reads "missing operand", nothing about
-    # a missing workload. Report each target arch against the newest toolset.
+    # MSYS coreutils `link` (the failure reads "missing operand", nothing about
+    # a missing workload). Report each target arch against the newest toolset.
     newest=""
     for d in "/c/Program Files/Microsoft Visual Studio"/*/*/VC/Tools/MSVC/*; do
       [ -d "$d" ] && newest=$d

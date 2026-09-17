@@ -346,7 +346,7 @@ describe('cli helpers', () => {
     expect(dashdash).toBeGreaterThan(-1)
     expect(argv.slice(dashdash + 1)).toEqual(['/local/photos', '/remote/photos'])
     expect(argv).toEqual(expect.arrayContaining(['--discovery-url', 'https://hub.example.com']))
-    // Fork is always derived from the profile now (fixture has 'main'),
+    // Fork is always derived from the profile (fixture has 'main'),
     // never a form field.
     expect(argv).toEqual(expect.arrayContaining(['--fork', 'main']))
     expect(argv).not.toContain('--once')
@@ -457,7 +457,7 @@ describe('cli helpers', () => {
     expect(buildExternalSourceUri('s3compatible', 'my-bucket', '')).toBe('s3://my-bucket')
     expect(buildExternalSourceUri('azure', 'my-container', 'a/b')).toBe('az://my-container/a/b')
     // gcs resolves to s3compatible (resolveWireProvider) and so gets s3://,
-    // never gs:// -- see buildExternalSourceUri's own doc comment.
+    // never gs://. See buildExternalSourceUri's own doc comment.
     expect(buildExternalSourceUri('gcs', 'my-bucket', '')).toBe('s3://my-bucket')
   })
 

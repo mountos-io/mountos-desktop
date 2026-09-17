@@ -74,11 +74,11 @@ const ACCENT_VAR_NAMES = [
   '--sidebar-ring',
   '--scrollbar-thumb',
   // Neutral chrome: app.css pins these to one fixed hue per mode (~95° warm
-  // cream in light, ~200° cool gray in dark) regardless of accent, so a
-  // differently-hued accent used to sit on a backdrop that didn't follow it.
-  // Re-hued at each token's own existing chroma (only the hue moves, same
-  // tint strength as the default theme already uses) so the page reads as
-  // one blended palette instead of an accent color dropped onto an
+  // cream in light, ~200° cool gray in dark) regardless of accent, so without
+  // re-hueing, a differently-hued accent would sit on a backdrop that doesn't
+  // follow it. Re-hued at each token's own existing chroma (only the hue
+  // moves, same tint strength as the default theme already uses) so the page
+  // reads as one blended palette instead of an accent color dropped onto an
   // unrelated backdrop.
   '--background',
   '--card',

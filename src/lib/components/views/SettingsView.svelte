@@ -402,10 +402,10 @@
         <div class="flex items-center gap-2">
           <span class="mono-label">{themeState.brightness}%</span>
           <!-- Next to the percentage, not sharing the slider's own row: that
-               row is the only element there, so Reset mounting/unmounting no
-               longer changes the slider's width. It used to sit alongside
-               the slider in a flex row, visibly shrinking (and un-shrinking)
-               the track and jumping the thumb under the cursor mid-drag. -->
+               row is the only element there, so Reset mounting/unmounting
+               never changes the slider's width. Sharing the row with the
+               slider would shrink (and un-shrink) the track and jump the
+               thumb under the cursor mid-drag. -->
           {#if themeState.brightness !== 100}
             <Button type="button" size="sm" variant="ghost" onclick={() => setBrightness(100)}>Reset</Button>
           {/if}

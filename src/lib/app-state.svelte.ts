@@ -376,8 +376,8 @@ const state = $state({
   forkCreateError: '',
 
   // Delete/restore target one specific fork (a row action), not a free-text
-  // or Select-picked name, this dialog is also the delete confirmation
-  // fork delete previously had none of.
+  // or Select-picked name; this dialog also serves as fork delete's
+  // confirmation step.
   forkDeletePromptFor: null as Fork | null,
   forkDeleteForce: false,
   forkDeleteSecretValue: '',
@@ -467,11 +467,11 @@ const state = $state({
   uploadSourceProviderHint: '',
   // Plaintext secret held only in memory for the duration of a Start or Test
   // call (see runUploadStart/runUploadSourceTest: passed straight to
-  // startUpload, never persisted, never logged) -- Rust writes it to a
+  // startUpload, never persisted, never logged). Rust writes it to a
   // private temp file and the CLI unlinks that file itself immediately
   // after reading it.
   uploadSourceSecretValue: '',
-  // A saved TransferSourceProfile currently backing the form's fields --
+  // A saved TransferSourceProfile currently backing the form's fields,
   // set by selectTransferSourceProfile, cleared by resetTransferSourceForm/
   // switching to 'local'. Threaded through to Start/Test as
   // transferSourceProfileId so Rust resolves a "vault" profile's secret
@@ -481,7 +481,7 @@ const state = $state({
   transferSourceProfiles: [] as TransferSourceProfile[],
   transferSourceProfilesLoaded: false,
   // "Save as transfer profile" panel state, shown after a successful Test
-  // Connection or Start -- entirely separate from the live form fields
+  // Connection or Start. Entirely separate from the live form fields
   // above so filling in a save-name never affects what Start/Test submits.
   uploadSourceSaveOpen: false,
   uploadSourceSaveName: '',
@@ -525,8 +525,8 @@ const state = $state({
 
   // Remove is prune's single-job sibling: it clears a job stuck resumable
   // because its process was killed before it could stamp a terminal field
-  // (crash, OOM, power loss) -- cancel refuses it (no live process) and
-  // prune skips it (no terminal stamp) -- so it also needs a confirm
+  // (crash, OOM, power loss); cancel refuses it (no live process) and
+  // prune skips it (no terminal stamp), so it also needs a confirm
   // dialog, same reasoning as uploadPrunePromptOpen above.
   uploadRemovePromptFor: null as UploadJob | null,
   uploadRemoveError: '',
@@ -604,11 +604,11 @@ const state = $state({
   downloadDestProviderHint: '',
   // Plaintext secret held only in memory for the duration of a Start or Test
   // call (see runDownloadStart/runDownloadDestTest: passed straight to
-  // startDownload, never persisted, never logged) -- Rust writes it to a
+  // startDownload, never persisted, never logged). Rust writes it to a
   // private temp file and the CLI unlinks that file itself immediately
   // after reading it.
   downloadDestSecretValue: '',
-  // A saved TransferSourceProfile currently backing the form's fields --
+  // A saved TransferSourceProfile currently backing the form's fields,
   // the SAME store uploadSourceProfileSelectedId picks from (see that
   // field's own doc comment on TransferSourceProfile being provider/bucket/
   // prefix/credential-generic, not upload-specific), just selected as a
@@ -618,7 +618,7 @@ const state = $state({
   // back for the same profile.
   downloadDestProfileSelectedId: null as string | null,
   // "Save as transfer profile" panel state, shown after a successful Test
-  // Connection or Start -- entirely separate from the live form fields
+  // Connection or Start. Entirely separate from the live form fields
   // above so filling in a save-name never affects what Start/Test submits.
   downloadDestSaveOpen: false,
   downloadDestSaveName: '',
@@ -1031,7 +1031,7 @@ const uploadPreviewProfile = $derived.by((): MountProfile | null => {
   }
 })
 
-// isExternalUploadSource reads the explicit Source type toggle -- nothing
+// isExternalUploadSource reads the explicit Source type toggle. Nothing
 // sniffs uploadSource's own text for a scheme prefix; local vs. object
 // storage is a deliberate choice the same way Profile vs. running-Instance
 // already is, not inferred from what happens to be typed.
@@ -1041,8 +1041,8 @@ export function isExternalUploadSource(): boolean {
 
 // effectiveUploadSource is the actual SOURCE positional argv/preview/submit
 // ever see: uploadSource verbatim in 'local' mode, or the URI built from the
-// structured provider/bucket/prefix fields in 'external' mode -- the ONE
-// place those two modes converge back into a single string, so every other
+// structured provider/bucket/prefix fields in 'external' mode. This is the
+// ONE place those two modes converge back into a single string, so every other
 // call site (preview, start, test) reads this instead of branching itself.
 export function effectiveUploadSource(): string {
   if (!isExternalUploadSource()) return state.uploadSource.trim()
@@ -1054,12 +1054,12 @@ const uploadCommandText = $derived.by(() => {
   const source = effectiveUploadSource()
   if (!profile || !source || !state.uploadDest.trim()) return ''
   // A real secret is never written to a temp file just to render this
-  // preview -- the placeholder makes clear a real run substitutes an actual
+  // preview. The placeholder makes clear a real run substitutes an actual
   // path, matching this app's existing "show the exact command, never a
   // secret value" convention (see cli.ts's own doc comments elsewhere on
   // never letting secrets reach argv/preview text). Shown whenever a
   // secret will actually be resolved, whether typed here or supplied by a
-  // selected vault profile -- checking only the typed field would drop the
+  // selected vault profile: checking only the typed field would drop the
   // flag from the preview for a vault-backed profile even though the real
   // spawned command still includes it.
   const sourceSecretFile =
@@ -2075,7 +2075,7 @@ function validateUploadSourceAndSecret(): string {
     state.uploadSourceAccessKeyId,
   )
   if (fieldError) return fieldError
-  // A selected "vault" profile needs nothing re-typed -- Rust resolves its
+  // A selected "vault" profile needs nothing re-typed. Rust resolves its
   // secret straight from the keychain (see startUpload's own doc comment).
   // Only when there's no vault backing it does a blank field mean "no
   // secret at all", the same failure an ad hoc unsaved source would have.
@@ -2131,7 +2131,7 @@ export async function runUploadStart() {
 
 // runUploadSourceTest is the "Test connection" affordance object storage
 // gets in place of a local source's folder Browse: there's no bucket-
-// listing UI to browse INTO, so this is the closest equivalent -- runs the
+// listing UI to browse INTO, so this is the closest equivalent: runs the
 // same --dry-run path Start's own Dry Run checkbox uses (already lists the
 // bucket server-side, see runUploadDryRun's doc comment, mountos-servers),
 // into its own report/error slots so it never collides with a real Start
@@ -2149,7 +2149,7 @@ export async function runUploadSourceTest() {
     const source = effectiveUploadSource()
     // A dry run needs SOME destination positional (cobra requires 2 args),
     // but Test Connection deliberately doesn't require Destination to be
-    // filled in yet -- '/' is a harmless placeholder a dry run never
+    // filled in yet. '/' is a harmless placeholder a dry run never
     // actually writes to regardless of what's passed.
     const dest = state.uploadDest.trim() || '/'
     const result = await startUpload(
@@ -2186,23 +2186,21 @@ export async function loadTransferSourceProfiles() {
   }
 }
 
-// transferSourceProfileNeedsReentry flags a saved gcs profile from before
-// this app switched GCP from a pasted service-account JSON key to an HMAC
-// access key/secret pair (see resolveWireProvider). Such a profile never had
-// an accessKeyId collected, and validateExternalSourceFields now requires
-// one for every non-azure provider including gcs, so Start/Test on it would
-// otherwise fail with an unexplained "Access key id is required". Purely
-// derived from the profile's own existing fields, no new persisted field,
-// no schema-version bump. A profile saved after this change always carries
-// an accessKeyId (the save-time validation already enforces it), so this
-// heuristic never misflags a freshly-saved one.
+// transferSourceProfileNeedsReentry flags a saved gcs profile with no
+// accessKeyId collected (see resolveWireProvider). validateExternalSourceFields
+// requires one for every non-azure provider including gcs, so Start/Test on
+// such a profile would otherwise fail with an unexplained "Access key id is
+// required". Purely derived from the profile's own existing fields, no new
+// persisted field, no schema-version bump. A profile that already carries an
+// accessKeyId (save-time validation enforces it) never triggers this
+// heuristic.
 export function transferSourceProfileNeedsReentry(profile: TransferSourceProfile): boolean {
   return profile.provider === 'gcs' && !profile.accessKeyId
 }
 
 // selectTransferSourceProfile fills the form's structured fields from a
 // saved profile. The secret is deliberately NOT populated here even for a
-// "vault" profile -- this app never round-trips a decrypted vault secret
+// "vault" profile. This app never round-trips a decrypted vault secret
 // into JS state just to redisplay it; Start/Test instead pass the profile's
 // id through (uploadSourceProfileSelectedId) and let Rust resolve it
 // directly from the keychain. A "prompt" profile leaves the secret field
@@ -2232,7 +2230,7 @@ export function selectTransferSourceProfile(id: string) {
 }
 
 // clearTransferSourceProfileSelection resets the external-source form back
-// to a blank, unsaved state -- "New source" in the picker, or switching
+// to a blank, unsaved state: "New source" in the picker, or switching
 // Source type away from and back to 'external'.
 export function clearTransferSourceProfileSelection() {
   state.uploadSourceProfileSelectedId = null
@@ -2253,7 +2251,7 @@ export function clearTransferSourceProfileSelection() {
 }
 
 // uploadSourceProfileUsesVault reports whether the currently-selected saved
-// profile (if any) keeps its secret in the vault -- gates whether the form
+// profile (if any) keeps its secret in the vault. Gates whether the form
 // shows a secret input at all (a vault profile needs none re-entered) vs.
 // the "using saved vault credential" indicator.
 export function uploadSourceProfileUsesVault(): boolean {
@@ -2276,7 +2274,7 @@ export function closeSaveTransferSourceProfile() {
 
 // saveCurrentAsTransferSourceProfile persists the form's current structured
 // fields (never uploadDest/local-mode fields, which have nothing to do with
-// this) as a named, reusable source -- creating a new profile normally, or
+// this) as a named, reusable source, creating a new profile normally, or
 // overwriting the currently-selected one if the name matches an existing
 // save-in-place flow the same way MountProfile editing does (save_profile
 // is itself an upsert keyed by id). storeInVault true additionally calls
@@ -2350,8 +2348,8 @@ export async function saveCurrentAsTransferSourceProfile() {
 // mirroring deleteProfile's own MountProfile behavior). The SAME profile
 // store backs both the upload Source picker and the download Destination
 // picker (see TransferSourceProfile's own doc comment), so a deletion
-// clears whichever form(s) currently reference it -- either, neither, or
-// both, independently -- rather than leaving one with a dangling id.
+// clears whichever form(s) currently reference it (either, neither, or
+// both, independently) rather than leaving one with a dangling id.
 export async function removeTransferSourceProfile(id: string) {
   // Read before the delete/clear below can null either one out, so a
   // failure lands on whichever view(s) actually had this profile selected,
@@ -2959,8 +2957,8 @@ function downloadGlobError(): string {
 // exactly on the opposite positional: local mode keeps the existing
 // positional check; external mode validates the structured provider/
 // bucket/endpoint/account fields plus a secret requirement that applies to
-// every external provider. Never touches downloadSource/downloadSourceError
-// -- the caller's own responsibility.
+// every external provider. Never touches downloadSource/downloadSourceError,
+// the caller's own responsibility.
 function validateDownloadDestAndSecret(): string {
   if (!isExternalDownloadDest()) {
     const dest = state.downloadDest.trim()
@@ -2974,7 +2972,7 @@ function validateDownloadDestAndSecret(): string {
     state.downloadDestAccessKeyId,
   )
   if (fieldError) return fieldError
-  // A selected "vault" profile needs nothing re-typed -- Rust resolves its
+  // A selected "vault" profile needs nothing re-typed. Rust resolves its
   // secret straight from the keychain (see startDownload's own doc comment).
   if (!state.downloadDestSecretValue.trim() && !downloadDestProfileUsesVault()) {
     return 'A secret is required'
@@ -3031,7 +3029,7 @@ export async function runDownloadStart() {
 // DEST_PATH, since a URI SOURCE dry-run never reads it), a download's
 // dry-run genuinely walks/discovers SOURCE too (runDownloadDryRun,
 // cmd_download.go), so this requires a real, already-valid Source exactly
-// like a real Start does -- there is no meaningful way to test "can I reach
+// like a real Start does. There is no meaningful way to test "can I reach
 // this bucket" independent of a real source to report a plan against.
 export async function runDownloadDestTest() {
   const profileId = state.downloadSourceKind === 'profile' ? (state.downloadSourceProfileId ?? undefined) : undefined
@@ -3121,7 +3119,7 @@ export async function browseDownloadSource() {
 }
 
 // Only meaningful in 'local' mode (an external DEST_PATH has no local
-// folder to browse into, see isExternalDownloadDest -- the view itself
+// folder to browse into, see isExternalDownloadDest: the view itself
 // hides this button in that mode). Mirrors browseUploadSource's simple
 // shape, not browseUploadDestination's scratch-mount complexity (there's
 // no remote destination to browse into for a download's local mode
@@ -3576,7 +3574,7 @@ export async function confirmSinkPrune() {
 
 // Remove is prune's single-job sibling: the only way to clear a job stuck
 // resumable because its process was killed before it could stamp a
-// terminal field (crash, OOM, power loss) -- indistinguishable from a
+// terminal field (crash, OOM, power loss), indistinguishable from a
 // cleanly cancelled job otherwise, and unreachable by cancel (no live
 // process) or prune (no terminal stamp). Same confirm-dialog treatment as
 // requestUploadRemove above.
