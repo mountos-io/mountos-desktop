@@ -20,7 +20,7 @@
       {#if job}
         <div class="grid gap-4 py-4">
           <p>Permanently removes <strong>{job.name}</strong>'s local record, whatever its state.</p>
-          <Callout>This deletes the job's local record (job.json, wal/, pid), not recoverable. Recorded media already committed to the destination is not touched. Use this to clear a job stuck resumable because its process was killed before it could finish -- cancel and prune can't touch that case.</Callout>
+          <Callout>This deletes the job's local record (job.json, wal/, pid), not recoverable. Recorded media already committed to the destination is not touched. Use this to clear a job stuck resumable because its process was killed before it could finish. Cancel and prune can't touch that case.</Callout>
           {#if appState.sinkRemoveError}
             <CliErrorOutput role="alert" text={appState.sinkRemoveError} command={commandText} />
           {/if}

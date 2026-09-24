@@ -17,10 +17,13 @@ import {
   buildSinkCancelArgv,
   buildSinkFinishArgv,
   buildSinkListArgv,
+  buildSinkMarkArgv,
   buildSinkPruneArgv,
   buildSinkResumeArgv,
   buildSinkStartArgv,
   buildSinkStatusArgv,
+  validateSinkMarkDuration,
+  validateSinkMarkLabel,
   buildSnapshotArgv,
   buildUploadCancelArgv,
   buildUploadListArgv,
@@ -330,6 +333,7 @@ describe('cli helpers', () => {
     overwrite: false,
     dryRun: false,
     restart: false,
+    directToStorage: false,
     include: [],
     exclude: [],
     followSymlinks: false,
@@ -353,6 +357,7 @@ describe('cli helpers', () => {
     expect(argv).not.toContain('--overwrite')
     expect(argv).not.toContain('--dry-run')
     expect(argv).not.toContain('--restart')
+    expect(argv).not.toContain('--direct-to-storage')
   })
 
   it('builds upload start argv with every flag set', () => {
@@ -363,6 +368,7 @@ describe('cli helpers', () => {
       rescanInterval: ' 1m ',
       restart: true,
       bwlimit: 50,
+      directToStorage: true,
       include: ['*.jpg', '  '],
       exclude: ['*.tmp'],
       followSymlinks: true,
@@ -378,6 +384,7 @@ describe('cli helpers', () => {
         '--rescan-interval', '1m',
         '--restart',
         '--bwlimit', '50',
+        '--direct-to-storage',
         '--include', '*.jpg',
         '--exclude', '*.tmp',
         '--follow-symlinks',
@@ -682,6 +689,10 @@ describe('cli helpers', () => {
       'sink',
       '--discovery-url', 'https://hub.example.com',
       '--fork', 'main',
+      '--renditions', 'all',
+      '--track-halt', 'job',
+      '--rollover-clock', 'content',
+      '--stamp-time', 'ingest',
       '-a', 'ABCDEFGHIJKLMNOPQRST',
       '-s',
       '--',
@@ -709,6 +720,71 @@ describe('cli helpers', () => {
     expect(argv).not.toContain('--variant')
     expect(argv).not.toContain('--max-latency')
     expect(argv).not.toContain('--wal-max')
+  })
+
+  it('emits the chosen sink option values', () => {
+    const argv = buildSinkStartArgv(profile, 'https://example.com/live.m3u8', '/feed.mp4', {
+      renditions: 'none',
+      trackHalt: 'track',
+      rolloverClock: 'wall',
+      stampTime: 'none',
+    })
+    expect(argv).toEqual(expect.arrayContaining(['--renditions', 'none', '--track-halt', 'track', '--rollover-clock', 'wall', '--stamp-time', 'none']))
+    expect(argv.indexOf('--renditions')).toBeLessThan(argv.indexOf('--'))
+  })
+
+  // A re-run keeps any option not given on the command line, so the
+  // defaults are sent explicitly, never omitted.
+  it('sends sink option flags at their CLI defaults, and the defaults for unset values', () => {
+    const defaults = buildSinkStartArgv(profile, 'https://example.com/live.m3u8', '/feed.mp4', {
+      renditions: 'all',
+      trackHalt: 'job',
+      rolloverClock: 'content',
+      stampTime: 'ingest',
+    })
+    expect(defaults).toEqual(expect.arrayContaining(['--renditions', 'all', '--track-halt', 'job', '--rollover-clock', 'content', '--stamp-time', 'ingest']))
+    expect(defaults).toEqual(buildSinkStartArgv(profile, 'https://example.com/live.m3u8', '/feed.mp4', sinkParams()))
+  })
+
+  it('builds sink mark argv matching the Rust build_sink_mark_argv fixture', () => {
+    expect(buildSinkMarkArgv('abcdef1234567890', '', '')).toEqual(['sink', 'mark', 'abcdef1234567890'])
+    expect(buildSinkMarkArgv('abcdef1234567890', 'goal', '30s')).toEqual([
+      'sink', 'mark', 'abcdef1234567890', '--label', 'goal', '--duration', '30s',
+    ])
+  })
+
+  it('applies the CLI mark label rules', () => {
+    expect(validateSinkMarkLabel('')).toBeNull()
+    expect(validateSinkMarkLabel('goal, 2-1')).toBeNull()
+    expect(validateSinkMarkLabel('a'.repeat(1024))).toBeNull()
+    expect(validateSinkMarkLabel('a'.repeat(1025))).not.toBeNull()
+    // Byte length, not character count: each é is two bytes in UTF-8.
+    expect(validateSinkMarkLabel('é'.repeat(513))).not.toBeNull()
+    expect(validateSinkMarkLabel('say "hi"')).not.toBeNull()
+    expect(validateSinkMarkLabel('line\nbreak')).not.toBeNull()
+    expect(validateSinkMarkLabel('line\rbreak')).not.toBeNull()
+    expect(validateSinkMarkLabel('goal\tscored')).not.toBeNull()
+    expect(validateSinkMarkLabel('esc\u001b')).not.toBeNull()
+    expect(validateSinkMarkLabel('next\u0085line')).not.toBeNull()
+    expect(validateSinkMarkLabel('lone\ud800')).not.toBeNull()
+    expect(validateSinkMarkLabel('café 🎬')).toBeNull()
+  })
+
+  it('accepts every Go duration the CLI accepts for a mark duration', () => {
+    const valid = ['', '0', '+0', '-0', '-0s', '0ms', '30s', '+30s', '.5s', '1.s', '1.5h', '1h2m3.5s', '1ms', '500ms', '1000us', '1000000ns', '1000\u00b5s', '1000\u03bcs', '.001s', '0.000004s0.000996s', '0.000009s0.000991s', '0.' + '2'.repeat(309) + 's', '0.' + '9'.repeat(400) + 'ms', '1.' + '5'.repeat(320) + 's']
+    for (const ok of valid) expect(validateSinkMarkDuration(ok), ok).toBeNull()
+  })
+
+  it('rejects a mark duration between 0 and 1ms, as the CLI does', () => {
+    for (const bad of ['10ns', '10us', '10\u00b5s', '10\u03bcs', '999us', '.5ms', '999999ns']) {
+      expect(validateSinkMarkDuration(bad), bad).toBe('Duration must be 0 (a point in time) or at least 1ms.')
+    }
+  })
+
+  it('rejects negative and malformed mark durations', () => {
+    const invalid = ['-5s', '-0.5s', '30', '.s', '1 m', 'abc', '1d', '5S', '+', '-']
+    for (const bad of invalid) expect(validateSinkMarkDuration(bad), bad).not.toBeNull()
+    expect(validateSinkMarkDuration('-5s')).toBe('Duration must not be negative.')
   })
 
   it('gives sink resume no flags of its own, matching the Rust build_sink_resume_argv fixture', () => {

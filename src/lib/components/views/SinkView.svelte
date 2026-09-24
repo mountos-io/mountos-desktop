@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     ArrowRight,
+    BookmarkPlus,
     Check,
     ChevronLeft,
     Clock,
@@ -21,7 +22,8 @@
   import { Label } from '$lib/components/ui/label'
   import { Checkbox } from '$lib/components/ui/checkbox'
   import { Badge, type BadgeVariant } from '$lib/components/ui/badge'
-  import { Table, TableBody, TableRow, TableCell } from '$lib/components/ui/table'
+  import { Select } from '$lib/components/ui/select'
+  import { Table, TableBody, TableHead, TableHeader, TableRow, TableCell } from '$lib/components/ui/table'
   import Combobox from '$lib/components/shared/Combobox.svelte'
   import InfoTip from '$lib/components/shared/InfoTip.svelte'
   import JobPanel from '$lib/components/shared/JobPanel.svelte'
@@ -39,6 +41,7 @@
     enterSinkCreate,
     exitSinkCreate,
     openSinkJobLog,
+    requestSinkMark,
     requestSinkPrune,
     requestSinkRemove,
     requestSinkResume,
@@ -52,9 +55,10 @@
     selectSinkProfile,
     setJobPanelCollapsed,
     sinkDisplaySnapshot,
+    sinkDisplayTracks,
     withSinkSnapshotCached,
   } from '$lib/app-state.svelte'
-  import type { MountInstance, MountProfile, SinkSnapshot } from '$lib/types'
+  import type { MountInstance, MountProfile, SinkSnapshot, SinkStatus } from '$lib/types'
   import { cn, formatBytes, lastFetchedLabel, matchesSearch } from '$lib/utils'
 
   // Fetch at most once per mount, mirrors UploadsView/DownloadsView's own
@@ -94,6 +98,44 @@
     // treatment as 'completed' since both are non-error endpoints.
     finished: 'primary',
     resumable: 'warning',
+  }
+
+  // Track states from sink status. A stopped track of a stopped job reports
+  // 'stopped', a track whose source ended reports 'ended'.
+  const trackBadgeVariant: Record<string, BadgeVariant> = {
+    running: 'success',
+    paused: 'warning',
+    draining: 'warning',
+    halted: 'destructive',
+    ended: 'primary',
+    stopped: 'secondary',
+  }
+
+  // The default of each list is the CLI default (SINK_OPTION_DEFAULTS).
+  const renditionsOptions = [
+    { value: 'all', label: 'All renditions' },
+    { value: 'default', label: 'Default renditions only' },
+    { value: 'none', label: 'None' },
+  ]
+  const trackHaltOptions = [
+    { value: 'job', label: 'Stop the job' },
+    { value: 'track', label: 'Stop only that track' },
+  ]
+  const rolloverClockOptions = [
+    { value: 'content', label: 'Program date-time' },
+    { value: 'wall', label: 'Wall clock' },
+  ]
+  const stampTimeOptions = [
+    { value: 'ingest', label: 'Estimate from ingest clock' },
+    { value: 'none', label: 'Do not add' },
+  ]
+
+  // An empty recorded value means the job predates that option. Such a job
+  // keeps the behavior it had before the option existed: no alternative
+  // renditions, job halt, wall-clock rollover, no date-time stamping.
+  function optionLabel(options: { value: string; label: string }[], value: string | undefined, legacy: string): string {
+    const label = (v: string) => options.find((option) => option.value === v)?.label ?? v
+    return value ? label(value) : `${label(legacy)} (set before this option existed)`
   }
 
   const selectedJob = $derived(appState.sinks.find((job) => job.jobId === appState.sinkSelectedJobId) ?? null)
@@ -155,6 +197,20 @@
   const displaySnapshot = $derived(
     sinkDisplaySnapshot(sinkSnapshotCache, selectedJob?.jobId, selectedSnapshot, selectedJob?.state === 'running'),
   )
+
+  // The status entry clears on each list refresh, so keep the last status
+  // seen per job. The options group and the top-level track list read it and
+  // do not flicker while the status is fetched again. Each fresh status
+  // replaces the entry: a re-run of `sink SOURCE SINK` with explicit option
+  // flags changes the recorded option values.
+  let sinkStatusCache: Record<string, SinkStatus> = $state({})
+  $effect(() => {
+    const status = selectedJob ? appState.sinkStatusByJobId[selectedJob.jobId] : undefined
+    if (!status || sinkStatusCache[status.jobId] === status) return
+    sinkStatusCache = { ...sinkStatusCache, [status.jobId]: status }
+  })
+  const displayStatus = $derived(selectedJob ? sinkStatusCache[selectedJob.jobId] : undefined)
+  const displayTracks = $derived(sinkDisplayTracks(displaySnapshot, displayStatus))
 
   function instanceLabel(instance: MountInstance): string {
     return instance.name || instance.mountPath
@@ -269,9 +325,17 @@
     if (!snapshot || isLastKnown) return NOT_AVAILABLE
     return formatTimestamp(iso)
   }
-  // Two groups rather than one long column: throughput answers "how much has
-  // moved", trouble answers "what went wrong and how recently". They render
-  // side by side when there is room and stack when there is not.
+  // A stopped job's saved counters keep the program date-time and the
+  // date-range count, so these show for a lastKnown snapshot too.
+  function formatProgramDateTime(snapshot: SinkSnapshot | undefined): string {
+    if (!snapshot) return NOT_AVAILABLE
+    return snapshot.lastProgramDateTime ? formatTimestamp(snapshot.lastProgramDateTime) : 'none'
+  }
+  // Groups rather than one long column: throughput answers "how much has
+  // moved", trouble answers "what went wrong and how recently", program time
+  // answers "where the playlist clock is", options show the job's recorded
+  // choices. They render side by side when there is room and stack when
+  // there is not.
   const detailGroups = $derived.by(() => {
     const job = selectedJob
     if (!job) return []
@@ -301,6 +365,26 @@
           { label: 'Last segment', value: formatLastActivity(isLastKnown, snapshot, snapshot?.lastSegmentAt), tone: '' },
         ],
       },
+      {
+        title: `Program time${suffix}`,
+        rows: [
+          { label: 'Last program date-time', value: formatProgramDateTime(snapshot), tone: '' },
+          { label: 'Date ranges', value: snapshot ? snapshot.dateRanges.toLocaleString() : NOT_AVAILABLE, tone: '' },
+        ],
+      },
+      ...(displayStatus
+        ? [
+            {
+              title: 'Options',
+              rows: [
+                { label: 'Renditions', value: optionLabel(renditionsOptions, displayStatus.renditions, 'none'), tone: '' },
+                { label: 'Track halt', value: optionLabel(trackHaltOptions, displayStatus.trackHalt, 'job'), tone: '' },
+                { label: 'Rollover clock', value: optionLabel(rolloverClockOptions, displayStatus.rolloverClock, 'wall'), tone: '' },
+                { label: 'Missing program date-time', value: optionLabel(stampTimeOptions, displayStatus.stampTime, 'none'), tone: '' },
+              ],
+            },
+          ]
+        : []),
     ]
   })
 </script>
@@ -417,6 +501,51 @@ Default: mountOS sets this from the source's target segment duration, with a 30s
 Default: mountOS reserves the smaller of 2 GiB and 25% of free disk." />
               </span>
               <Input id="sink-wal-max" bind:value={appState.sinkWalMax} placeholder="2G" />
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div class="grid gap-1.5">
+                <span class="inline-flex items-center gap-1">
+                  <Label id="sink-renditions-label">Alternative renditions</Label>
+                  <InfoTip text="Records the audio and subtitle renditions of the selected variant, each into its own file next to the main file (`--renditions`).
+
+• **All renditions** records every one (default).
+• **Default renditions only** records, for each audio group, the renditions the source marks as default. A group with no default records its first auto-select rendition, or else its first rendition. For subtitles, it records only the renditions marked as default.
+• **None** records only the main file." />
+                </span>
+                <Select options={renditionsOptions} bind:value={appState.sinkRenditions} ariaLabelledby="sink-renditions-label" />
+              </div>
+              <div class="grid gap-1.5">
+                <span class="inline-flex items-center gap-1">
+                  <Label id="sink-track-halt-label">When a rendition track halts</Label>
+                  <InfoTip text="Sets what happens when an audio or subtitle track halts (`--track-halt`).
+
+• **Stop the job** stops all recording (default).
+• **Stop only that track** keeps the rest of the job recording." />
+                </span>
+                <Select options={trackHaltOptions} bind:value={appState.sinkTrackHalt} ariaLabelledby="sink-track-halt-label" />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div class="grid gap-1.5">
+                <span class="inline-flex items-center gap-1">
+                  <Label id="sink-rollover-clock-label">Rollover clock</Label>
+                  <InfoTip text="Sets the clock that renders the time verbs in the destination path (`--rollover-clock`).
+
+• **Program date-time** uses the time of each segment (default).
+• **Wall clock** uses the time mountOS fetches the segment." />
+                </span>
+                <Select options={rolloverClockOptions} bind:value={appState.sinkRolloverClock} ariaLabelledby="sink-rollover-clock-label" />
+              </div>
+              <div class="grid gap-1.5">
+                <span class="inline-flex items-center gap-1">
+                  <Label id="sink-stamp-time-label">Missing program date-time</Label>
+                  <InfoTip text="Applies to a live source that sends no program date-time (`--stamp-time`).
+
+• **Estimate from ingest clock** adds one from the time of ingest (default). It stops once the source sends its own. A job that records or finishes alternative audio or subtitle tracks, or cannot restart one it recorded before, does not add one, because the playlists must agree on date-times.
+• **Do not add** leaves the playlist without it. Marks then need a source that sends it, as they do while a job records, finishes or cannot restart tracks." />
+                </span>
+                <Select options={stampTimeOptions} bind:value={appState.sinkStampTime} ariaLabelledby="sink-stamp-time-label" />
+              </div>
             </div>
           </div>
         {/if}
@@ -624,7 +753,7 @@ Default: mountOS reserves the smaller of 2 GiB and 25% of free disk." />
       {@const job = selectedJob}
       <div class="surface corner-brackets p-4 grid content-start gap-4 min-w-0" style:direction="ltr">
         <div class="flex flex-wrap items-start justify-between gap-2">
-          <div class="min-w-0 flex-1 basis-48">
+          <div class="min-w-0 flex-1 basis-96">
             <h3 class="flex min-w-0 items-center gap-2">
               <Radio size={19} aria-hidden="true" class="shrink-0" />
               <span class="min-w-0 flex-1 truncate">{job.name || job.sinkTemplate || job.jobId}</span>
@@ -649,11 +778,20 @@ Default: mountOS reserves the smaller of 2 GiB and 25% of free disk." />
               <Button
                 type="button"
                 variant="outline"
-                title="Finish now. Finalizes the playlist so players see it as complete, and ends the job."
+                title="Finish now. Finalizes the playlist so players see it as complete, and ends the job. A job whose audio or subtitle tracks have not all finalized stays resumable, and a resume finalizes them."
                 disabled={appState.sinksBusy}
                 onclick={() => runSinkFinish(job)}
               >
                 <Check size={16} aria-hidden="true" /> Finish
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                title="Add a mark at the current time to the playlist."
+                disabled={appState.sinksBusy}
+                onclick={() => requestSinkMark(job)}
+              >
+                <BookmarkPlus size={16} aria-hidden="true" /> Mark
               </Button>
             {:else}
               {#if job.state === 'halted' || job.state === 'resumable'}
@@ -768,7 +906,7 @@ Default: mountOS reserves the smaller of 2 GiB and 25% of free disk." />
 
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-4 max-w-3xl mt-4">
             {#each detailGroups as group (group.title)}
-              <div class="grid gap-1 min-w-0">
+              <div class="grid content-start gap-1 min-w-0">
                 <p class="text-label-foreground text-xs font-semibold uppercase tracking-wide">{group.title}</p>
                 <Table containerLabel={group.title} class="w-full">
                   <TableBody>
@@ -783,6 +921,60 @@ Default: mountOS reserves the smaller of 2 GiB and 25% of free disk." />
               </div>
             {/each}
           </div>
+
+          {#if displayTracks.length > 0}
+            <!-- A stopped job's track rows are saved values, from the cached
+                 snapshot or from each track's own record, so they carry
+                 "(last known)". A track whose process died before it saved
+                 counters has countersKnown false: its counters are unknown,
+                 not zero. -->
+            {@const tracksTitle = `Rendition tracks${job.state !== 'running' ? ' (last known)' : ''}`}
+            <div class="grid gap-1 min-w-0 max-w-3xl mt-4">
+              <p class="text-label-foreground text-xs font-semibold uppercase tracking-wide">{tracksTitle}</p>
+              <Table containerLabel={tracksTitle} class="w-full">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead class="text-xs">Track</TableHead>
+                    <TableHead class="text-xs">State</TableHead>
+                    <TableHead class="text-xs text-right">Segments</TableHead>
+                    <TableHead class="text-xs text-right">Bytes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <!-- The index keeps each key unique: a repeated or empty track
+                       key must not break the view. -->
+                  {#each displayTracks as track, index (`${track.key}:${index}`)}
+                    <!-- A stopped track can carry a reason too, for example an
+                         unreadable track record. -->
+                    {@const hasReason = Boolean(track.haltReason)}
+                    <TableRow class={hasReason ? 'border-b-0' : ''}>
+                      <TableCell class="align-top">
+                        <span class="block whitespace-nowrap font-mono text-sm" title={track.currentPath}>{track.key}</span>
+                        <span class="block text-muted-foreground text-xs">
+                          {track.type === 'SUBTITLES' ? 'Subtitles' : track.type === 'AUDIO' ? 'Audio' : track.type}{track.language ? `, ${track.language}` : ''}{track.name ? `, ${track.name}` : ''}
+                        </span>
+                      </TableCell>
+                      <TableCell class="align-top">
+                        <Badge variant={trackBadgeVariant[track.state] ?? 'default'}>{track.state}</Badge>
+                      </TableCell>
+                      {#if track.countersKnown}
+                        <TableCell class="text-right tabular-nums align-top">{track.segmentsCommitted.toLocaleString()}</TableCell>
+                        <TableCell class="text-right tabular-nums whitespace-nowrap align-top">{formatBytes(track.bytesCommitted)}</TableCell>
+                      {:else}
+                        <TableCell class="text-right text-muted-foreground align-top">{NOT_AVAILABLE}</TableCell>
+                        <TableCell class="text-right text-muted-foreground whitespace-nowrap align-top">{NOT_AVAILABLE}</TableCell>
+                      {/if}
+                    </TableRow>
+                    {#if hasReason}
+                      <TableRow>
+                        <TableCell colspan={4} class="pt-0 text-destructive text-xs wrap-anywhere">{track.haltReason}</TableCell>
+                      </TableRow>
+                    {/if}
+                  {/each}
+                </TableBody>
+              </Table>
+            </div>
+          {/if}
         </div>
       </div>
     {:else}

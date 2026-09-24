@@ -217,6 +217,37 @@ export interface SinkSnapshot {
   currentPath: string
   lastCommitAt?: string
   lastSegmentAt?: string
+  // EXT-X-DATERANGE tags written: source tags plus operator marks.
+  dateRanges: number
+  // Latest program date-time committed to a playlist, absent when no
+  // committed segment carried one.
+  lastProgramDateTime?: string
+  // One entry per alternative audio or subtitle rendition the job records.
+  tracks: SinkTrack[]
+}
+
+// One alternative-rendition track of a sink job (src-tauri/src/lib.rs's
+// SinkTrack, mirroring mountos-servers sink_tracks.go's SinkTrackSnapshot).
+export interface SinkTrack {
+  key: string
+  // AUDIO | SUBTITLES
+  type: string
+  name?: string
+  language?: string
+  // running | paused | draining | halted | ended | stopped
+  state: string
+  currentPath?: string
+  haltReason?: string
+  segmentsCommitted: number
+  bytesCommitted: number
+  discontinuities: number
+  fetchErrors: number
+  lagSeconds: number
+  lastProgramDateTime?: string
+  // False for a stopped track whose process died before it saved its
+  // counters: the counters and lastProgramDateTime are then unknown, not
+  // zero.
+  countersKnown: boolean
 }
 
 // As returned by the get_sink_status Tauri command (src-tauri/src/lib.rs's
@@ -235,6 +266,16 @@ export interface SinkStatus {
   haltReason?: string
   snapshot?: SinkSnapshot
   lastKnown?: boolean
+  // Tracks of a stopped job that has no cached counters, so no snapshot.
+  // When snapshot is present, snapshot.tracks carries them instead.
+  tracks: SinkTrack[]
+  // The job's recorded --renditions, --track-halt, --rollover-clock and
+  // --stamp-time values. An absent value means the job predates that
+  // option and keeps the behavior it had before it.
+  renditions?: string
+  trackHalt?: string
+  rolloverClock?: string
+  stampTime?: string
 }
 
 // An upload source that's a live running mount instance rather than a

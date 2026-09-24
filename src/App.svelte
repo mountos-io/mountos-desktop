@@ -26,6 +26,7 @@
   import UploadRemoveDialog from '$lib/components/dialogs/UploadRemoveDialog.svelte'
   import DownloadRemoveDialog from '$lib/components/dialogs/DownloadRemoveDialog.svelte'
   import SinkRemoveDialog from '$lib/components/dialogs/SinkRemoveDialog.svelte'
+  import SinkMarkDialog from '$lib/components/dialogs/SinkMarkDialog.svelte'
   import TipsDialog from '$lib/components/dialogs/TipsDialog.svelte'
   import ThirdPartyLicensesDialog from '$lib/components/dialogs/ThirdPartyLicensesDialog.svelte'
   import CommandPalette from '$lib/components/CommandPalette.svelte'
@@ -442,5 +443,6 @@
 <UploadRemoveDialog />
 <DownloadRemoveDialog />
 <SinkRemoveDialog />
+<SinkMarkDialog />
 <TipsDialog />
 <ThirdPartyLicensesDialog />

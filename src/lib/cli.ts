@@ -466,6 +466,9 @@ export interface UploadStartParams {
   rescanInterval?: string
   restart: boolean
   bwlimit?: number
+  // directToStorage is --direct-to-storage: file data goes straight to the
+  // volume's object storage and skips the fast block tier.
+  directToStorage: boolean
   include: string[]
   exclude: string[]
   followSymlinks: boolean
@@ -544,6 +547,7 @@ export function buildUploadStartArgv(
   if (params.rescanInterval?.trim()) argv.push('--rescan-interval', params.rescanInterval.trim())
   if (params.restart) argv.push('--restart')
   if (params.bwlimit && params.bwlimit > 0) argv.push('--bwlimit', String(params.bwlimit))
+  if (params.directToStorage) argv.push('--direct-to-storage')
   for (const pattern of params.include) {
     if (pattern.trim()) argv.push('--include', pattern.trim())
   }
@@ -780,17 +784,47 @@ export function buildDownloadRemoveArgv(jobId: string): string[] {
   return ['download', 'remove', jobId]
 }
 
+export type SinkRenditions = 'all' | 'default' | 'none'
+export type SinkTrackHalt = 'job' | 'track'
+export type SinkRolloverClock = 'content' | 'wall'
+export type SinkStampTime = 'ingest' | 'none'
+
 export interface SinkStartParams {
   variant?: string
   maxLatency?: string
   walMax?: string
+  renditions?: SinkRenditions
+  trackHalt?: SinkTrackHalt
+  rolloverClock?: SinkRolloverClock
+  stampTime?: SinkStampTime
 }
+
+// CLI defaults of the sink option flags (cmd_sink.go, sink_options.go).
+// buildSinkStartArgv always sends all four flags, with the default for an
+// unset value: a re-run of `sink SOURCE SINK` for an existing job replaces
+// only the options given on the command line, so an omitted flag keeps the
+// job's old value while the form shows another. Mirrors
+// src-tauri/src/lib.rs's SINK_OPTION_FLAGS.
+export const SINK_OPTION_DEFAULTS = {
+  renditions: 'all',
+  trackHalt: 'job',
+  rolloverClock: 'content',
+  stampTime: 'ingest',
+} as const satisfies Required<Pick<SinkStartParams, 'renditions' | 'trackHalt' | 'rolloverClock' | 'stampTime'>>
+
+const SINK_OPTION_FLAGS = [
+  ['renditions', '--renditions'],
+  ['trackHalt', '--track-halt'],
+  ['rolloverClock', '--rollover-clock'],
+  ['stampTime', '--stamp-time'],
+] as const
 
 // `mountos sink <M3U8_URL> <SINK_PATH>`'s flag surface, confirmed against
 // cmd_sink.go: --fork (not --fork-name, matches upload's convention), plus
-// --variant/--max-latency/--wal-max. No --config here: the desktop only
-// drives the single-stream form, never the multi-stream YAML file. No
-// --once/--overwrite/--dry-run/--bwlimit/--include/--exclude/
+// --variant/--max-latency/--wal-max and all four option flags in
+// SINK_OPTION_FLAGS. No --config here: the
+// desktop only drives the single-stream form, never the multi-stream YAML
+// file. No --once/--overwrite/--dry-run/--bwlimit/--include/--exclude/
 // --follow-symlinks/--create-source-directory either, sink has none of
 // those, do not carry them over from upload/download by habit. Mirrors
 // src-tauri/src/lib.rs's build_sink_start_argv, including the
@@ -806,6 +840,7 @@ export function buildSinkStartArgv(profile: MountProfile, source: string, dest: 
   if (params.variant?.trim()) argv.push('--variant', params.variant.trim())
   if (params.maxLatency?.trim()) argv.push('--max-latency', params.maxLatency.trim())
   if (params.walMax?.trim()) argv.push('--wal-max', params.walMax.trim())
+  for (const [key, flag] of SINK_OPTION_FLAGS) argv.push(flag, params[key] || SINK_OPTION_DEFAULTS[key])
   pushSatelliteCredentials(argv, profile)
   argv.push('--', source, dest)
   return argv
@@ -840,13 +875,97 @@ export function buildSinkCancelArgv(jobId: string): string[] {
   return ['sink', 'cancel', jobId]
 }
 
-// Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running this
-// signals a live control-socket shutdown (drains the WAL, writes the real
-// EXT-X-ENDLIST, ends the job); when not running it stamps the terminal
-// state directly once the WAL is already drained. Same subcommand either
-// way, no separate flag, same reasoning as buildUploadFinishArgv.
+// Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running it
+// asks the daemon to drain the WAL and write EXT-X-ENDLIST; a job whose
+// rendition tracks have not all finalized stays resumable. The CLI refuses
+// a job that is not running.
 export function buildSinkFinishArgv(jobId: string): string[] {
   return ['sink', 'finish', jobId]
+}
+
+// Mirrors cmd_sink.go's `sink mark <job-id> [--label] [--duration]` and
+// src-tauri/src/lib.rs's build_sink_mark_argv. Empty label and duration
+// are omitted (no label, a point in time).
+export function buildSinkMarkArgv(jobId: string, label: string, duration: string): string[] {
+  const argv = ['sink', 'mark', jobId]
+  if (label) argv.push('--label', label)
+  if (duration) argv.push('--duration', duration)
+  return argv
+}
+
+export const SINK_MARK_LABEL_MAX_BYTES = 1024
+
+// Same limit and characters the CLI refuses for a mark label: the label
+// goes into a quoted EXT-X-DATERANGE attribute, and a playlist must be
+// UTF-8 with no control characters. Returns an error message, or null when
+// the label is valid.
+export function validateSinkMarkLabel(label: string): string | null {
+  const bytes = new TextEncoder().encode(label).length
+  if (bytes > SINK_MARK_LABEL_MAX_BYTES) return `Label is ${bytes} bytes. The limit is ${SINK_MARK_LABEL_MAX_BYTES}.`
+  if (/["\r\n]/.test(label)) return 'Label must not contain a double quote or line break.'
+  // A lone surrogate has no UTF-8 form.
+  if (/[\u0000-\u001F\u007F-\u009F]|\p{Cs}/u.test(label)) return 'Label must not contain a control character.'
+  return null
+}
+
+// Go duration syntax, the same grammar as time.ParseDuration: an optional
+// sign, then "0" or one or more decimal numbers each with a unit. Both
+// micro signs (U+00B5 and U+03BC) spell microseconds.
+const GO_DURATION = /^[+-]?(?:0|(?:(?:\d+\.?\d*|\.\d+)(?:ns|us|\u00b5s|\u03bcs|ms|s|m|h))+)$/
+
+// Nanoseconds per Go duration unit.
+const GO_DURATION_UNIT_NS: Record<string, bigint> = {
+  ns: 1n,
+  us: 1_000n,
+  '\u00b5s': 1_000n,
+  '\u03bcs': 1_000n,
+  ms: 1_000_000n,
+  s: 1_000_000_000n,
+  m: 60_000_000_000n,
+  h: 3_600_000_000_000n,
+}
+
+// goLeadingFraction reads fraction digits the way Go's time package does:
+// digits are taken while the value fits in 63 bits, and the rest are
+// ignored, so a very long fraction never overflows.
+function goLeadingFraction(fraction: string): [bigint, number] {
+  const limit = (1n << 63n) - 1n
+  let x = 0n
+  let scale = 1
+  for (const c of fraction) {
+    if (x > limit / 10n) break
+    const y = x * 10n + BigInt(c)
+    if (y > 1n << 63n) break
+    x = y
+    scale *= 10
+  }
+  return [x, scale]
+}
+
+// Accepts every duration `sink mark --duration` accepts: valid Go syntax
+// whose value is 0 (a point in time) or at least 1ms. The CLI refuses a
+// negative value and a value between 0 and 1ms. A negative zero is zero.
+// Returns an error message, or null when the value is empty or valid.
+export function validateSinkMarkDuration(duration: string): string | null {
+  if (!duration) return null
+  if (!GO_DURATION.test(duration)) return 'Use a duration such as 30s, 1m30s, or 1.5h.'
+  // Summed the way time.ParseDuration does: the whole part in integer
+  // nanoseconds, the fraction scaled by the unit and truncated, so a value
+  // the CLI reads as exactly 1ms is not refused for a floating-point
+  // rounding.
+  let ns = 0n
+  for (const [, whole, fraction, unit] of duration.matchAll(/(\d*)(?:\.(\d*))?(ns|us|\u00b5s|\u03bcs|ms|s|m|h)/g)) {
+    const perUnit = GO_DURATION_UNIT_NS[unit]
+    ns += BigInt(whole || '0') * perUnit
+    if (fraction) {
+      const [digits, scale] = goLeadingFraction(fraction)
+      ns += BigInt(Math.trunc(Number(digits) * (Number(perUnit) / scale)))
+    }
+  }
+  if (ns === 0n) return null
+  if (duration.startsWith('-')) return 'Duration must not be negative.'
+  if (ns < 1_000_000n) return 'Duration must be 0 (a point in time) or at least 1ms.'
+  return null
 }
 
 export function buildSinkStatusArgv(jobId: string): string[] {

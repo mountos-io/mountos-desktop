@@ -419,6 +419,9 @@ struct UploadStartParams {
     rescan_interval: Option<String>,
     restart: bool,
     bwlimit: Option<u32>,
+    // --direct-to-storage: file data goes straight to the volume's object
+    // storage and skips the fast block tier.
+    direct_to_storage: bool,
     include: Vec<String>,
     exclude: Vec<String>,
     follow_symlinks: bool,
@@ -589,6 +592,40 @@ struct SinkSnapshot {
     // rather than passed through. See parse_sink_snapshot_value.
     last_commit_at: Option<String>,
     last_segment_at: Option<String>,
+    // EXT-X-DATERANGE tags written: source tags plus operator marks.
+    date_ranges: i64,
+    // Latest program date-time committed to a playlist. None when no
+    // committed segment carried one.
+    last_program_date_time: Option<String>,
+    // One entry per alternative audio or subtitle rendition the job records.
+    tracks: Vec<SinkTrack>,
+}
+
+// Mirrors mountos-servers' SinkTrackSnapshot (sink_tracks.go): one
+// alternative-rendition track of a sink job.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SinkTrack {
+    key: String,
+    // AUDIO | SUBTITLES
+    #[serde(rename = "type")]
+    track_type: String,
+    name: Option<String>,
+    language: Option<String>,
+    // running | paused | draining | halted | ended | stopped
+    state: String,
+    current_path: Option<String>,
+    halt_reason: Option<String>,
+    segments_committed: i64,
+    bytes_committed: i64,
+    discontinuities: i64,
+    fetch_errors: i64,
+    lag_seconds: f64,
+    last_program_date_time: Option<String>,
+    // False for a stopped track whose process died before it saved its
+    // counters: the counters and last_program_date_time are then unknown,
+    // not zero. True when the key is absent (a CLI that does not send it).
+    counters_known: bool,
 }
 
 // Mirrors mountos-servers' sinkStatusPayload (cmd_sink.go).
@@ -605,20 +642,47 @@ struct SinkStatus {
     halt_reason: Option<String>,
     snapshot: Option<SinkSnapshot>,
     last_known: bool,
+    // Tracks of a stopped job that has no cached counters, so no snapshot.
+    // When snapshot is present, its own tracks field carries them instead.
+    tracks: Vec<SinkTrack>,
+    // The job's recorded --renditions, --track-halt, --rollover-clock and
+    // --stamp-time values. None means the job predates that option and keeps
+    // the behavior it had before it.
+    renditions: Option<String>,
+    track_halt: Option<String>,
+    rollover_clock: Option<String>,
+    stamp_time: Option<String>,
 }
 
 // Frontend-supplied flags for the `mountos sink <M3U8_URL> <SINK_PATH>` run
-// form. Confirmed against cmd_sink.go: only --variant/--max-latency/
-// --wal-max exist beyond the shared --fork/credentials every satellite
-// builder already handles. No once/overwrite/dryRun/bwlimit/include/
-// exclude the way UploadStartParams has, sink has none of those.
+// form. Confirmed against cmd_sink.go: --variant/--max-latency/--wal-max
+// and the four option selects exist beyond the shared --fork/credentials
+// every satellite builder already handles. No once/overwrite/dryRun/
+// bwlimit/include/exclude the way UploadStartParams has, sink has none of
+// those.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SinkStartParams {
     variant: Option<String>,
     max_latency: Option<String>,
     wal_max: Option<String>,
+    renditions: Option<String>,
+    track_halt: Option<String>,
+    rollover_clock: Option<String>,
+    stamp_time: Option<String>,
 }
+
+// The sink option flags and their CLI defaults (cmd_sink.go,
+// sink_options.go). build_sink_start_argv always sends all four, with the
+// default for an unset value: a re-run of `sink SOURCE SINK` for an existing
+// job replaces only the options given on the command line, so an omitted
+// flag keeps the job's old value while the form shows another.
+const SINK_OPTION_FLAGS: [(&str, &str); 4] = [
+    ("--renditions", "all"),
+    ("--track-halt", "job"),
+    ("--rollover-clock", "content"),
+    ("--stamp-time", "ingest"),
+];
 
 #[derive(Debug, Serialize)]
 struct UnmountResult {
@@ -1856,6 +1920,9 @@ fn build_upload_start_argv(
     if let Some(bwlimit) = params.bwlimit.filter(|v| *v > 0) {
         argv.extend(["--bwlimit".to_string(), bwlimit.to_string()]);
     }
+    if params.direct_to_storage {
+        argv.push("--direct-to-storage".to_string());
+    }
     for pattern in params
         .include
         .iter()
@@ -2191,12 +2258,13 @@ fn build_download_prune_argv(keep: u32) -> Vec<String> {
 
 // `mountos sink <M3U8_URL> <SINK_PATH>`'s flag surface, confirmed against
 // cmd_sink.go: --fork (not --fork-name, matches upload's convention), plus
-// --variant/--max-latency/--wal-max. No --config here: the desktop only
-// ever drives the single-stream form, never the multi-stream YAML file. No
-// once/overwrite/dryRun/bwlimit/include/exclude/follow-symlinks/
-// create-source-directory either, do not carry those over from upload/
-// download by habit. Same flags-first-then-"--"-then-positionals ordering
-// as build_upload_start_argv, for the same reason (see that function's
+// --variant/--max-latency/--wal-max and every option flag listed in
+// SINK_OPTION_FLAGS. No --config here: the desktop only ever drives the
+// single-stream form, never the multi-stream YAML file. No once/overwrite/
+// dryRun/bwlimit/include/exclude/follow-symlinks/create-source-directory
+// either, do not carry those over from upload/download by habit. Same
+// flags-first-then-"--"-then-positionals ordering as
+// build_upload_start_argv, for the same reason (see that function's
 // comment). source is an operator-supplied URL and dest a path template,
 // both free text.
 fn build_sink_start_argv(
@@ -2235,6 +2303,20 @@ fn build_sink_start_argv(
         .filter(|v| !v.is_empty())
     {
         argv.extend(["--wal-max".to_string(), wal_max.to_string()]);
+    }
+    let options = [
+        &params.renditions,
+        &params.track_halt,
+        &params.rollover_clock,
+        &params.stamp_time,
+    ];
+    for ((flag, default), value) in SINK_OPTION_FLAGS.iter().zip(options) {
+        let value = value
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or(*default);
+        argv.extend([flag.to_string(), value.to_string()]);
     }
     push_satellite_credentials(&mut argv, profile);
     argv.extend(["--".to_string(), source.to_string(), dest.to_string()]);
@@ -2280,13 +2362,26 @@ fn build_sink_remove_argv(job_id: &str) -> Vec<String> {
     vec!["sink".to_string(), "remove".to_string(), job_id.to_string()]
 }
 
-// Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running
-// this signals a live control-socket shutdown (drains the WAL, writes the
-// real EXT-X-ENDLIST, ends the job); when not running it stamps the
-// terminal state directly once the WAL is already drained. Same subcommand
-// either way, no separate flag, matches build_upload_finish_argv's shape.
+// Mirrors cmd_sink.go's `sink finish <job-id>`. While the job is running it
+// asks the daemon to drain the WAL and write EXT-X-ENDLIST; a job whose
+// rendition tracks have not all finalized stays resumable. The CLI refuses
+// a job that is not running.
 fn build_sink_finish_argv(job_id: &str) -> Vec<String> {
     vec!["sink".to_string(), "finish".to_string(), job_id.to_string()]
+}
+
+// Mirrors cmd_sink.go's `sink mark <job-id> [--label] [--duration]`: records
+// an EXT-X-DATERANGE mark in a running job's playlist. Local only, like
+// finish. Empty label and duration are omitted (no label, a point in time).
+fn build_sink_mark_argv(job_id: &str, label: &str, duration: &str) -> Vec<String> {
+    let mut argv = vec!["sink".to_string(), "mark".to_string(), job_id.to_string()];
+    if !label.is_empty() {
+        argv.extend(["--label".to_string(), label.to_string()]);
+    }
+    if !duration.is_empty() {
+        argv.extend(["--duration".to_string(), duration.to_string()]);
+    }
+    argv
 }
 
 fn build_sink_status_argv(job_id: &str) -> Vec<String> {
@@ -5415,10 +5510,8 @@ async fn cancel_sink(job_id: String) -> Result<String, DesktopError> {
         .map_err(|error| DesktopError::Message(format!("cancel sink task failed: {error}")))?
 }
 
-// Sink's own graceful stop: unlike finish_upload/finish_download (only valid
-// once a halted job's WAL is already drained), sink's control socket lets a
-// RUNNING job be told to finish live. Works the same way finish_upload/
-// finish_download do when the job isn't running.
+// Sink's own graceful stop: the CLI tells a RUNNING job to finish live over
+// its control socket, and refuses a job that is not running.
 fn finish_sink_blocking(job_id: String) -> Result<String, DesktopError> {
     let job_id = job_id.trim();
     if job_id.is_empty() {
@@ -5433,6 +5526,71 @@ async fn finish_sink(job_id: String) -> Result<String, DesktopError> {
     tauri::async_runtime::spawn_blocking(move || finish_sink_blocking(job_id))
         .await
         .map_err(|error| DesktopError::Message(format!("finish sink task failed: {error}")))?
+}
+
+// Upper bound of a mark label in bytes, same as the CLI's quoted-string
+// limit (internal/hls daterange.go).
+const SINK_MARK_LABEL_MAX_BYTES: usize = 1024;
+
+// Applies the CLI's own label rules first, so a bad label fails with a
+// clear message and no process spawn. The label goes into a quoted
+// EXT-X-DATERANGE attribute, where a double quote or line break is invalid,
+// and a playlist must hold no control characters (U+0000 to U+001F, U+007F
+// to U+009F).
+fn validate_sink_mark_label(label: &str) -> Result<(), DesktopError> {
+    if label.len() > SINK_MARK_LABEL_MAX_BYTES {
+        return Err(DesktopError::Message(format!(
+            "label is {} bytes, limit is {SINK_MARK_LABEL_MAX_BYTES}",
+            label.len()
+        )));
+    }
+    if label.contains(['"', '\r', '\n']) {
+        return Err(DesktopError::Message(
+            "label must not contain a double quote or line break".to_string(),
+        ));
+    }
+    if label
+        .chars()
+        .any(|c| c < '\u{20}' || ('\u{7f}'..='\u{9f}').contains(&c))
+    {
+        return Err(DesktopError::Message(
+            "label must not contain a control character".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+// Only valid while the job is running: the CLI sends the mark to the live
+// daemon's control socket and refuses a stopped job. Returns the CLI's own
+// confirmation line.
+fn mark_sink_blocking(
+    job_id: String,
+    label: Option<String>,
+    duration: Option<String>,
+) -> Result<String, DesktopError> {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
+        return Err(DesktopError::Message("job id is required".to_string()));
+    }
+    validate_upload_job_id(job_id)?;
+    let label = label.as_deref().map(str::trim).unwrap_or_default();
+    validate_sink_mark_label(label)?;
+    let duration = duration.as_deref().map(str::trim).unwrap_or_default();
+    sink_command_blocking(
+        build_sink_mark_argv(job_id, label, duration),
+        FORK_COMMAND_TIMEOUT,
+    )
+}
+
+#[tauri::command]
+async fn mark_sink(
+    job_id: String,
+    label: Option<String>,
+    duration: Option<String>,
+) -> Result<String, DesktopError> {
+    tauri::async_runtime::spawn_blocking(move || mark_sink_blocking(job_id, label, duration))
+        .await
+        .map_err(|error| DesktopError::Message(format!("mark sink task failed: {error}")))?
 }
 
 fn prune_sinks_blocking(keep: u32) -> Result<String, DesktopError> {
@@ -5531,6 +5689,53 @@ fn parse_sink_snapshot_value(value: &Value) -> SinkSnapshot {
         last_segment_at: normalize_sink_timestamp(
             value.get("lastSegmentAt").and_then(Value::as_str),
         ),
+        date_ranges: value.get("dateRanges").and_then(Value::as_i64).unwrap_or(0),
+        last_program_date_time: normalize_sink_timestamp(
+            value.get("lastProgramDateTime").and_then(Value::as_str),
+        ),
+        tracks: parse_sink_tracks_value(value),
+    }
+}
+
+fn parse_sink_tracks_value(value: &Value) -> Vec<SinkTrack> {
+    value
+        .get("tracks")
+        .and_then(Value::as_array)
+        .map(|tracks| tracks.iter().map(parse_sink_track_value).collect())
+        .unwrap_or_default()
+}
+
+fn parse_sink_track_value(value: &Value) -> SinkTrack {
+    let text = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default();
+    let optional_text = |key: &str| {
+        Some(text(key))
+            .filter(|v| !v.is_empty())
+            .map(ToString::to_string)
+    };
+    let count = |key: &str| value.get(key).and_then(Value::as_i64).unwrap_or(0);
+    SinkTrack {
+        key: text("key").to_string(),
+        track_type: text("type").to_string(),
+        name: optional_text("name"),
+        language: optional_text("language"),
+        state: text("state").to_string(),
+        current_path: optional_text("currentPath"),
+        halt_reason: optional_text("haltReason"),
+        segments_committed: count("segmentsCommitted"),
+        bytes_committed: count("bytesCommitted"),
+        discontinuities: count("discontinuities"),
+        fetch_errors: count("fetchErrors"),
+        lag_seconds: value
+            .get("lagSeconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0),
+        last_program_date_time: normalize_sink_timestamp(
+            value.get("lastProgramDateTime").and_then(Value::as_str),
+        ),
+        counters_known: value
+            .get("countersKnown")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
     }
 }
 
@@ -5571,12 +5776,28 @@ fn parse_sink_status_value(value: &Value) -> Result<SinkStatus, DesktopError> {
             .get("haltReason")
             .and_then(Value::as_str)
             .map(ToString::to_string),
-        snapshot: value.get("snapshot").map(parse_sink_snapshot_value),
+        snapshot: value
+            .get("snapshot")
+            .filter(|snapshot| !snapshot.is_null())
+            .map(parse_sink_snapshot_value),
         last_known: value
             .get("lastKnown")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        tracks: parse_sink_tracks_value(value),
+        renditions: sink_option_value(value, "renditions"),
+        track_halt: sink_option_value(value, "trackHalt"),
+        rollover_clock: sink_option_value(value, "rolloverClock"),
+        stamp_time: sink_option_value(value, "stampTime"),
     })
+}
+
+fn sink_option_value(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
 }
 
 fn sink_status_blocking(job_id: String) -> Result<SinkStatus, DesktopError> {
@@ -7614,6 +7835,7 @@ pub fn run() {
             resume_sink,
             cancel_sink,
             finish_sink,
+            mark_sink,
             prune_sinks,
             remove_sink,
             get_sink_status,
@@ -8444,6 +8666,7 @@ mod tests {
             rescan_interval: None,
             restart: false,
             bwlimit: None,
+            direct_to_storage: false,
             include: Vec::new(),
             exclude: Vec::new(),
             follow_symlinks: false,
@@ -8490,6 +8713,7 @@ mod tests {
         assert!(!argv.contains(&"--restart".to_string()));
         assert!(!argv.contains(&"--follow-symlinks".to_string()));
         assert!(!argv.contains(&"--create-source-directory".to_string()));
+        assert!(!argv.contains(&"--direct-to-storage".to_string()));
     }
 
     #[test]
@@ -8501,12 +8725,14 @@ mod tests {
         params.rescan_interval = Some(" 1m ".to_string());
         params.restart = true;
         params.bwlimit = Some(50);
+        params.direct_to_storage = true;
         params.include = vec!["*.jpg".to_string(), "  ".to_string()];
         params.exclude = vec!["*.tmp".to_string()];
         params.follow_symlinks = true;
         params.create_source_directory = true;
 
         let argv = build_upload_start_argv(&profile(), "/src", "/dst", &params, None);
+        assert!(argv.contains(&"--direct-to-storage".to_string()));
         assert!(argv.windows(2).any(|a| a == ["--fork", "main"]));
         assert!(argv.contains(&"--once".to_string()));
         assert!(argv.contains(&"--overwrite".to_string()));
@@ -8610,6 +8836,10 @@ mod tests {
             variant: None,
             max_latency: None,
             wal_max: None,
+            renditions: None,
+            track_halt: None,
+            rollover_clock: None,
+            stamp_time: None,
         }
     }
 
@@ -8635,6 +8865,14 @@ mod tests {
                 "https://hub.example.com",
                 "--fork",
                 "main",
+                "--renditions",
+                "all",
+                "--track-halt",
+                "job",
+                "--rollover-clock",
+                "content",
+                "--stamp-time",
+                "ingest",
                 "-a",
                 "ABCDEFGHIJKLMNOPQRST",
                 "-s",
@@ -8684,6 +8922,96 @@ mod tests {
         assert!(!argv.contains(&"--variant".to_string()));
         assert!(!argv.contains(&"--max-latency".to_string()));
         assert!(!argv.contains(&"--wal-max".to_string()));
+    }
+
+    #[test]
+    fn build_sink_start_argv_emits_the_chosen_option_values() {
+        let mut params = sink_params();
+        params.renditions = Some(" none ".to_string());
+        params.track_halt = Some("track".to_string());
+        params.rollover_clock = Some("wall".to_string());
+        params.stamp_time = Some("none".to_string());
+        let argv = build_sink_start_argv(
+            &profile(),
+            "https://example.com/live.m3u8",
+            "/feed.mp4",
+            &params,
+        );
+        assert!(argv.windows(2).any(|a| a == ["--renditions", "none"]));
+        assert!(argv.windows(2).any(|a| a == ["--track-halt", "track"]));
+        assert!(argv.windows(2).any(|a| a == ["--rollover-clock", "wall"]));
+        assert!(argv.windows(2).any(|a| a == ["--stamp-time", "none"]));
+        let dashdash = argv.iter().position(|a| a == "--").unwrap();
+        let renditions = argv.iter().position(|a| a == "--renditions").unwrap();
+        assert!(renditions < dashdash);
+    }
+
+    #[test]
+    fn build_sink_start_argv_sends_option_flags_at_their_defaults() {
+        let mut params = sink_params();
+        params.renditions = Some("all".to_string());
+        params.track_halt = Some("job".to_string());
+        params.rollover_clock = Some("content".to_string());
+        params.stamp_time = Some("ingest".to_string());
+        let defaults = build_sink_start_argv(
+            &profile(),
+            "https://example.com/live.m3u8",
+            "/feed.mp4",
+            &params,
+        );
+        // A re-run keeps any option not given on the command line, so the
+        // defaults are sent explicitly, never omitted.
+        assert!(defaults.windows(2).any(|a| a == ["--renditions", "all"]));
+        assert!(defaults.windows(2).any(|a| a == ["--track-halt", "job"]));
+        assert!(defaults
+            .windows(2)
+            .any(|a| a == ["--rollover-clock", "content"]));
+        assert!(defaults.windows(2).any(|a| a == ["--stamp-time", "ingest"]));
+        // An unset or blank value sends the default too.
+        let mut blank = sink_params();
+        blank.renditions = Some(" ".to_string());
+        let unset = build_sink_start_argv(
+            &profile(),
+            "https://example.com/live.m3u8",
+            "/feed.mp4",
+            &blank,
+        );
+        assert_eq!(defaults, unset);
+    }
+
+    #[test]
+    fn build_sink_mark_argv_omits_empty_label_and_duration() {
+        assert_eq!(
+            build_sink_mark_argv("abcdef1234567890", "", ""),
+            vec!["sink", "mark", "abcdef1234567890"]
+        );
+        assert_eq!(
+            build_sink_mark_argv("abcdef1234567890", "goal", "30s"),
+            vec![
+                "sink",
+                "mark",
+                "abcdef1234567890",
+                "--label",
+                "goal",
+                "--duration",
+                "30s"
+            ]
+        );
+    }
+
+    #[test]
+    fn validate_sink_mark_label_applies_the_cli_rules() {
+        assert!(validate_sink_mark_label("").is_ok());
+        assert!(validate_sink_mark_label("goal, 2-1").is_ok());
+        assert!(validate_sink_mark_label(&"a".repeat(1024)).is_ok());
+        assert!(validate_sink_mark_label(&"a".repeat(1025)).is_err());
+        assert!(validate_sink_mark_label("say \"hi\"").is_err());
+        assert!(validate_sink_mark_label("line\nbreak").is_err());
+        assert!(validate_sink_mark_label("line\rbreak").is_err());
+        assert!(validate_sink_mark_label("goal\tscored").is_err());
+        assert!(validate_sink_mark_label("esc\u{1b}").is_err());
+        assert!(validate_sink_mark_label("next\u{85}line").is_err());
+        assert!(validate_sink_mark_label("café 🎬").is_ok());
     }
 
     #[test]
@@ -8786,6 +9114,87 @@ mod tests {
         assert_eq!(snap.last_commit_at.as_deref(), Some("2026-08-04T10:15:30Z"));
         // Go's zero time.Time must never reach the frontend as a real value.
         assert_eq!(snap.last_segment_at, None);
+        // Keys an older CLI does not send default to empty values.
+        assert_eq!(snap.date_ranges, 0);
+        assert_eq!(snap.last_program_date_time, None);
+        assert!(snap.tracks.is_empty());
+    }
+
+    #[test]
+    fn parse_sink_snapshot_value_reads_date_ranges_and_tracks() {
+        let value = serde_json::json!({
+            "state": "running",
+            "dateRanges": 4,
+            "lastProgramDateTime": "2026-09-23T10:15:30.5Z",
+            "tracks": [
+                {
+                    "key": "audio-en",
+                    "type": "AUDIO",
+                    "name": "English",
+                    "language": "en",
+                    "state": "running",
+                    "currentPath": "/cams/feed-10.audio-en.aac",
+                    "segmentsCommitted": 12,
+                    "bytesCommitted": 65536,
+                    "discontinuities": 1,
+                    "fetchErrors": 2,
+                    "lagSeconds": 1.5,
+                    "lastProgramDateTime": "2026-09-23T10:15:29Z",
+                },
+                {
+                    "key": "subs-fr",
+                    "type": "SUBTITLES",
+                    "state": "halted",
+                    "haltReason": "fetch failed",
+                    "segmentsCommitted": 0,
+                    "bytesCommitted": 0,
+                    "discontinuities": 0,
+                    "fetchErrors": 5,
+                    "lagSeconds": 0,
+                    "lastProgramDateTime": "0001-01-01T00:00:00Z",
+                },
+            ],
+        });
+        let snap = parse_sink_snapshot_value(&value);
+        assert_eq!(snap.date_ranges, 4);
+        assert_eq!(
+            snap.last_program_date_time.as_deref(),
+            Some("2026-09-23T10:15:30.5Z")
+        );
+        assert_eq!(snap.tracks.len(), 2);
+        let audio = &snap.tracks[0];
+        assert_eq!(audio.key, "audio-en");
+        assert_eq!(audio.track_type, "AUDIO");
+        assert_eq!(audio.name.as_deref(), Some("English"));
+        assert_eq!(audio.language.as_deref(), Some("en"));
+        assert_eq!(audio.state, "running");
+        assert_eq!(
+            audio.current_path.as_deref(),
+            Some("/cams/feed-10.audio-en.aac")
+        );
+        assert_eq!(audio.segments_committed, 12);
+        assert_eq!(audio.bytes_committed, 65536);
+        assert_eq!(audio.discontinuities, 1);
+        assert_eq!(audio.fetch_errors, 2);
+        assert_eq!(audio.lag_seconds, 1.5);
+        assert_eq!(
+            audio.last_program_date_time.as_deref(),
+            Some("2026-09-23T10:15:29Z")
+        );
+        assert_eq!(audio.halt_reason, None);
+        // A CLI that does not send countersKnown reports known counters.
+        assert!(audio.counters_known);
+        let subs = &snap.tracks[1];
+        assert_eq!(subs.track_type, "SUBTITLES");
+        assert_eq!(subs.name, None);
+        assert_eq!(subs.language, None);
+        assert_eq!(subs.current_path, None);
+        assert_eq!(subs.halt_reason.as_deref(), Some("fetch failed"));
+        assert_eq!(subs.last_program_date_time, None);
+        // The frontend reads the track type under its JSON key "type".
+        let json = serde_json::to_value(audio).unwrap();
+        assert_eq!(json["type"], "AUDIO");
+        assert_eq!(json["segmentsCommitted"], 12);
     }
 
     #[test]
@@ -8809,6 +9218,30 @@ mod tests {
         );
         assert!(status.snapshot.is_none());
         assert!(!status.last_known);
+        assert_eq!(status.renditions, None);
+        assert_eq!(status.track_halt, None);
+        assert_eq!(status.rollover_clock, None);
+        assert_eq!(status.stamp_time, None);
+    }
+
+    #[test]
+    fn parse_sink_status_value_reads_the_job_option_values() {
+        let value = serde_json::json!({
+            "jobId": "abcdef1234567890",
+            "running": true,
+            "state": "running",
+            "renditions": "default",
+            "trackHalt": "track",
+            "rolloverClock": "wall",
+            "stampTime": "none",
+            "snapshot": {"state": "running", "dateRanges": 2},
+        });
+        let status = parse_sink_status_value(&value).unwrap();
+        assert_eq!(status.renditions.as_deref(), Some("default"));
+        assert_eq!(status.track_halt.as_deref(), Some("track"));
+        assert_eq!(status.rollover_clock.as_deref(), Some("wall"));
+        assert_eq!(status.stamp_time.as_deref(), Some("none"));
+        assert_eq!(status.snapshot.expect("snapshot present").date_ranges, 2);
     }
 
     #[test]
@@ -8834,6 +9267,124 @@ mod tests {
         // SinkCachedCounts does not persist commit/segment timestamps, so a
         // cached snapshot must never fabricate one.
         assert_eq!(snapshot.last_commit_at, None);
+    }
+
+    #[test]
+    fn parse_sink_status_value_reads_top_level_tracks_when_snapshot_is_absent() {
+        let value = serde_json::json!({
+            "jobId": "abcdef1234567890",
+            "running": false,
+            "state": "resumable",
+            "snapshot": null,
+            "tracks": [{
+                "key": "subs-en",
+                "type": "SUBTITLES",
+                "language": "en",
+                "state": "halted",
+                "haltReason": "fetch failed",
+                "segmentsCommitted": 7,
+                "bytesCommitted": 2048,
+                "discontinuities": 0,
+                "fetchErrors": 3,
+                "lagSeconds": 0,
+                "lastProgramDateTime": "0001-01-01T00:00:00Z",
+            }],
+        });
+        let status = parse_sink_status_value(&value).unwrap();
+        // No fabricated snapshot: the job died before it cached counters.
+        assert!(status.snapshot.is_none());
+        assert!(!status.last_known);
+        assert_eq!(status.tracks.len(), 1);
+        let track = &status.tracks[0];
+        assert_eq!(track.key, "subs-en");
+        assert_eq!(track.state, "halted");
+        assert_eq!(track.halt_reason.as_deref(), Some("fetch failed"));
+        assert_eq!(track.segments_committed, 7);
+        assert_eq!(track.last_program_date_time, None);
+        assert!(track.counters_known);
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["tracks"][0]["type"], "SUBTITLES");
+    }
+
+    #[test]
+    fn parse_sink_status_value_marks_a_tracks_unsaved_counters_unknown() {
+        let value = serde_json::json!({
+            "jobId": "abcdef1234567890",
+            "running": false,
+            "state": "resumable",
+            "tracks": [
+                {
+                    "key": "audio-en",
+                    "type": "AUDIO",
+                    "state": "stopped",
+                    "segmentsCommitted": 0,
+                    "bytesCommitted": 0,
+                    "discontinuities": 0,
+                    "fetchErrors": 0,
+                    "lagSeconds": 0,
+                    "lastProgramDateTime": "0001-01-01T00:00:00Z",
+                    "countersKnown": false,
+                },
+                {
+                    "key": "subs-en",
+                    "type": "SUBTITLES",
+                    "state": "ended",
+                    "segmentsCommitted": 12,
+                    "bytesCommitted": 4096,
+                    "discontinuities": 0,
+                    "fetchErrors": 0,
+                    "lagSeconds": 0,
+                    "lastProgramDateTime": "2026-09-23T10:00:00Z",
+                    "countersKnown": true,
+                },
+            ],
+        });
+        let status = parse_sink_status_value(&value).unwrap();
+        assert_eq!(status.tracks.len(), 2);
+        assert!(!status.tracks[0].counters_known);
+        assert!(status.tracks[1].counters_known);
+        assert_eq!(status.tracks[1].segments_committed, 12);
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["tracks"][0]["countersKnown"], false);
+    }
+
+    #[test]
+    fn parse_sink_status_value_reads_a_stopped_jobs_saved_track_counters() {
+        let value = serde_json::json!({
+            "jobId": "abcdef1234567890",
+            "running": false,
+            "state": "finished",
+            "lastKnown": true,
+            "snapshot": {
+                "state": "",
+                "dateRanges": 3,
+                "lastProgramDateTime": "2026-09-23T11:00:00Z",
+                "tracks": [{
+                    "key": "audio-en",
+                    "type": "AUDIO",
+                    "state": "ended",
+                    "segmentsCommitted": 40,
+                    "bytesCommitted": 1_000_000,
+                    "discontinuities": 0,
+                    "fetchErrors": 0,
+                    "lagSeconds": 0,
+                    "lastProgramDateTime": "2026-09-23T10:59:58Z",
+                }],
+            },
+        });
+        let status = parse_sink_status_value(&value).unwrap();
+        assert!(status.last_known);
+        let snapshot = status.snapshot.expect("cached snapshot present");
+        assert_eq!(snapshot.date_ranges, 3);
+        assert_eq!(
+            snapshot.last_program_date_time.as_deref(),
+            Some("2026-09-23T11:00:00Z")
+        );
+        assert_eq!(snapshot.tracks.len(), 1);
+        assert_eq!(snapshot.tracks[0].state, "ended");
+        // Top-level tracks only appear when the snapshot is absent.
+        assert!(status.tracks.is_empty());
+        assert_eq!(snapshot.tracks[0].segments_committed, 40);
     }
 
     #[test]

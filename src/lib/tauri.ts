@@ -461,14 +461,21 @@ export async function cancelSink(jobId: string): Promise<string> {
   return invoke<string>('cancel_sink', { jobId })
 }
 
-// Sink's own graceful stop: unlike finishUpload/finishDownload (only valid
-// once a halted job's WAL is already drained), sink's control socket lets a
-// RUNNING job be told to finish live, draining the WAL, writing the real
-// EXT-X-ENDLIST, and ending the job. Works the same way finishUpload/
-// finishDownload do when the job isn't running.
+// Sink's own graceful stop: the CLI tells a RUNNING job to finish live over
+// its control socket (drain the WAL, write EXT-X-ENDLIST), and refuses a job
+// that is not running. A job whose rendition tracks have not all finalized
+// stays resumable.
 export async function finishSink(jobId: string): Promise<string> {
   if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
   return invoke<string>('finish_sink', { jobId })
+}
+
+// Records an EXT-X-DATERANGE mark in a running job's playlist. Resolves
+// with the CLI's confirmation line. Rejects with the CLI's error for a job
+// that is not running, or that has no committed program date-time yet.
+export async function markSink(jobId: string, label?: string, duration?: string): Promise<string> {
+  if (!hasDesktopBridge()) throw new Error('Desktop bridge unavailable')
+  return invoke<string>('mark_sink', { jobId, label, duration })
 }
 
 export async function pruneSinks(keep: number): Promise<string> {

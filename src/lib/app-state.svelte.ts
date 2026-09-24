@@ -16,6 +16,7 @@ import {
   buildForkRestoreArgv,
   buildGatewayArgv,
   buildMountArgv,
+  buildSinkMarkArgv,
   buildSinkPruneArgv,
   buildSinkRemoveArgv,
   buildSinkResumeArgv,
@@ -42,8 +43,19 @@ import {
   validateGlobPattern,
   validateMountPathForBackend,
   validateUploadPositional,
+  validateSinkMarkDuration,
+  validateSinkMarkLabel,
+  SINK_OPTION_DEFAULTS,
 } from './cli'
-import type { DownloadStartParams, SinkStartParams, UploadStartParams } from './cli'
+import type {
+  DownloadStartParams,
+  SinkRenditions,
+  SinkRolloverClock,
+  SinkStampTime,
+  SinkStartParams,
+  SinkTrackHalt,
+  UploadStartParams,
+} from './cli'
 import { viewModeBadge } from './health'
 import { FEATURE_REGISTRY, resolveFeatures } from './features'
 import {
@@ -108,6 +120,7 @@ import {
   resumeSink,
   cancelSink,
   finishSink,
+  markSink,
   pruneSinks,
   removeSink,
   getSinkStatus,
@@ -138,6 +151,7 @@ import type {
   SinkJob,
   SinkSnapshot,
   SinkStatus,
+  SinkTrack,
   SystemState,
   ThirdPartyLicenses,
   TransferSourceProfile,
@@ -429,8 +443,9 @@ const state = $state({
   // into glob arrays at submit time) rather than a dynamic list of inputs
   // (simpler to bind), and --include/--exclude are themselves free-form
   // globs a user is likely to paste several of at once. bwlimit/rescan-
-  // interval/include/exclude/restart/follow-symlinks/create-source-dir all
-  // live behind the collapsed "Advanced options" disclosure.
+  // interval/include/exclude/restart/direct-to-storage/follow-symlinks/
+  // create-source-dir all live behind the collapsed "Advanced options"
+  // disclosure.
   uploadSource: '',
   uploadDest: '',
   uploadSourceError: '',
@@ -442,6 +457,7 @@ const state = $state({
   uploadRescanInterval: '',
   uploadRestart: false,
   uploadBwlimit: '',
+  uploadDirectToStorage: false,
   uploadIncludeText: '',
   uploadExcludeText: '',
   uploadFollowSymlinks: false,
@@ -700,6 +716,10 @@ const state = $state({
   sinkVariant: '',
   sinkMaxLatency: '',
   sinkWalMax: '',
+  sinkRenditions: SINK_OPTION_DEFAULTS.renditions as SinkRenditions,
+  sinkTrackHalt: SINK_OPTION_DEFAULTS.trackHalt as SinkTrackHalt,
+  sinkRolloverClock: SINK_OPTION_DEFAULTS.rolloverClock as SinkRolloverClock,
+  sinkStampTime: SINK_OPTION_DEFAULTS.stampTime as SinkStampTime,
   sinkStartSecretValue: '',
   sinkStartError: '',
 
@@ -717,6 +737,15 @@ const state = $state({
   // uploadRemovePromptFor above.
   sinkRemovePromptFor: null as SinkJob | null,
   sinkRemoveError: '',
+
+  // Mark dialog: records an EXT-X-DATERANGE in a running job's playlist.
+  sinkMarkPromptFor: null as SinkJob | null,
+  sinkMarkLabel: '',
+  sinkMarkDuration: '',
+  sinkMarkError: '',
+  // True while `sink mark` runs. The dialog cannot close then, so the
+  // result always reaches it.
+  sinkMarkBusy: false,
 
   // Snapshot/Deleted/Version view-mounts: destination is always an explicit
   // folder pick (browseFolder), never free-typed. -m/--destination is
@@ -1303,6 +1332,10 @@ export function sinkStartParams(): SinkStartParams {
     variant: state.sinkVariant.trim() || undefined,
     maxLatency: state.sinkMaxLatency.trim() || undefined,
     walMax: state.sinkWalMax.trim() || undefined,
+    renditions: state.sinkRenditions,
+    trackHalt: state.sinkTrackHalt,
+    rolloverClock: state.sinkRolloverClock,
+    stampTime: state.sinkStampTime,
   }
 }
 
@@ -1911,6 +1944,7 @@ export function resetUploadForm() {
   state.uploadRescanInterval = ''
   state.uploadRestart = false
   state.uploadBwlimit = ''
+  state.uploadDirectToStorage = false
   state.uploadIncludeText = ''
   state.uploadExcludeText = ''
   state.uploadFollowSymlinks = false
@@ -2019,6 +2053,7 @@ export function uploadStartParams(): UploadStartParams {
     rescanInterval: state.uploadRescanInterval.trim() || undefined,
     restart: state.uploadRestart,
     bwlimit: Number.isFinite(bwlimit) && bwlimit > 0 ? bwlimit : undefined,
+    directToStorage: state.uploadDirectToStorage,
     include: splitGlobLines(state.uploadIncludeText),
     exclude: splitGlobLines(state.uploadExcludeText),
     followSymlinks: state.uploadFollowSymlinks,
@@ -3385,6 +3420,20 @@ export function sinkDisplaySnapshot(
   return cache[jobId]
 }
 
+// The track rows SinkView shows for a job. displaySnapshot is the live
+// snapshot (or the running job's cached one); cachedStatus is the last status
+// seen for the job, kept across list refreshes. A stopped job with cached
+// counters carries its tracks in cachedStatus.snapshot.tracks, so that
+// snapshot is the fallback before the status's top-level tracks (a stopped
+// job that died before it cached counters). This keeps a stopped job's
+// tracks on screen while a poll tick clears and refetches its status.
+export function sinkDisplayTracks(
+  displaySnapshot: SinkSnapshot | undefined,
+  cachedStatus: SinkStatus | undefined,
+): SinkTrack[] {
+  return (displaySnapshot ?? cachedStatus?.snapshot)?.tracks ?? cachedStatus?.tracks ?? []
+}
+
 export function resetSinkForm() {
   state.sinkStreamUrl = ''
   state.sinkPath = ''
@@ -3394,6 +3443,10 @@ export function resetSinkForm() {
   state.sinkVariant = ''
   state.sinkMaxLatency = ''
   state.sinkWalMax = ''
+  state.sinkRenditions = SINK_OPTION_DEFAULTS.renditions
+  state.sinkTrackHalt = SINK_OPTION_DEFAULTS.trackHalt
+  state.sinkRolloverClock = SINK_OPTION_DEFAULTS.rolloverClock
+  state.sinkStampTime = SINK_OPTION_DEFAULTS.stampTime
   state.sinkStartSecretValue = ''
   state.sinkStartError = ''
 }
@@ -3529,20 +3582,62 @@ export async function runSinkCancel(job: SinkJob) {
 }
 
 // Finish is the graceful stop: unlike cancel, it finalizes the recording
-// (a real EXT-X-ENDLIST, not a resumable cutoff) and ends the job rather
-// than leaving it resumable. Runs directly from a row button while the job
-// is running, same as runSinkCancel.
+// (a real EXT-X-ENDLIST, not a resumable cutoff) and ends the job. A job
+// whose alternative-rendition tracks have not all finalized stays
+// resumable, and a resume finalizes them. Runs directly from a row button
+// while the job is running, same as runSinkCancel.
 export async function runSinkFinish(job: SinkJob) {
   state.sinksBusy = true
   state.sinksError = ''
   try {
     await finishSink(job.jobId)
-    notify(`Ingest job ${job.jobId} finished`)
+    notify(`Finish requested for ingest job ${job.jobId}`)
     await runSinkList()
   } catch (error) {
     state.sinksError = describeError(error)
   } finally {
     state.sinksBusy = false
+  }
+}
+
+// A mark is valid only while the job is running (the CLI sends it to the
+// live daemon), so SinkView offers it only then. The CLI also refuses a
+// mark until a segment with a program date-time is committed. That error
+// shows in the dialog as the CLI reports it.
+export function requestSinkMark(job: SinkJob) {
+  state.sinkMarkPromptFor = job
+  state.sinkMarkLabel = ''
+  state.sinkMarkDuration = ''
+  state.sinkMarkError = ''
+}
+
+export function cancelSinkMark() {
+  if (state.sinkMarkBusy) return
+  state.sinkMarkPromptFor = null
+}
+
+export async function confirmSinkMark() {
+  const job = state.sinkMarkPromptFor
+  if (!job || state.sinkMarkBusy) return
+  const label = state.sinkMarkLabel.trim()
+  const duration = state.sinkMarkDuration.trim()
+  const invalid = validateSinkMarkLabel(label) ?? validateSinkMarkDuration(duration)
+  if (invalid) {
+    state.sinkMarkError = invalid
+    return
+  }
+  state.sinkMarkBusy = true
+  state.sinkMarkError = ''
+  try {
+    const result = await markSink(job.jobId, label || undefined, duration || undefined)
+    state.sinkMarkPromptFor = null
+    notify(result || `Mark recorded for ingest job ${job.jobId}`)
+  } catch (error) {
+    // The CLI's own text, without describeError's mount-failure class: a
+    // refused mark is not a mount error.
+    state.sinkMarkError = error instanceof Error ? error.message : String(error)
+  } finally {
+    state.sinkMarkBusy = false
   }
 }
 
@@ -4901,6 +4996,7 @@ export {
   buildForkRestoreArgv,
   buildGatewayArgv,
   buildMountArgv,
+  buildSinkMarkArgv,
   buildSinkPruneArgv,
   buildSinkRemoveArgv,
   buildSinkResumeArgv,

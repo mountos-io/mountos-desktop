@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { sinkDisplaySnapshot, withSinkSnapshotCached } from './app-state.svelte'
-import type { SinkSnapshot } from './types'
+import { sinkDisplaySnapshot, sinkDisplayTracks, withSinkSnapshotCached } from './app-state.svelte'
+import type { SinkSnapshot, SinkStatus, SinkTrack } from './types'
 
 function snapshot(overrides: Partial<SinkSnapshot> = {}): SinkSnapshot {
   return {
@@ -19,6 +19,8 @@ function snapshot(overrides: Partial<SinkSnapshot> = {}): SinkSnapshot {
     commitRetries: 0,
     fileCount: 0,
     currentPath: '',
+    dateRanges: 0,
+    tracks: [],
     ...overrides,
   }
 }
@@ -101,5 +103,48 @@ describe('sinkDisplaySnapshot', () => {
     const cache = { 'job-1': snapshot({ fileSize: 100 }) }
     const live = snapshot({ fileSize: 300 })
     expect(sinkDisplaySnapshot(cache, 'job-1', live, false)).toBe(live)
+  })
+})
+
+function track(key: string): SinkTrack {
+  return {
+    key,
+    type: 'AUDIO',
+    state: 'stopped',
+    segmentsCommitted: 1,
+    bytesCommitted: 1,
+    discontinuities: 0,
+    fetchErrors: 0,
+    lagSeconds: 0,
+    countersKnown: true,
+  }
+}
+
+function status(overrides: Partial<SinkStatus> = {}): SinkStatus {
+  return { jobId: 'job-1', running: false, state: 'halted', tracks: [], ...overrides }
+}
+
+describe('sinkDisplayTracks', () => {
+  it('prefers the display snapshot tracks', () => {
+    const live = snapshot({ tracks: [track('audio-en')] })
+    const cached = status({ snapshot: snapshot({ tracks: [track('old')] }) })
+    expect(sinkDisplayTracks(live, cached).map((t) => t.key)).toEqual(['audio-en'])
+  })
+
+  // A poll tick clears the live status of a stopped job, so the display
+  // snapshot is absent. Its cached status still carries the tracks inside
+  // its snapshot, never at the top level.
+  it('keeps a stopped job\'s snapshot tracks from the cached status', () => {
+    const cached = status({ lastKnown: true, snapshot: snapshot({ tracks: [track('audio-en')] }) })
+    expect(sinkDisplayTracks(undefined, cached).map((t) => t.key)).toEqual(['audio-en'])
+  })
+
+  it('falls back to top-level tracks when the job has no snapshot', () => {
+    const cached = status({ tracks: [track('subs-en')] })
+    expect(sinkDisplayTracks(undefined, cached).map((t) => t.key)).toEqual(['subs-en'])
+  })
+
+  it('returns no tracks when nothing is known', () => {
+    expect(sinkDisplayTracks(undefined, undefined)).toEqual([])
   })
 })

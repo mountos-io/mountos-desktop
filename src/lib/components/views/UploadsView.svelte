@@ -483,6 +483,12 @@ Makes no connection and writes no data." />
               <InfoTip text="Dereferences symlinks to regular files instead of skipping them (`--follow-symlinks`)." />
             </div>
             <div class="flex items-center gap-1.5">
+              <Checkbox bind:checked={appState.uploadDirectToStorage} label="Write directly to object storage" />
+              <InfoTip text="Sends file data straight to the volume's object storage and skips the fast block tier (`--direct-to-storage`).
+
+Use it for large uploads that are not read soon. The first read of a file is slower. Only block-storage volumes change; other volumes already write this way." />
+            </div>
+            <div class="flex items-center gap-1.5">
               <Checkbox bind:checked={appState.uploadCreateSourceDirectory} label="Nest under source folder name" />
               <InfoTip text="Uploads into `DEST_PATH/<source-folder-name>/` instead of directly into `DEST_PATH` (`--create-source-directory`)." />
             </div>
