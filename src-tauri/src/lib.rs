@@ -688,6 +688,10 @@ const SINK_OPTION_FLAGS: [(&str, &str); 4] = [
 struct UnmountResult {
     state: String,
     target: String,
+    // Set when the mount point is gone but the CLI could not confirm that the
+    // mount process exited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -697,10 +701,15 @@ struct UnmountAllResult {
     // Targets the CLI reported as busy rather than failed. These are still
     // mounted and serving, and are the ones a forced retry can get past.
     busy: Vec<String>,
+    // Targets that are unmounted but whose mount process exit is unconfirmed.
+    // They are not in failed.
+    unconfirmed: Vec<String>,
 }
 
-// One entry of `mountos unmount --json`. state is one of unmounted, busy,
-// refused, cancelled, failed.
+// One entry of `mountos unmount --json`. state is one of unmounted,
+// unmounted_exit_unchecked, unmounted_process_running, busy, refused,
+// cancelled, failed. The two unmounted_* states mean the mount point is gone
+// but the mount process exit is not confirmed.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UnmountOutcome {
@@ -714,7 +723,25 @@ struct UnmountOutcome {
 
 impl UnmountOutcome {
     fn unmounted(&self) -> bool {
-        self.state == "unmounted"
+        matches!(
+            self.state.as_str(),
+            "unmounted" | "unmounted_exit_unchecked" | "unmounted_process_running"
+        )
+    }
+
+    // A note for an unmounted target whose process exit is not confirmed.
+    fn warning(&self) -> Option<String> {
+        match self.state.as_str() {
+            "unmounted_exit_unchecked" => Some(
+                "Unmounted. The mount process runs under another account, so its exit could not be checked."
+                    .to_string(),
+            ),
+            "unmounted_process_running" => Some(
+                "Unmounted. The mount process is still running and may be flushing in the background."
+                    .to_string(),
+            ),
+            _ => None,
+        }
     }
 
     // Prefers the CLI's own message, which already explains a busy mount and
@@ -6805,6 +6832,7 @@ fn unmount_target_blocking(
     Ok(UnmountResult {
         state: if removed { "idle" } else { "flushing" }.to_string(),
         target,
+        warning: outcome.warning(),
     })
 }
 
@@ -6864,6 +6892,7 @@ fn unmount_all_targets_blocking(
             attempted: 0,
             failed: Vec::new(),
             busy: Vec::new(),
+            unconfirmed: Vec::new(),
         });
     }
 
@@ -6882,6 +6911,12 @@ fn unmount_all_targets_blocking(
     let busy: Vec<String> = outcomes
         .iter()
         .filter(|outcome| outcome.busy)
+        .map(|outcome| outcome.mount_path.clone())
+        .collect();
+
+    let unconfirmed: Vec<String> = outcomes
+        .iter()
+        .filter(|outcome| outcome.warning().is_some())
         .map(|outcome| outcome.mount_path.clone())
         .collect();
 
@@ -6904,6 +6939,7 @@ fn unmount_all_targets_blocking(
         attempted: before.len(),
         failed,
         busy,
+        unconfirmed,
     })
 }
 
@@ -7899,6 +7935,22 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unmount_outcome_states_map_to_unmounted_and_warning() {
+        let json = br#"[
+            {"mountPath":"/a","state":"unmounted"},
+            {"mountPath":"/b","state":"unmounted_exit_unchecked"},
+            {"mountPath":"/c","state":"unmounted_process_running"},
+            {"mountPath":"/d","state":"busy","busy":true},
+            {"mountPath":"/e","state":"failed","error":"x"}
+        ]"#;
+        let outcomes = parse_unmount_outcomes(json, b"").unwrap();
+        let unmounted: Vec<bool> = outcomes.iter().map(|o| o.unmounted()).collect();
+        assert_eq!(unmounted, vec![true, true, true, false, false]);
+        let warned: Vec<bool> = outcomes.iter().map(|o| o.warning().is_some()).collect();
+        assert_eq!(warned, vec![false, true, true, false, false]);
+    }
 
     fn profile() -> MountProfile {
         MountProfile {

@@ -461,6 +461,8 @@ export interface MountResult {
 export interface UnmountResult {
   state: 'idle' | 'flushing'
   target: string
+  // Set when the mount point is gone but the mount process exit is unconfirmed.
+  warning?: string
 }
 
 export interface GatewayEndpointInfo {
@@ -484,6 +486,8 @@ export interface UnmountAllResult {
   // Subset of failed that the CLI reported as busy. Those are still mounted
   // and serving, and are the ones a forced retry can get past.
   busy: string[]
+  // Unmounted targets whose mount process exit is unconfirmed. Not in failed.
+  unconfirmed: string[]
 }
 
 export interface LicensedPackage {

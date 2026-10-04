@@ -4543,7 +4543,8 @@ export async function runUnmount(instance: MountInstance, force = false) {
   try {
     const result = await unmountTarget(instance.mountPath, force)
     await refresh(false)
-    notify(result.state === 'idle' ? 'Unmount complete' : 'Unmount is still flushing in the background')
+    if (result.warning) notify(result.warning)
+    else notify(result.state === 'idle' ? 'Unmount complete' : 'Unmount is still flushing in the background')
   } catch (error) {
     // The mount is still there on any failure, so the row belongs back in the
     // list rather than being hidden as on its way out.
@@ -4565,7 +4566,9 @@ export async function runUnmountAll(force = false) {
     for (const failedTarget of result.failed) expectedGone.delete(failedTarget)
     await refresh(false)
     if (result.failed.length === 0) {
-      notify(`Unmounted all ${result.attempted} mounts`)
+      const unconfirmedSuffix =
+        result.unconfirmed.length > 0 ? ` (exit of ${result.unconfirmed.length} mount processes not confirmed)` : ''
+      notify(`Unmounted all ${result.attempted} mounts${unconfirmedSuffix}`)
     } else {
       const busySuffix = result.busy.length > 0 ? ` (${result.busy.length} still in use and left mounted)` : ''
       // The attempted count and the outcomes come from two separate listings, so
