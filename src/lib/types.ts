@@ -430,7 +430,10 @@ export interface DiagnosticsProfileSummary {
 }
 
 // mountosio kernel driver counters. Absent on non-Windows, or when the driver
-// is not installed / its control device is inaccessible.
+// is not installed / its control device is inaccessible. Also absent when the
+// driver is installed but does not answer in time. The check output then
+// carries a "driver not answering" error entry, so absence is not "zero
+// counters".
 export interface KernelDiagnostics {
   invariantTotal: number
   irpDoubleCompletions: number
