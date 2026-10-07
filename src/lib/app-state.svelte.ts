@@ -304,7 +304,7 @@ const state = $state({
   rejectedArgs: [] as string[],
   extraArgsInput: '',
   extraArgsError: '',
-  settings: { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false, featureOverrides: {} } as DesktopSettings,
+  settings: { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false, keepAwake: true, featureOverrides: {} } as DesktopSettings,
   vaultStatus: {} as Record<string, boolean>,
   diagnosticsBundle: null as DiagnosticsBundle | null,
   mcpStatusText: '',
@@ -4806,6 +4806,15 @@ export async function changeAllowUnmountForce(enabled: boolean) {
   try {
     state.settings = await saveSettings({ ...state.settings, allowUnmountForce: enabled })
     notify(enabled ? 'Force unmount allowed' : 'Force unmount disallowed')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Failed to save settings', 'error')
+  }
+}
+
+export async function changeKeepAwake(enabled: boolean) {
+  try {
+    state.settings = await saveSettings({ ...state.settings, keepAwake: enabled })
+    notify(enabled ? 'Keep awake during transfers on' : 'Keep awake during transfers off')
   } catch (error) {
     notify(error instanceof Error ? error.message : 'Failed to save settings', 'error')
   }

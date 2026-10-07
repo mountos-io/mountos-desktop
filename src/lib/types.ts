@@ -397,6 +397,9 @@ export interface DesktopSettings {
   // Offers Force on the unmount prompt. Required (not optional) for the same
   // reason as allowForkForceDelete.
   allowUnmountForce: boolean
+  // Keeps the computer out of idle sleep while a mount or job moves data.
+  // Required: Rust always emits it and defaults it to true.
+  keepAwake: boolean
   // User overrides for optional-feature visibility (see $lib/features),
   // keyed by feature id. Absent id means "use the registry default", not
   // "off". Local to this install only, never synced anywhere. Required (not

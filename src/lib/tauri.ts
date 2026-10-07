@@ -134,7 +134,7 @@ export async function exportProfile(profileId: string): Promise<ExportedProfile>
 }
 
 export async function getSettings(): Promise<DesktopSettings> {
-  if (!hasDesktopBridge()) return { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false, featureOverrides: {} }
+  if (!hasDesktopBridge()) return { defaultBackend: 'auto', allowForkForceDelete: false, allowUnmountForce: false, keepAwake: true, featureOverrides: {} }
   return invoke<DesktopSettings>('get_settings')
 }
 

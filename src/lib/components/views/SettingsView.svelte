@@ -48,6 +48,7 @@
     changeDefaultCacheDir,
     changeDefaultCacheSize,
     changeDefaultDiscoveryUrl,
+    changeKeepAwake,
     changePollSeconds,
     changeTerminal,
     checkMcpStatus,
@@ -481,6 +482,16 @@
         />
       </div>
     </div>
+    {#if appState.systemState.platform !== 'linux'}
+      <div class="flex items-center justify-between gap-4">
+        <span class="inline-flex items-center gap-1"><strong id="settings-keep-awake-label">Keep computer awake during transfers</strong><InfoTip text="Stops idle sleep while a mount writes data to the volume or an upload, download or sink job moves data. The display can still sleep. Applies to mounts and jobs started after the change." /></span>
+        <Checkbox
+          checked={appState.settings.keepAwake}
+          onchange={(e) => changeKeepAwake(e.currentTarget.checked)}
+          aria-labelledby="settings-keep-awake-label"
+        />
+      </div>
+    {/if}
   </div>
       {:else if activeTab === 'monitoring'}
   <div class="grid gap-3">

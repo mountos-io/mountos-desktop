@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex, OnceLock,
     },
     thread,
@@ -333,6 +333,11 @@ struct DesktopSettings {
     // busy and stays mounted and working.
     #[serde(default)]
     allow_unmount_force: bool,
+    // Keeps the computer out of idle sleep while a mount or job moves data
+    // (see cli_command). On by default, so settings.json files without this
+    // field deserialize to true.
+    #[serde(default = "default_keep_awake")]
+    keep_awake: bool,
     // User overrides for optional-feature visibility, keyed by feature id
     // (see src/lib/features.ts's FEATURE_REGISTRY). Absent id means "use the
     // registry default", not "off". Local to this install only, never synced
@@ -354,9 +359,14 @@ impl Default for DesktopSettings {
             terminal: None,
             allow_fork_force_delete: false,
             allow_unmount_force: false,
+            keep_awake: default_keep_awake(),
             feature_overrides: std::collections::HashMap::new(),
         }
     }
+}
+
+fn default_keep_awake() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize)]
@@ -866,7 +876,9 @@ fn read_transfer_source_profile_secret(
         return Ok(Some(secret));
     }
     if profile.secret_ref == "vault" {
-        return Ok(Some(transfer_source_keyring_entry(&profile.id)?.get_password()?));
+        return Ok(Some(
+            transfer_source_keyring_entry(&profile.id)?.get_password()?,
+        ));
     }
     Ok(None)
 }
@@ -909,7 +921,12 @@ fn platform_default_cli_path() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
-        Some(PathBuf::from(local_app_data).join("mountOS").join("bin").join("mountos.exe"))
+        Some(
+            PathBuf::from(local_app_data)
+                .join("mountOS")
+                .join("bin")
+                .join("mountos.exe"),
+        )
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -983,7 +1000,10 @@ fn find_profile(app: &AppHandle, profile_id: &str) -> Result<MountProfile, Deskt
 // peers, neither owns the other, matching the struct-level separation
 // (TransferSourceProfile is not a MountProfile variant).
 fn transfer_source_profile_dir(app: &AppHandle) -> Result<PathBuf, DesktopError> {
-    let dir = app.path().app_config_dir()?.join("transfer-source-profiles");
+    let dir = app
+        .path()
+        .app_config_dir()?
+        .join("transfer-source-profiles");
     fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -993,7 +1013,9 @@ fn transfer_source_profile_path(app: &AppHandle, id: &str) -> Result<PathBuf, De
     Ok(transfer_source_profile_dir(app)?.join(format!("{id}.json")))
 }
 
-fn read_transfer_source_profiles(app: &AppHandle) -> Result<Vec<TransferSourceProfile>, DesktopError> {
+fn read_transfer_source_profiles(
+    app: &AppHandle,
+) -> Result<Vec<TransferSourceProfile>, DesktopError> {
     let mut profiles: Vec<TransferSourceProfile> = Vec::new();
     for entry in fs::read_dir(transfer_source_profile_dir(app)?)? {
         let entry = entry?;
@@ -1007,7 +1029,10 @@ fn read_transfer_source_profiles(app: &AppHandle) -> Result<Vec<TransferSourcePr
     Ok(profiles)
 }
 
-fn find_transfer_source_profile(app: &AppHandle, id: &str) -> Result<TransferSourceProfile, DesktopError> {
+fn find_transfer_source_profile(
+    app: &AppHandle,
+    id: &str,
+) -> Result<TransferSourceProfile, DesktopError> {
     validate_profile_id(id)?;
     read_transfer_source_profiles(app)?
         .into_iter()
@@ -1674,7 +1699,12 @@ fn satellite_volname(profile: &MountProfile, kind: &str) -> String {
 // for the three satellite view subcommands (snapshot/deleted/version). The
 // destination is a positional argument right after the subcommand name,
 // matching mount's own convention.
-fn build_satellite_prefix(subcommand: &str, profile: &MountProfile, kind: &str, path: &str) -> Vec<String> {
+fn build_satellite_prefix(
+    subcommand: &str,
+    profile: &MountProfile,
+    kind: &str,
+    path: &str,
+) -> Vec<String> {
     let mut argv = vec![subcommand.to_string()];
     if !path.is_empty() {
         argv.push(path.to_string());
@@ -2588,9 +2618,28 @@ fn resolve_auto_backend(_profile: &mut MountProfile) -> Result<(), DesktopError>
     Ok(())
 }
 
+// Mirrors DesktopSettings.keep_awake, set whenever settings are read or
+// saved, the same way as cli_path_override.
+static KEEP_AWAKE: AtomicBool = AtomicBool::new(true);
+
+// Every mountos mount, job and CLI call goes through here so the keep-awake
+// setting reaches mounts and jobs. It is an env var, not a flag, because a CLI that does not
+// know it ignores it instead of failing the mount. A running mount keeps the
+// value it started with.
+fn cli_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(program);
+    let value = if KEEP_AWAKE.load(Ordering::Relaxed) {
+        "true"
+    } else {
+        "false"
+    };
+    command.env("MOUNTOS_KEEP_AWAKE", value);
+    command
+}
+
 fn command_output(args: &[&str]) -> Result<std::process::Output, DesktopError> {
     let path = mountos_path()?;
-    Ok(Command::new(path).args(args).output()?)
+    Ok(cli_command(path).args(args).output()?)
 }
 
 fn normalized_target(target: &str) -> String {
@@ -2735,7 +2784,7 @@ fn run_cli_with_secret(
     secret: Option<&str>,
     timeout: Duration,
 ) -> Result<std::process::Output, DesktopError> {
-    let mut child = Command::new(mountos_path()?)
+    let mut child = cli_command(mountos_path()?)
         .args(argv)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3212,7 +3261,12 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
         // binary `kind !== "gateway"`, which treats anything else as a
         // mount. Uploads/downloads/sinks get their own list_uploads/
         // list_downloads/list_sinks commands instead.
-        .filter(|entry| !matches!(entry.get("kind").and_then(Value::as_str), Some("upload") | Some("download") | Some("sink")))
+        .filter(|entry| {
+            !matches!(
+                entry.get("kind").and_then(Value::as_str),
+                Some("upload") | Some("download") | Some("sink")
+            )
+        })
         .map(|entry| {
             let mount_path = entry
                 .get("mountPath")
@@ -3387,6 +3441,7 @@ fn get_settings(app: AppHandle) -> Result<DesktopSettings, DesktopError> {
         }
     }
     set_cli_path_override(settings.cli_path_override.as_ref().map(PathBuf::from));
+    KEEP_AWAKE.store(settings.keep_awake, Ordering::Relaxed);
     Ok(settings)
 }
 
@@ -3419,6 +3474,7 @@ fn save_settings(
     }
     fs::write(path, serde_json::to_vec_pretty(&settings)?)?;
     set_cli_path_override(settings.cli_path_override.as_ref().map(PathBuf::from));
+    KEEP_AWAKE.store(settings.keep_awake, Ordering::Relaxed);
     Ok(settings)
 }
 
@@ -3572,17 +3628,100 @@ const FRIENDLY_ADJECTIVES: &[&str] = &[
 ];
 
 const FRIENDLY_NOUNS: &[&str] = &[
-    "albatross", "antelope", "aurora", "badger", "basin", "beacon", "bison", "bobcat", "boulder",
-    "canyon", "cascade", "cavern", "cedar", "comet", "condor", "cougar", "coyote", "crane",
-    "creek", "delta", "dolphin", "dune", "eagle", "ember", "estuary", "falcon", "fern", "fjord",
-    "fox", "geyser", "glacier", "gorge", "grove", "gulch", "harbor", "hawk", "heron", "hollow",
-    "horizon", "ibis", "island", "jackal", "jaguar", "juniper", "kestrel", "lagoon", "lark",
-    "lynx", "magpie", "marsh", "meadow", "meteor", "mirage", "moraine", "nebula", "orca", "oriole",
-    "osprey", "otter", "outpost", "panther", "pelican", "phoenix", "pinnacle", "plateau",
-    "prairie", "quail", "quarry", "quasar", "raven", "reef", "ridge", "sable", "savanna",
-    "sequoia", "shoal", "sierra", "solstice", "sparrow", "summit", "swallow", "talon", "terrace",
-    "thicket", "thistle", "tundra", "valley", "viper", "vista", "vortex", "warbler", "willow",
-    "wren", "zephyr",
+    "albatross",
+    "antelope",
+    "aurora",
+    "badger",
+    "basin",
+    "beacon",
+    "bison",
+    "bobcat",
+    "boulder",
+    "canyon",
+    "cascade",
+    "cavern",
+    "cedar",
+    "comet",
+    "condor",
+    "cougar",
+    "coyote",
+    "crane",
+    "creek",
+    "delta",
+    "dolphin",
+    "dune",
+    "eagle",
+    "ember",
+    "estuary",
+    "falcon",
+    "fern",
+    "fjord",
+    "fox",
+    "geyser",
+    "glacier",
+    "gorge",
+    "grove",
+    "gulch",
+    "harbor",
+    "hawk",
+    "heron",
+    "hollow",
+    "horizon",
+    "ibis",
+    "island",
+    "jackal",
+    "jaguar",
+    "juniper",
+    "kestrel",
+    "lagoon",
+    "lark",
+    "lynx",
+    "magpie",
+    "marsh",
+    "meadow",
+    "meteor",
+    "mirage",
+    "moraine",
+    "nebula",
+    "orca",
+    "oriole",
+    "osprey",
+    "otter",
+    "outpost",
+    "panther",
+    "pelican",
+    "phoenix",
+    "pinnacle",
+    "plateau",
+    "prairie",
+    "quail",
+    "quarry",
+    "quasar",
+    "raven",
+    "reef",
+    "ridge",
+    "sable",
+    "savanna",
+    "sequoia",
+    "shoal",
+    "sierra",
+    "solstice",
+    "sparrow",
+    "summit",
+    "swallow",
+    "talon",
+    "terrace",
+    "thicket",
+    "thistle",
+    "tundra",
+    "valley",
+    "viper",
+    "vista",
+    "vortex",
+    "warbler",
+    "willow",
+    "wren",
+    "zephyr",
 ];
 
 const FRIENDLY_NAME_HEX_DIGITS: &[u8] = b"0123456789abcdef";
@@ -3609,7 +3748,8 @@ fn friendly_name_next_seed() -> u64 {
 }
 
 fn random_friendly_name_value() -> String {
-    let adjective = FRIENDLY_ADJECTIVES[(friendly_name_next_seed() as usize) % FRIENDLY_ADJECTIVES.len()];
+    let adjective =
+        FRIENDLY_ADJECTIVES[(friendly_name_next_seed() as usize) % FRIENDLY_ADJECTIVES.len()];
     let noun = FRIENDLY_NOUNS[(friendly_name_next_seed() as usize) % FRIENDLY_NOUNS.len()];
     let mut seed = friendly_name_next_seed();
     let mut suffix = [0u8; 4];
@@ -3618,7 +3758,10 @@ fn random_friendly_name_value() -> String {
         seed = friendly_name_splitmix64(seed);
     }
     // suffix is built entirely from FRIENDLY_NAME_HEX_DIGITS, always valid UTF-8.
-    format!("{adjective}-{noun}-{}", std::str::from_utf8(&suffix).unwrap())
+    format!(
+        "{adjective}-{noun}-{}",
+        std::str::from_utf8(&suffix).unwrap()
+    )
 }
 
 #[tauri::command]
@@ -3698,12 +3841,17 @@ fn get_profile_secret_status(profile_id: String) -> Result<SecretStatus, Desktop
 // variant of it, despite mirroring its shape command-for-command.
 
 #[tauri::command]
-fn list_transfer_source_profiles(app: AppHandle) -> Result<Vec<TransferSourceProfile>, DesktopError> {
+fn list_transfer_source_profiles(
+    app: AppHandle,
+) -> Result<Vec<TransferSourceProfile>, DesktopError> {
     read_transfer_source_profiles(&app)
 }
 
 #[tauri::command]
-fn save_transfer_source_profile(app: AppHandle, profile: TransferSourceProfile) -> Result<TransferSourceProfile, DesktopError> {
+fn save_transfer_source_profile(
+    app: AppHandle,
+    profile: TransferSourceProfile,
+) -> Result<TransferSourceProfile, DesktopError> {
     validate_profile_id(&profile.id)?;
     if profile.schema_version != 1 {
         return Err(DesktopError::Message(format!(
@@ -3715,10 +3863,14 @@ fn save_transfer_source_profile(app: AppHandle, profile: TransferSourceProfile) 
         return Err(DesktopError::Message("name is required".to_string()));
     }
     if profile.bucket.trim().is_empty() {
-        return Err(DesktopError::Message("bucket/container is required".to_string()));
+        return Err(DesktopError::Message(
+            "bucket/container is required".to_string(),
+        ));
     }
     if profile.secret_ref != "vault" && profile.secret_ref != "prompt" {
-        return Err(DesktopError::Message("secretRef must be \"vault\" or \"prompt\"".to_string()));
+        return Err(DesktopError::Message(
+            "secretRef must be \"vault\" or \"prompt\"".to_string(),
+        ));
     }
     let path = transfer_source_profile_path(&app, &profile.id)?;
     fs::write(path, serde_json::to_vec_pretty(&profile)?)?;
@@ -3740,7 +3892,10 @@ fn delete_transfer_source_profile(app: AppHandle, id: String) -> Result<(), Desk
 }
 
 #[tauri::command]
-fn set_transfer_source_profile_secret(id: String, secret: String) -> Result<SecretStatus, DesktopError> {
+fn set_transfer_source_profile_secret(
+    id: String,
+    secret: String,
+) -> Result<SecretStatus, DesktopError> {
     transfer_source_keyring_entry(&id)?.set_password(&secret)?;
     Ok(SecretStatus {
         profile_id: id,
@@ -3766,7 +3921,10 @@ fn get_transfer_source_profile_secret_status(id: String) -> Result<SecretStatus,
         Err(keyring::Error::NoEntry) => false,
         Err(err) => return Err(DesktopError::Keyring(err)),
     };
-    Ok(SecretStatus { profile_id: id, stored })
+    Ok(SecretStatus {
+        profile_id: id,
+        stored,
+    })
 }
 
 fn get_system_state_blocking(app: AppHandle) -> Result<SystemState, DesktopError> {
@@ -3806,21 +3964,22 @@ fn get_system_state_blocking(app: AppHandle) -> Result<SystemState, DesktopError
     // --kind all restores the combined mount+gateway+upload+download+sink
     // view this reads (parse_instances_value filters non-mount kinds back
     // out except gateway, which the Instances view still wants to show).
-    let mut instances =
-        match command_output(&["list", "--kind", "all", "--json"]).and_then(|output| parse_instances(&output)) {
-            Ok(instances) => instances,
-            Err(error) => {
-                check_ok = false;
-                issues.push(CheckIssue {
-                    id: "list-failed".to_string(),
-                    severity: "error".to_string(),
-                    title: "Unable to enumerate mounts".to_string(),
-                    detail: Some(error.to_string()),
-                    fix_command: None,
-                });
-                Vec::new()
-            }
-        };
+    let mut instances = match command_output(&["list", "--kind", "all", "--json"])
+        .and_then(|output| parse_instances(&output))
+    {
+        Ok(instances) => instances,
+        Err(error) => {
+            check_ok = false;
+            issues.push(CheckIssue {
+                id: "list-failed".to_string(),
+                severity: "error".to_string(),
+                title: "Unable to enumerate mounts".to_string(),
+                detail: Some(error.to_string()),
+                fix_command: None,
+            });
+            Vec::new()
+        }
+    };
     let profile_targets = read_profiles(&app)
         .unwrap_or_default()
         .into_iter()
@@ -3925,7 +4084,7 @@ fn spawn_daemonizing_and_wait(
 ) -> Result<MountResult, DesktopError> {
     let stderr_file = fs::File::create(stderr_path)?;
     let stdout_file = fs::File::create(stdout_path)?;
-    let mut child = Command::new(mountos)
+    let mut child = cli_command(mountos)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
@@ -4006,7 +4165,7 @@ fn spawn_daemonizing_upload_and_wait(
 ) -> Result<(), DesktopError> {
     let stderr_file = fs::File::create(stderr_path)?;
     let stdout_file = fs::File::create(stdout_path)?;
-    let mut child = Command::new(mountos)
+    let mut child = cli_command(mountos)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
@@ -4061,7 +4220,7 @@ fn spawn_foreground_view_and_poll(
 ) -> Result<MountResult, DesktopError> {
     let stderr_file = fs::File::create(stderr_path)?;
     let stdout_file = fs::File::create(stdout_path)?;
-    let mut child = Command::new(mountos)
+    let mut child = cli_command(mountos)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
@@ -4135,7 +4294,7 @@ fn spawn_gateway_only_and_wait(
 ) -> Result<MountResult, DesktopError> {
     let stderr_file = fs::File::create(stderr_path)?;
     let stdout_file = fs::File::create(stdout_path)?;
-    let mut child = Command::new(mountos)
+    let mut child = cli_command(mountos)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
@@ -5206,7 +5365,11 @@ fn cancel_download_blocking(job_id: String) -> Result<String, DesktopError> {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
     validate_upload_job_id(job_id)?;
-    download_command_blocking(build_download_cancel_argv(job_id), None, FORK_COMMAND_TIMEOUT)
+    download_command_blocking(
+        build_download_cancel_argv(job_id),
+        None,
+        FORK_COMMAND_TIMEOUT,
+    )
 }
 
 #[tauri::command]
@@ -5244,7 +5407,11 @@ fn finish_download_blocking(job_id: String) -> Result<String, DesktopError> {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
     validate_upload_job_id(job_id)?;
-    download_command_blocking(build_download_finish_argv(job_id), None, FORK_COMMAND_TIMEOUT)
+    download_command_blocking(
+        build_download_finish_argv(job_id),
+        None,
+        FORK_COMMAND_TIMEOUT,
+    )
 }
 
 #[tauri::command]
@@ -5271,7 +5438,11 @@ fn remove_download_blocking(job_id: String) -> Result<String, DesktopError> {
         return Err(DesktopError::Message("job id is required".to_string()));
     }
     validate_upload_job_id(job_id)?;
-    download_command_blocking(build_download_remove_argv(job_id), None, FORK_COMMAND_TIMEOUT)
+    download_command_blocking(
+        build_download_remove_argv(job_id),
+        None,
+        FORK_COMMAND_TIMEOUT,
+    )
 }
 
 #[tauri::command]
@@ -6811,7 +6982,7 @@ fn unmount_target_blocking(
         args.push("--force");
     }
     args.push(&target);
-    let output = Command::new(mountos_path()?).args(&args).output()?;
+    let output = cli_command(mountos_path()?).args(&args).output()?;
 
     // The CLI answers once the mount is gone from the system, and reports a
     // busy mount as busy rather than tearing it down, so its verdict is
@@ -6900,7 +7071,7 @@ fn unmount_all_targets_blocking(
     if force {
         args.push("--force");
     }
-    let output = Command::new(mountos_path()?).args(&args).output()?;
+    let output = cli_command(mountos_path()?).args(&args).output()?;
     let outcomes = parse_unmount_outcomes(&output.stdout, &output.stderr)?;
 
     let failed: Vec<String> = outcomes
@@ -7952,6 +8123,30 @@ mod tests {
         assert_eq!(warned, vec![false, true, true, false, false]);
     }
 
+    #[test]
+    fn settings_without_keep_awake_default_to_on() {
+        let settings: DesktopSettings =
+            serde_json::from_str(r#"{"defaultBackend":"auto"}"#).unwrap();
+        assert!(settings.keep_awake);
+        assert!(DesktopSettings::default().keep_awake);
+    }
+
+    #[test]
+    fn cli_command_passes_keep_awake_setting() {
+        let env_of = |command: &Command| {
+            command
+                .get_envs()
+                .find(|(key, _)| *key == "MOUNTOS_KEEP_AWAKE")
+                .and_then(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+        };
+        KEEP_AWAKE.store(false, Ordering::Relaxed);
+        let off = env_of(&cli_command("mountos"));
+        KEEP_AWAKE.store(true, Ordering::Relaxed);
+        let on = env_of(&cli_command("mountos"));
+        assert_eq!(off.as_deref(), Some("false"));
+        assert_eq!(on.as_deref(), Some("true"));
+    }
+
     fn profile() -> MountProfile {
         MountProfile {
             id: "profile-1".to_string(),
@@ -8829,8 +9024,12 @@ mod tests {
         assert!(argv
             .windows(2)
             .any(|a| a == ["--source-endpoint", "https://example.com"]));
-        assert!(argv.windows(2).any(|a| a == ["--source-region", "us-east-1"]));
-        assert!(argv.windows(2).any(|a| a == ["--source-account", "myaccount"]));
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--source-region", "us-east-1"]));
+        assert!(argv
+            .windows(2)
+            .any(|a| a == ["--source-account", "myaccount"]));
         assert!(argv
             .windows(2)
             .any(|a| a == ["--source-access-key-id", "AKIA1234567890ABCDEF"]));
@@ -8850,7 +9049,10 @@ mod tests {
             "--source-access-key-id",
             "--source-temporary-secret-file",
         ] {
-            assert!(!argv.contains(&flag.to_string()), "argv should not contain {flag}");
+            assert!(
+                !argv.contains(&flag.to_string()),
+                "argv should not contain {flag}"
+            );
         }
     }
 
@@ -8864,7 +9066,10 @@ mod tests {
             Some("/tmp/source-secret-abc.tmp"),
         );
         assert!(argv.windows(2).any(|a| a
-            == ["--source-temporary-secret-file", "/tmp/source-secret-abc.tmp"]));
+            == [
+                "--source-temporary-secret-file",
+                "/tmp/source-secret-abc.tmp"
+            ]));
         // Never the plain --source-secret-file (persistent) flag for this
         // handoff: the desktop app always uses the single-use one.
         assert!(!argv.contains(&"--source-secret-file".to_string()));
@@ -9713,10 +9918,7 @@ mod tests {
             .iter()
             .position(|a| a == "--")
             .expect("must contain a literal \"--\" separator");
-        assert_eq!(
-            &argv[dashdash + 1..],
-            &["photos", "/local/backups/photos"]
-        );
+        assert_eq!(&argv[dashdash + 1..], &["photos", "/local/backups/photos"]);
         assert!(argv
             .windows(2)
             .any(|a| a == ["--discovery-url", "https://hub.example.com"]));
@@ -9785,9 +9987,7 @@ mod tests {
             &params,
             None,
         );
-        assert!(argv
-            .windows(2)
-            .any(|a| a == ["--if-exists", "overwrite"]));
+        assert!(argv.windows(2).any(|a| a == ["--if-exists", "overwrite"]));
         assert!(argv.windows(2).any(|a| a == ["--depth", "0"]));
         assert!(argv.contains(&"--as-of=1d".to_string()));
         assert!(argv.contains(&"--dry-run".to_string()));
