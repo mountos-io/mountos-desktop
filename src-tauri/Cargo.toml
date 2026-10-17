@@ -1,10 +1,11 @@
 [package]
 name = "mountos-desktop"
 version = "0.1.0"
-description = "mountOS Desktop"
+description = "Open-source desktop app for mountOS, a cross-platform, forkable, time-traveling distributed filesystem over object storage."
 authors = ["mountOS"]
 license = "Apache-2.0"
-repository = ""
+homepage = "https://mountos.io"
+repository = "https://github.com/mountos-io/mountos-desktop"
 edition = "2021"
 
 [lib]

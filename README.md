@@ -1,6 +1,6 @@
 # mountOS Desktop
 
-Desktop client for mountOS.
+Open-source desktop app for [mountOS](https://mountos.io), a cross-platform, forkable, time-traveling distributed filesystem over object storage. Manage mounted volumes and connection profiles, run background uploads and downloads with live progress, ingest live HLS streams, browse forks, snapshots, and versions, and recover deleted files, on macOS and Windows.
 
 Built with Tauri 2, Svelte 5, and TypeScript.
 
