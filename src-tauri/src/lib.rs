@@ -3254,17 +3254,16 @@ fn parse_instances_value(value: &Value) -> Vec<MountInstance> {
         .unwrap_or_default();
     entries
         .into_iter()
-        // Fetched with `--kind all`, so "upload"/"download"/"sink" entries
-        // are mixed in alongside mount/gateway rows. Those have no
-        // mountPath/backend at all and would otherwise render as broken
-        // mount rows here. Every existing kind check in this codebase is the
-        // binary `kind !== "gateway"`, which treats anything else as a
-        // mount. Uploads/downloads/sinks get their own list_uploads/
-        // list_downloads/list_sinks commands instead.
+        // Fetched with `--kind all`, which can mix job rows in with the
+        // mount and gateway rows. A job row has no mountPath or backend and
+        // would render as a broken mount. Only the kinds this view renders
+        // pass: a missing kind (an older CLI), "mount" and "gateway". Any
+        // other kind, including one a newer CLI adds, is left out. Job kinds
+        // have their own list_uploads, list_downloads and list_sinks commands.
         .filter(|entry| {
-            !matches!(
+            matches!(
                 entry.get("kind").and_then(Value::as_str),
-                Some("upload") | Some("download") | Some("sink")
+                None | Some("mount") | Some("gateway")
             )
         })
         .map(|entry| {
@@ -3961,9 +3960,8 @@ fn get_system_state_blocking(app: AppHandle) -> Result<SystemState, DesktopError
         ),
     };
     // mountos-servers' `mountos list --json` defaults to mount-only entries;
-    // --kind all restores the combined mount+gateway+upload+download+sink
-    // view this reads (parse_instances_value filters non-mount kinds back
-    // out except gateway, which the Instances view still wants to show).
+    // --kind all restores the combined view this reads (parse_instances_value
+    // keeps only mount and gateway rows, which the Instances view shows).
     let mut instances = match command_output(&["list", "--kind", "all", "--json"])
         .and_then(|output| parse_instances(&output))
     {
@@ -9759,6 +9757,27 @@ mod tests {
         let instances = parse_instances_value(&value);
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].mount_path, "/Volumes/MountOS/Team");
+    }
+
+    #[test]
+    fn parse_instances_value_keeps_only_mount_gateway_and_kindless_rows() {
+        let value: Value = serde_json::from_str(
+            r#"[
+                {"kind": "mount", "name": "Team", "mountPath": "/Volumes/MountOS/Team"},
+                {"name": "Old", "mountPath": "/Volumes/MountOS/Old"},
+                {"kind": "gateway", "name": "Gw", "gatewayEndpoints": {"s3": {"url": "http://127.0.0.1:9000"}}},
+                {"kind": "clone", "name": "clone a -> b", "jobId": "c1"},
+                {"kind": "rm", "name": "rm a", "jobId": "r1"},
+                {"kind": "future", "name": "x", "mountPath": "/Volumes/MountOS/Ghost"}
+            ]"#,
+        )
+        .unwrap();
+        let instances = parse_instances_value(&value);
+        let paths: Vec<&str> = instances.iter().map(|i| i.mount_path.as_str()).collect();
+        assert_eq!(instances.len(), 3);
+        assert_eq!(paths[0], "/Volumes/MountOS/Team");
+        assert_eq!(paths[1], "/Volumes/MountOS/Old");
+        assert_eq!(paths[2], "");
     }
 
     #[test]
